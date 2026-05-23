@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router';
-import { Briefcase, Users, BarChart3, ArrowLeft, LogOut } from 'lucide-react';
+import { Briefcase, Users, BarChart3, ArrowLeft, LogOut, Calendar } from 'lucide-react';
 import { JobBuilder } from './hiring-manager/JobBuilder';
 import { LinkedInScraper } from './hiring-manager/LinkedInScraper';
 import { CandidateDashboard } from './hiring-manager/CandidateDashboard';
 import { HiringManagerLogin } from './hiring-manager/HiringManagerLogin';
+import { InterviewCalendar } from './hiring-manager/InterviewCalendar';
 
 export interface Job {
   id: number;
@@ -43,7 +44,7 @@ export interface ScrapedCandidate {
   jobId: number;
   matchScore: number;
   trajectoryScore: number;
-  status: 'staged' | 'invited' | 'applied' | 'screening' | 'completed';
+  status: 'staged' | 'invited' | 'applied' | 'screening' | 'completed' | 'rejected' | 'interview_scheduled';
   appliedAt?: string;
   recruitmentEmail?: string;
   sourcingPitch?: string;
@@ -65,6 +66,15 @@ export interface ScrapedCandidate {
   gradeResults?: string;
   awards?: string[];
   skills?: string[];
+  hrFeedback?: string;
+  rejectionMessage?: string;
+  rejectedAt?: string;
+  interviewSlot?: {
+    date: string;
+    time: string;
+    location: string;
+    notes: string;
+  };
 }
 
 interface AuthUser {
@@ -124,7 +134,7 @@ export function HiringManagerPortal() {
     }
   };
 
-  // Fetch Candidates List (supports dynamic prestige neutralization filters)
+  // Fetch Candidates List
   const fetchCandidates = async (neutralize: boolean = neutralizeActive) => {
     setIsLoading(true);
     try {
@@ -132,7 +142,6 @@ export function HiringManagerPortal() {
       if (res.ok) {
         const data = await res.json();
         
-        // Map backend schemas to react ScrapedCandidate schemas
         const mapped: ScrapedCandidate[] = data.map((c: any, index: number) => ({
           id: c.id || index + 1,
           name: c.name,
@@ -168,7 +177,11 @@ export function HiringManagerPortal() {
           qualification: c.profile_data?.qualification || '',
           gradeResults: c.profile_data?.grade_results || '',
           awards: c.profile_data?.awards || [],
-          skills: c.profile_data?.skills || c.profile_data?.basic_info?.skills || []
+          skills: c.profile_data?.skills || c.profile_data?.basic_info?.skills || [],
+          hrFeedback: c.hr_feedback || '',
+          rejectionMessage: c.rejection_message || '',
+          rejectedAt: c.rejected_at,
+          interviewSlot: c.interview_slot
         }));
         setCandidates(mapped);
       }
@@ -179,7 +192,6 @@ export function HiringManagerPortal() {
     }
   };
 
-  // Load everything on mount and when authentication status changes
   useEffect(() => {
     if (authUser) {
       fetchJobs();
@@ -187,7 +199,6 @@ export function HiringManagerPortal() {
     }
   }, [authUser]);
 
-  // Handler to fetch candidates dynamically when neutralize toggle changes
   const handleNeutralizeToggle = (active: boolean) => {
     setNeutralizeActive(active);
     fetchCandidates(active);
@@ -219,7 +230,6 @@ export function HiringManagerPortal() {
   };
 
   const addCandidate = (_candidate: ScrapedCandidate) => {
-    // Re-fetch candidates list to ensure synchronicity with JSON file
     fetchCandidates();
   };
 
@@ -237,13 +247,23 @@ export function HiringManagerPortal() {
     await fetchCandidates();
   };
 
-  const inviteCandidateByEmail = async (email: string) => {
+  const inviteCandidateByEmail = async (email: string, outreachEmail?: string, hrFeedback?: string) => {
     const res = await fetch(`${API_BASE_URL}/candidates/invite`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email })
+      body: JSON.stringify({ email, outreach_email: outreachEmail, hr_feedback: hrFeedback })
     });
     if (!res.ok) throw new Error('Failed to send candidate invitation.');
+    await fetchCandidates();
+  };
+
+  const rejectCandidateByEmail = async (email: string, positionId?: number, hrFeedback?: string, rejectionMessage?: string) => {
+    const res = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(email)}/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ position_id: positionId, hr_feedback: hrFeedback || '', rejection_message: rejectionMessage })
+    });
+    if (!res.ok) throw new Error('Failed to reject candidate.');
     await fetchCandidates();
   };
 
@@ -252,6 +272,39 @@ export function HiringManagerPortal() {
       method: 'DELETE'
     });
     if (!res.ok) throw new Error('Failed to delete candidate.');
+    await fetchCandidates();
+  };
+
+  const scheduleInterviewByEmail = async (
+    email: string,
+    positionId: number | undefined,
+    interviewDate: string,
+    interviewTime: string,
+    interviewLocation: string,
+    interviewNotes?: string
+  ) => {
+    const res = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(email)}/schedule-interview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        position_id: positionId,
+        interview_date: interviewDate,
+        interview_time: interviewTime,
+        interview_location: interviewLocation,
+        interview_notes: interviewNotes || ''
+      })
+    });
+    if (!res.ok) throw new Error('Failed to schedule interview.');
+    await fetchCandidates();
+  };
+
+  const updateCandidateOutreachNotesByEmail = async (email: string, positionId?: number, outreachEmail?: string, hrFeedback?: string) => {
+    const res = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(email)}/outreach-notes`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ position_id: positionId, outreach_email: outreachEmail, hr_feedback: hrFeedback })
+    });
+    if (!res.ok) throw new Error('Failed to update outreach details and internal notes.');
     await fetchCandidates();
   };
 
@@ -265,11 +318,11 @@ export function HiringManagerPortal() {
     { path: '/hiring-manager/jobs', label: 'Job Builder', icon: Briefcase },
     { path: '/hiring-manager/sourcing', label: 'LinkedIn Sourcing', icon: Users },
     { path: '/hiring-manager/dashboard', label: 'Candidate Pipeline', icon: BarChart3 },
+    { path: '/hiring-manager/calendar', label: 'Interview Calendar', icon: Calendar },
   ];
 
   return (
     <div className="min-h-screen bg-[#f7f6f3]">
-      {/* Top Navigation */}
       <div className="bg-white border-b border-[#e4e1da] shadow-sm">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
@@ -283,7 +336,6 @@ export function HiringManagerPortal() {
               <p className="text-xs text-[#6b7063] ml-9">AI-Powered Recruitment Workspace</p>
             </div>
             <div className="flex items-center gap-5">
-              {/* User identity */}
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-[#e8f2ee] flex items-center justify-center text-[#2d6a55] text-sm flex-shrink-0 font-medium">
                   {authUser.name.charAt(0)}
@@ -314,7 +366,6 @@ export function HiringManagerPortal() {
         </div>
       </div>
 
-      {/* Tab Navigation */}
       <div className="bg-white border-b border-[#e4e1da] shadow-sm">
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex gap-0">
@@ -339,7 +390,6 @@ export function HiringManagerPortal() {
         </div>
       </div>
 
-      {/* Content */}
       <div className="max-w-7xl mx-auto px-6 py-8">
         <Routes>
           <Route path="/" element={<Navigate to="/hiring-manager/jobs" replace />} />
@@ -368,6 +418,19 @@ export function HiringManagerPortal() {
                 onStatusChange={updateCandidateStatusByEmail}
                 onInvite={inviteCandidateByEmail}
                 onDelete={deleteCandidateByEmail}
+                onReject={rejectCandidateByEmail}
+                onScheduleInterview={scheduleInterviewByEmail}
+                onUpdateOutreachNotes={updateCandidateOutreachNotesByEmail}
+              />
+            }
+          />
+          <Route
+            path="/calendar"
+            element={
+              <InterviewCalendar
+                jobs={jobs}
+                candidates={candidates}
+                onScheduleInterview={scheduleInterviewByEmail}
               />
             }
           />

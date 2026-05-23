@@ -25,7 +25,9 @@ const statusLabels: Record<CandidateData['status'], string> = {
   sourced: 'Sourced & Invited',
   applied: 'Position Applied',
   screening: 'Interview In Progress',
-  completed: 'Screening Completed'
+  completed: 'Screening Completed',
+  rejected: 'Not Selected',
+  interview_scheduled: 'Interview Scheduled'
 };
 
 const normalizeApplicationStatus = (status: string): CandidateData['status'] =>
@@ -35,9 +37,13 @@ const normalizeApplicationStatus = (status: string): CandidateData['status'] =>
       ? 'completed'
       : status === 'screening'
         ? 'screening'
-        : status === 'profile'
-          ? 'profile'
-          : 'applied';
+        : status === 'rejected'
+          ? 'rejected'
+          : status === 'interview_scheduled'
+            ? 'interview_scheduled'
+            : status === 'profile'
+              ? 'profile'
+              : 'applied';
 
 export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: Props) {
   const navigate = useNavigate();
@@ -70,11 +76,17 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
   const selectedPositionId = selectedApplication?.position_id || candidateData.jobId;
   const selectedPosition = allPositions.find(position => position.id === selectedPositionId);
   const selectedStatus = normalizeApplicationStatus(selectedApplication?.status || candidateData.status);
-  const progress = selectedApplication?.progress ?? (selectedStatus === 'completed' ? 100 : selectedStatus === 'screening' ? 70 : selectedStatus === 'profile' ? 10 : 40);
+  const progress = selectedApplication?.progress ?? (
+    selectedStatus === 'completed' ? 100 :
+    selectedStatus === 'rejected' ? 100 :
+    selectedStatus === 'interview_scheduled' ? 85 :
+    selectedStatus === 'screening' ? 70 :
+    selectedStatus === 'profile' ? 10 : 40
+  );
   const selectedEvaluation = selectedApplication?.evaluation || candidateData.evaluation;
   const selectedScore = selectedEvaluation?.screening_score ?? candidateData.score;
-  const canReview = selectedStatus === 'completed';
-  const canContinue = selectedStatus !== 'completed' && selectedStatus !== 'profile' && Boolean(selectedApplication);
+  const canReview = selectedStatus === 'completed' || selectedStatus === 'interview_scheduled' || selectedStatus === 'rejected';
+  const canContinue = selectedStatus !== 'completed' && selectedStatus !== 'rejected' && selectedStatus !== 'interview_scheduled' && selectedStatus !== 'profile' && Boolean(selectedApplication);
   const appliedPositionIds = new Set(applications.map(application => application.position_id));
 
   useEffect(() => {
@@ -95,20 +107,33 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
       ? 'completed'
       : data.status === 'screening'
         ? 'screening'
-        : data.status === 'invited'
-          ? 'sourced'
-          : data.status === 'profile'
-            ? 'profile'
-            : 'applied';
+        : data.status === 'rejected'
+          ? 'rejected'
+          : data.status === 'interview_scheduled'
+            ? 'interview_scheduled'
+            : data.status === 'invited'
+              ? 'sourced'
+              : data.status === 'profile'
+                ? 'profile'
+                : 'applied';
 
     const normalizedApplications = (data.applications || []).map((application: any) => {
       const applicationStatus = normalizeApplicationStatus(application.status);
       return {
         ...application,
         status: applicationStatus,
-        progress: application.progress ?? (applicationStatus === 'completed' ? 100 : applicationStatus === 'screening' ? 70 : 40)
+        progress: application.progress ?? (
+          applicationStatus === 'completed' ? 100 :
+          applicationStatus === 'rejected' ? 100 :
+          applicationStatus === 'interview_scheduled' ? 85 :
+          applicationStatus === 'screening' ? 70 : 40
+        )
       };
     });
+
+    const activeApp = normalizedApplications.find((app: any) => app.application_id === data.application_id)
+      || normalizedApplications.find((app: any) => app.position_id === data.position_id)
+      || normalizedApplications[normalizedApplications.length - 1];
 
     return {
       email: data.email,
@@ -122,16 +147,25 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
           position_id: data.position_id,
           status,
           applied_at: data.applied_at,
-          progress: status === 'completed' ? 100 : status === 'screening' ? 70 : 40,
+          progress: status === 'completed' ? 100 : status === 'rejected' ? 100 : status === 'interview_scheduled' ? 85 : status === 'screening' ? 70 : 40,
           custom_questions: data.custom_questions,
           answers: data.answers,
           evaluation: data.evaluation,
-          match_results: data.match_results
+          match_results: data.match_results,
+          hr_feedback: data.hr_feedback,
+          rejection_message: data.rejection_message,
+          rejected_at: data.rejected_at,
+          interview_slot: data.interview_slot
         }
       ],
       position: positionTitle || positions.find(position => position.id === data.position_id)?.title || candidateData.position,
       status,
-      progress: status === 'profile' ? 10 : status === 'completed' ? 100 : status === 'screening' ? 66 : status === 'sourced' ? 50 : 33,
+      progress: status === 'profile' ? 10 :
+        status === 'completed' ? 100 :
+        status === 'rejected' ? 100 :
+        status === 'interview_scheduled' ? 85 :
+        status === 'screening' ? 66 :
+        status === 'sourced' ? 50 : 33,
       isInvited: Boolean(data.is_sourced),
       appliedAt: data.applied_at,
       profilePictureUrl: data.profile_picture_url || candidateData.profilePictureUrl,
@@ -155,7 +189,11 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
       customQuestions: data.custom_questions,
       sandboxAnswers: data.answers,
       score: data.evaluation?.screening_score,
-      evaluation: data.evaluation
+      evaluation: data.evaluation,
+      hrFeedback: activeApp?.hr_feedback || data.hr_feedback || '',
+      rejectionMessage: activeApp?.rejection_message || data.rejection_message || '',
+      rejectedAt: activeApp?.rejected_at || data.rejected_at,
+      interviewSlot: activeApp?.interview_slot || data.interview_slot
     };
   };
 
@@ -300,6 +338,66 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
             )}
           </div>
         </div>
+
+        {selectedStatus === 'rejected' && (
+          <div className="mb-6 rounded-2xl border border-[#f5c2c2] bg-[#fff8f8] p-6 shadow-sm">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 bg-[#fdf2f2] rounded-xl flex items-center justify-center flex-shrink-0">
+                <span className="text-[#b91c1c] text-lg font-bold">✕</span>
+              </div>
+              <div className="flex-1">
+                <p className="text-xs tracking-wider uppercase text-[#b91c1c] mb-1 font-semibold">Application Update</p>
+                <h2 className="text-[#1c1c1a] mb-2 font-semibold text-lg">Thank you for your application</h2>
+                <p className="text-sm text-[#52574e] leading-relaxed mb-2">
+                  {candidateData.rejectionMessage || "Thank you for applying. After careful consideration, we have decided to move forward with other candidates whose experience more closely matches our current needs. We appreciate the time you invested and wish you success in your career journey."}
+                </p>
+                {candidateData.hrFeedback && (
+                  <div className="border-t border-[#f5c2c2] pt-4 mt-3">
+                    <p className="text-xs font-semibold text-[#6b7063] uppercase tracking-wider mb-2">Hiring Team Notes & Feedback</p>
+                    <div className="bg-[#fcf8f8] rounded-xl p-4 border border-[#f5c2c2]/30 text-sm text-[#6b7063] leading-relaxed">
+                      {candidateData.hrFeedback}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {selectedStatus === 'interview_scheduled' && candidateData.interviewSlot && (
+          <div className="mb-6 rounded-2xl border border-[#c5cbf7] bg-[#f5f7ff] p-6 shadow-sm">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 bg-[#eef2ff] rounded-xl flex items-center justify-center flex-shrink-0">
+                <span className="text-[#3730a3] text-lg font-bold">📅</span>
+              </div>
+              <div className="flex-1">
+                <p className="text-xs tracking-wider uppercase text-[#3730a3] mb-1 font-semibold">Interview Scheduled</p>
+                <h2 className="text-[#1c1c1a] mb-2 font-semibold text-lg">Congratulations! Your interview has been scheduled</h2>
+                <p className="text-sm text-[#52574e] leading-relaxed mb-4">
+                  We are excited to discuss this opportunity with you further. Please review the interview slot details below:
+                </p>
+                <div className="bg-white rounded-xl p-4 border border-[#c5cbf7]/40 space-y-3">
+                  <div className="grid sm:grid-cols-2 gap-3 text-sm text-[#1c1c1a]">
+                    <div>
+                      <span className="block text-xs text-[#a8a49d] font-medium">Date & Time</span>
+                      <span className="font-semibold">{candidateData.interviewSlot.date} at {candidateData.interviewSlot.time}</span>
+                    </div>
+                    <div>
+                      <span className="block text-xs text-[#a8a49d] font-medium">Location / Link</span>
+                      <span className="font-semibold">{candidateData.interviewSlot.location}</span>
+                    </div>
+                  </div>
+                  {candidateData.interviewSlot.notes && (
+                    <div className="border-t border-[#e4e1da] pt-3">
+                      <span className="block text-xs text-[#a8a49d] font-medium mb-1">Additional Instructions</span>
+                      <p className="text-xs text-[#6b7063] leading-relaxed">{candidateData.interviewSlot.notes}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {candidateData.emailVerified === false && (
           <div className="mb-5 rounded-xl border border-[#f2d3a4] bg-[#fff8ed] px-4 py-3 text-sm text-[#8a5a14]">
@@ -508,12 +606,21 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
                         jobId: application.position_id,
                         position: position?.title || candidateData.position,
                         status,
-                        progress: application.progress ?? (status === 'completed' ? 100 : status === 'screening' ? 70 : 40),
+                        progress: application.progress ?? (
+                          status === 'completed' ? 100 :
+                          status === 'rejected' ? 100 :
+                          status === 'interview_scheduled' ? 85 :
+                          status === 'screening' ? 70 : 40
+                        ),
                         appliedAt: application.applied_at,
                         customQuestions: application.custom_questions,
                         sandboxAnswers: application.answers,
                         score: application.evaluation?.screening_score,
-                        evaluation: application.evaluation
+                        evaluation: application.evaluation,
+                        hrFeedback: application.hr_feedback || '',
+                        rejectionMessage: application.rejection_message || '',
+                        rejectedAt: application.rejected_at,
+                        interviewSlot: application.interview_slot
                       });
                     }}
                     className={`w-full text-left border rounded-xl p-4 transition-colors ${isSelected ? 'border-[#2d6a55]/40 bg-[#f0f9f4]' : 'border-[#e4e1da] hover:bg-[#f7f6f3]'}`}

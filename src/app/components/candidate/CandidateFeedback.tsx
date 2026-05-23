@@ -108,10 +108,43 @@ export function CandidateFeedback({ candidateData }: Props) {
 
             <div className="space-y-4">
               {critiques.map((item: any, idx: number) => (
-                <div key={idx} className="border-l-2 border-[#2d6a55] bg-[#f8faf8] rounded-r-xl p-4">
+                <div key={idx} className="border-l-2 border-[#2d6a55] bg-[#f8faf8] rounded-r-xl p-5 space-y-3">
                   <p className="text-xs font-semibold tracking-wide uppercase text-[#2d6a55] mb-1.5">Question {idx + 1}</p>
-                  <p className="text-xs text-[#1c1c1a] italic mb-2 leading-relaxed font-medium">"{item.question}"</p>
+                  <p className="text-xs text-[#1c1c1a] italic leading-relaxed font-medium">"{item.question}"</p>
                   <p className="text-xs text-[#52574e] leading-relaxed">{item.critique}</p>
+
+                  {(item.strengths || item.weaknesses || item.suggested_improvement) && (
+                    <div className="grid sm:grid-cols-2 gap-4 mt-3 pt-3 border-t border-[#e4e1da]/50 text-xs">
+                      {item.strengths && item.strengths.length > 0 && (
+                        <div className="space-y-1">
+                          <span className="font-semibold text-[#2d6a55] block">Strengths</span>
+                          <ul className="list-disc pl-4 space-y-1 text-[#52574e]">
+                            {item.strengths.map((str: string, sIdx: number) => (
+                              <li key={sIdx}>{str}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      
+                      {item.weaknesses && item.weaknesses.length > 0 && (
+                        <div className="space-y-1">
+                          <span className="font-semibold text-[#c25a2a] block">Areas for Growth</span>
+                          <ul className="list-disc pl-4 space-y-1 text-[#52574e]">
+                            {item.weaknesses.map((weak: string, wIdx: number) => (
+                              <li key={wIdx}>{weak}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {item.suggested_improvement && (
+                        <div className="sm:col-span-2 space-y-1 pt-1">
+                          <span className="font-semibold text-[#1c1c1a] block">Suggested Improvement</span>
+                          <p className="text-[#52574e] leading-relaxed">{item.suggested_improvement}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -157,6 +190,24 @@ export function CandidateFeedback({ candidateData }: Props) {
                   </li>
                 </ul>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* HR Manager Feedback */}
+        {candidateData.hrFeedback && (
+          <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 mb-5 shadow-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-8 h-8 bg-[#e8f2ee] rounded-lg flex items-center justify-center">
+                <CheckCircle2 className="w-4 h-4 text-[#2d6a55]" />
+              </div>
+              <div>
+                <h3 className="text-[#1c1c1a] font-semibold text-base">Hiring Manager Feedback</h3>
+                <p className="text-xs text-[#6b7063]">Direct feedback from the recruiting team</p>
+              </div>
+            </div>
+            <div className="bg-[#f8faf8] rounded-xl p-4 border border-[#e4e1da]/50 text-xs text-[#52574e] leading-relaxed">
+              {candidateData.hrFeedback}
             </div>
           </div>
         )}

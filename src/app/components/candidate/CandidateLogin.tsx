@@ -73,19 +73,29 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
   }, [forceNewApplication, initialEmail]);
 
   const mapCandidateFromApi = (data: any): CandidateData => {
-    const normalizeStatus = (statusValue: string): CandidateData['status'] => statusValue === 'invited'
-      ? 'sourced'
-      : statusValue === 'completed'
-        ? 'completed'
-        : statusValue === 'screening'
-          ? 'screening'
-          : statusValue === 'profile'
-            ? 'profile'
-            : 'applied';
+    const normalizeStatus = (statusValue: string): CandidateData['status'] =>
+      statusValue === 'invited' || statusValue === 'staged'
+        ? 'sourced'
+        : statusValue === 'completed'
+          ? 'completed'
+          : statusValue === 'screening'
+            ? 'screening'
+            : statusValue === 'rejected'
+              ? 'rejected'
+              : statusValue === 'interview_scheduled'
+                ? 'interview_scheduled'
+                : statusValue === 'profile'
+                  ? 'profile'
+                  : 'applied';
     const applications = (data.applications || []).map((application: any) => ({
       ...application,
       status: normalizeStatus(application.status),
-      progress: application.progress ?? (normalizeStatus(application.status) === 'completed' ? 100 : normalizeStatus(application.status) === 'screening' ? 70 : 40)
+      progress: application.progress ?? (
+        normalizeStatus(application.status) === 'completed' ? 100 :
+        normalizeStatus(application.status) === 'rejected' ? 100 :
+        normalizeStatus(application.status) === 'interview_scheduled' ? 85 :
+        normalizeStatus(application.status) === 'screening' ? 70 : 40
+      )
     }));
     const selectedApplication = applications.find((application: any) => application.position_id === data.position_id) || applications[applications.length - 1];
     const matchedJob = jobs.find(j => j.id === (selectedApplication?.position_id || data.position_id));
@@ -99,7 +109,14 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       applications,
       position: matchedJob ? matchedJob.title : 'Senior Full-Stack Engineer',
       status,
-      progress: selectedApplication?.progress ?? (status === 'completed' ? 100 : status === 'screening' ? 70 : status === 'sourced' ? 50 : status === 'profile' ? 10 : 40),
+      progress: selectedApplication?.progress ?? (
+        status === 'completed' ? 100 :
+        status === 'rejected' ? 100 :
+        status === 'interview_scheduled' ? 85 :
+        status === 'screening' ? 70 :
+        status === 'sourced' ? 50 :
+        status === 'profile' ? 10 : 40
+      ),
       isInvited: Boolean(data.is_sourced),
       appliedAt: selectedApplication?.applied_at || data.applied_at,
       profilePictureUrl: data.profile_picture_url,
@@ -123,7 +140,11 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       customQuestions: selectedApplication?.custom_questions || data.custom_questions,
       sandboxAnswers: selectedApplication?.answers || data.answers,
       score: (selectedApplication?.evaluation || data.evaluation)?.screening_score,
-      evaluation: selectedApplication?.evaluation || data.evaluation
+      evaluation: selectedApplication?.evaluation || data.evaluation,
+      hrFeedback: selectedApplication?.hr_feedback || data.hr_feedback || '',
+      rejectionMessage: selectedApplication?.rejection_message || data.rejection_message || '',
+      rejectedAt: selectedApplication?.rejected_at || data.rejected_at,
+      interviewSlot: selectedApplication?.interview_slot || data.interview_slot
     };
   };
 

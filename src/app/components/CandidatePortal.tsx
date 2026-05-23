@@ -14,7 +14,7 @@ export interface CandidateData {
   applications?: Array<{
     application_id: string;
     position_id: number;
-    status: 'profile' | 'sourced' | 'applied' | 'screening' | 'completed';
+    status: 'profile' | 'sourced' | 'applied' | 'screening' | 'completed' | 'rejected' | 'interview_scheduled';
     applied_at?: string;
     progress?: number;
     custom_questions?: string[];
@@ -22,7 +22,7 @@ export interface CandidateData {
     evaluation?: any;
     match_results?: any;
   }>;
-  status: 'profile' | 'sourced' | 'applied' | 'screening' | 'completed';
+  status: 'profile' | 'sourced' | 'applied' | 'screening' | 'completed' | 'rejected' | 'interview_scheduled';
   progress: number;
   isInvited: boolean;
   appliedAt?: string;
@@ -113,7 +113,7 @@ export function CandidatePortal() {
         <Route
           path="/sandbox"
           element={
-            candidateData?.jobId && candidateData.status !== 'completed' ? (
+            candidateData?.jobId && candidateData.status !== 'completed' && candidateData.status !== 'rejected' && candidateData.status !== 'interview_scheduled' ? (
               <CandidateSandbox
                 candidateData={candidateData}
                 onComplete={(answers, score, evaluation) => {

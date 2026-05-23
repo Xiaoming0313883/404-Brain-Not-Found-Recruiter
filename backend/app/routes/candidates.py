@@ -78,7 +78,25 @@ class ScrapePayload(BaseModel):
 class InvitePayload(BaseModel):
     email: str
     outreach_email: Optional[str] = None
+    hr_feedback: Optional[str] = None
     smtp_settings: Optional[Dict[str, Any]] = None
+
+class RejectCandidatePayload(BaseModel):
+    position_id: Optional[int] = None
+    hr_feedback: Optional[str] = ""
+    rejection_message: Optional[str] = "Thank you for applying. After careful consideration, we have decided to move forward with other candidates whose experience more closely matches our current needs. We appreciate the time you invested and wish you success in your career journey."
+
+class UpdateCandidateOutreachNotesPayload(BaseModel):
+    position_id: Optional[int] = None
+    outreach_email: Optional[str] = None
+    hr_feedback: Optional[str] = None
+
+class InterviewSlotPayload(BaseModel):
+    position_id: Optional[int] = None
+    interview_date: str
+    interview_time: str
+    interview_location: str = "To be confirmed"
+    interview_notes: Optional[str] = ""
 
 class AutoSourcePayload(BaseModel):
     position_id: int
@@ -130,7 +148,10 @@ def get_application_progress(status: str) -> int:
         "invited": 30,
         "applied": 40,
         "screening": 70,
-        "completed": 100
+        "interview_scheduled": 85,
+        "completed": 100,
+        "rejected": 100,
+        "inactive": 0
     }.get(status, 10)
 
 def normalize_candidate_applications(candidate: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -182,7 +203,11 @@ def serialize_application_candidate(candidate: Dict[str, Any], email: str, appli
         "answers": application.get("answers", []),
         "evaluation": application.get("evaluation", {}),
         "sourcing_pitch": application.get("sourcing_pitch", candidate.get("sourcing_pitch", "")),
-        "outreach_email": application.get("outreach_email", candidate.get("outreach_email", ""))
+        "outreach_email": application.get("outreach_email", candidate.get("outreach_email", "")),
+        "hr_feedback": application.get("hr_feedback", candidate.get("hr_feedback", "")),
+        "rejection_message": application.get("rejection_message", ""),
+        "rejected_at": application.get("rejected_at"),
+        "interview_slot": application.get("interview_slot")
     })
     return serialized
 
@@ -194,6 +219,7 @@ def serialize_candidate(candidate: Dict[str, Any], management_email: Optional[st
     serialized["application_count"] = len(candidate.get("applications", []))
     serialized["profile_verified"] = bool(candidate.get("profile_verified"))
     serialized["email_verified"] = bool(candidate.get("email_verified", True))
+    serialized["hr_feedback"] = candidate.get("hr_feedback", "")
     return serialized
 
 def neutralize_text(text: str) -> str:
@@ -748,7 +774,7 @@ def apply_candidate_to_position(email: str, payload: CandidateApplyPositionPaylo
 
 @router.patch("/{email}/status")
 def update_candidate_status(email: str, payload: CandidateStatusPayload):
-    allowed_statuses = {"profile", "staged", "invited", "applied", "screening", "completed", "inactive"}
+    allowed_statuses = {"profile", "staged", "invited", "applied", "screening", "completed", "inactive", "rejected", "interview_scheduled"}
     if payload.status not in allowed_statuses:
         raise HTTPException(status_code=400, detail="Unsupported candidate status.")
 
@@ -960,10 +986,10 @@ def submit_sandbox(email: str, payload: SandboxAnswers):
             "week_3": "Automated verification setup."
         }
         
-    application["status"] = "completed"
-    application["progress"] = get_application_progress("completed")
+    application["status"] = "screening"
+    application["progress"] = get_application_progress("screening")
     application["answers"] = payload.answers
-    application["completed_at"] = datetime.now().isoformat(timespec="seconds")
+    application["screening_submitted_at"] = datetime.now().isoformat(timespec="seconds")
     application["evaluation"] = {
         "screening_score": evaluation.get("screening_score", 80),
         "critiques": evaluation.get("critiques", []),
@@ -1131,7 +1157,9 @@ def invite_candidate(payload: InvitePayload):
     candidate["status"] = "invited"
     if payload.outreach_email:
         candidate["outreach_email"] = payload.outreach_email
-    
+    if payload.hr_feedback is not None:
+        candidate["hr_feedback"] = payload.hr_feedback
+
     # Trigger Outreach SMTP dispatch
     try:
         email_sent = send_recruitment_email(
@@ -1143,9 +1171,149 @@ def invite_candidate(payload: InvitePayload):
     except Exception as e:
         print(f"SMTP dispatch failure: {e}")
         email_sent = False
-        
+
     save_db(db)
     return {
         "candidate": serialize_candidate(candidate, email_clean),
         "outreach_sent": email_sent
     }
+
+@router.post("/{email}/reject")
+def reject_candidate(email: str, payload: RejectCandidatePayload):
+    db = load_db()
+    email_clean = email.strip().lower()
+    candidate = db.setdefault("candidates", {}).get(email_clean)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+
+    application = find_application(candidate, payload.position_id)
+    rejection_message = payload.rejection_message or (
+        "Thank you for applying. After careful consideration, we have decided to move forward with other candidates "
+        "whose experience more closely matches our current needs. We appreciate the time you invested and wish you "
+        "success in your career journey."
+    )
+    if application:
+        application["status"] = "rejected"
+        application["progress"] = get_application_progress("rejected")
+        application["hr_feedback"] = payload.hr_feedback or ""
+        application["rejection_message"] = rejection_message
+        application["rejected_at"] = datetime.now().isoformat(timespec="seconds")
+        sync_current_application(candidate, application)
+    else:
+        candidate["status"] = "rejected"
+        candidate["hr_feedback"] = payload.hr_feedback or ""
+        candidate["rejection_message"] = rejection_message
+        candidate["rejected_at"] = datetime.now().isoformat(timespec="seconds")
+
+    save_db(db)
+    if application:
+        return serialize_application_candidate(candidate, email_clean, application)
+    return serialize_candidate(candidate, email_clean)
+
+@router.post("/{email}/schedule-interview")
+def schedule_interview(email: str, payload: InterviewSlotPayload):
+    db = load_db()
+    email_clean = email.strip().lower()
+    candidate = db.setdefault("candidates", {}).get(email_clean)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+
+    application = find_application(candidate, payload.position_id)
+    interview_slot = {
+        "date": payload.interview_date,
+        "time": payload.interview_time,
+        "location": payload.interview_location,
+        "notes": payload.interview_notes or ""
+    }
+    if application:
+        application["status"] = "interview_scheduled"
+        application["progress"] = get_application_progress("interview_scheduled")
+        application["interview_slot"] = interview_slot
+        application["interview_scheduled_at"] = datetime.now().isoformat(timespec="seconds")
+        sync_current_application(candidate, application)
+    else:
+        candidate["status"] = "interview_scheduled"
+        candidate["interview_slot"] = interview_slot
+
+    # Send SMTP notification email to candidate
+    candidate_name = candidate.get("name", "Candidate")
+    position_id = payload.position_id or candidate.get("position_id")
+    job = db.get("positions", {}).get(str(position_id), {}) if position_id else {}
+    position_title = job.get("title", "the position")
+    interview_body = (
+        f"Dear {candidate_name},\n\n"
+        f"Congratulations! We are pleased to invite you for an interview for {position_title}.\n\n"
+        f"Interview Details:\n"
+        f"  Date: {payload.interview_date}\n"
+        f"  Time: {payload.interview_time}\n"
+        f"  Location: {payload.interview_location}\n"
+        + (f"  Notes: {payload.interview_notes}\n" if payload.interview_notes else "") +
+        f"\nPlease confirm your attendance by replying to this email.\n\n"
+        f"We look forward to meeting you.\n\nBest regards,\nHiring Team"
+    )
+    email_sent = False
+    try:
+        email_sent = send_recruitment_email(
+            to_email=email_clean,
+            subject=f"Interview Invitation — {position_title}",
+            body=interview_body
+        )
+    except Exception as e:
+        print(f"Interview invite SMTP failure: {e}")
+
+    save_db(db)
+    result = serialize_application_candidate(candidate, email_clean, application) if application else serialize_candidate(candidate, email_clean)
+    result["interview_email_sent"] = email_sent
+    return result
+
+@router.get("/interview-calendar")
+def get_interview_calendar():
+    db = load_db()
+    results = []
+    for email, candidate in db.get("candidates", {}).items():
+        applications = normalize_candidate_applications(candidate)
+        for app in applications:
+            if app.get("status") == "interview_scheduled" and app.get("interview_slot"):
+                slot = app["interview_slot"]
+                position_id = app.get("position_id")
+                job = db.get("positions", {}).get(str(position_id), {}) if position_id else {}
+                results.append({
+                    "email": email,
+                    "name": candidate.get("name", ""),
+                    "position_id": position_id,
+                    "position_title": job.get("title", "Unknown Position"),
+                    "application_id": app.get("application_id"),
+                    "interview_date": slot.get("date"),
+                    "interview_time": slot.get("time"),
+                    "interview_location": slot.get("location"),
+                    "interview_notes": slot.get("notes", "")
+                })
+    return results
+
+@router.patch("/{email}/outreach-notes")
+def update_candidate_outreach_notes(email: str, payload: UpdateCandidateOutreachNotesPayload):
+    db = load_db()
+    email_clean = email.strip().lower()
+    candidate = db.setdefault("candidates", {}).get(email_clean)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+
+    application = find_application(candidate, payload.position_id)
+    
+    if payload.outreach_email is not None:
+        candidate["outreach_email"] = payload.outreach_email
+        if application:
+            application["outreach_email"] = payload.outreach_email
+            
+    if payload.hr_feedback is not None:
+        candidate["hr_feedback"] = payload.hr_feedback
+        if application:
+            application["hr_feedback"] = payload.hr_feedback
+            
+    if application:
+        sync_current_application(candidate, application)
+
+    save_db(db)
+    if application:
+        return serialize_application_candidate(candidate, email_clean, application)
+    return serialize_candidate(candidate, email_clean)

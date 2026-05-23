@@ -15,7 +15,10 @@ import {
   Mail,
   RefreshCcw,
   Trash2,
-  UserCheck
+  UserCheck,
+  XCircle,
+  X,
+  Calendar
 } from 'lucide-react';
 import * as Switch from '@radix-ui/react-switch';
 import * as Accordion from '@radix-ui/react-accordion';
@@ -30,8 +33,11 @@ interface Props {
   isLoading?: boolean;
   onRefresh: () => Promise<void> | void;
   onStatusChange: (email: string, status: ScrapedCandidate['status'], positionId?: number) => Promise<void>;
-  onInvite: (email: string) => Promise<void>;
+  onInvite: (email: string, outreachEmail?: string, hrFeedback?: string) => Promise<void>;
   onDelete: (email: string) => Promise<void>;
+  onReject: (email: string, positionId?: number, hrFeedback?: string, rejectionMessage?: string) => Promise<void>;
+  onScheduleInterview: (email: string, positionId: number | undefined, date: string, time: string, location: string, notes?: string) => Promise<void>;
+  onUpdateOutreachNotes: (email: string, positionId?: number, outreachEmail?: string, hrFeedback?: string) => Promise<void>;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -46,12 +52,35 @@ export function CandidateDashboard({
   onRefresh,
   onStatusChange,
   onInvite,
-  onDelete
+  onDelete,
+  onReject,
+  onScheduleInterview,
+  onUpdateOutreachNotes
 }: Props) {
   const [anonymizedMode, setAnonymizedMode] = useState(false);
   const [busyEmail, setBusyEmail] = useState('');
   const [actionError, setActionError] = useState('');
   const [selectedPositionId, setSelectedPositionId] = useState<number | 'all'>('all');
+
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'match' | 'match-asc' | 'velocity' | 'name'>('match');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const pageSize = 50;
+
+  const [editedOutreach, setEditedOutreach] = useState<Record<string, string>>({});
+  const [editedFeedback, setEditedFeedback] = useState<Record<string, string>>({});
+  const [isSavingField, setIsSavingField] = useState<Record<string, boolean>>({});
+  const [inviteSuccessMessage, setInviteSuccessMessage] = useState<string>('');
+
+  const [rejectTarget, setRejectTarget] = useState<ScrapedCandidate | null>(null);
+  const [rejectFeedback, setRejectFeedback] = useState<string>('');
+  const [rejectMessage, setRejectMessage] = useState<string>('');
+
+  const [scheduleTarget, setScheduleTarget] = useState<ScrapedCandidate | null>(null);
+  const [scheduleDate, setScheduleDate] = useState<string>('');
+  const [scheduleTime, setScheduleTime] = useState<string>('');
+  const [scheduleLocation, setScheduleLocation] = useState<string>('To be confirmed');
+  const [scheduleNotes, setScheduleNotes] = useState<string>('');
 
   const activePositions = jobs.filter(job => job.isOpenForApplications).length;
   const selectedJob = selectedPositionId === 'all' ? null : jobs.find(job => job.id === selectedPositionId);
@@ -111,7 +140,40 @@ export function CandidateDashboard({
   const getActionEmail = (candidate: ScrapedCandidate): string =>
     candidate.managementEmail || candidate.email;
 
-  const sortedCandidates = [...scopedCandidates].sort((a, b) => b.matchScore - a.matchScore);
+  // Filter candidates based on selected status pill
+  const filteredCandidates = useMemo(() => {
+    return filterStatus === 'all'
+      ? scopedCandidates
+      : scopedCandidates.filter(c => c.status === filterStatus);
+  }, [scopedCandidates, filterStatus]);
+
+  // Sort candidates based on active sort setting
+  const sortedCandidates = useMemo(() => {
+    return [...filteredCandidates].sort((a, b) => {
+      if (sortBy === 'match') {
+        return b.matchScore - a.matchScore;
+      }
+      if (sortBy === 'match-asc') {
+        return a.matchScore - b.matchScore;
+      }
+      if (sortBy === 'velocity') {
+        return b.trajectoryScore - a.trajectoryScore;
+      }
+      if (sortBy === 'name') {
+        return a.name.localeCompare(b.name);
+      }
+      return 0;
+    });
+  }, [filteredCandidates, sortBy]);
+
+  const totalFiltered = sortedCandidates.length;
+  const totalPages = Math.ceil(totalFiltered / pageSize);
+
+  // Paginate sorted & filtered candidates
+  const paginatedCandidates = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return sortedCandidates.slice(start, start + pageSize);
+  }, [sortedCandidates, currentPage, pageSize]);
 
   const runAction = async (email: string, action: () => Promise<void> | void) => {
     setBusyEmail(email);
@@ -448,39 +510,126 @@ export function CandidateDashboard({
 
       {/* Active Pipeline */}
       <motion.div
-        initial={{ opacity: 0, y: 16 }}
+initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, delay: 0.5 }}
         className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm"
       >
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
-            <Users className="w-4.5 h-4.5 text-[#2d6a55]" style={{ width: '18px', height: '18px' }} />
+        <div className="flex flex-col gap-4 mb-6 border-b border-[#e4e1da] pb-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
+                <Users className="w-4.5 h-4.5 text-[#2d6a55]" style={{ width: '18px', height: '18px' }} />
+              </div>
+              <div>
+                <h3 className="text-[#1c1c1a] font-semibold text-base">Active Pipeline</h3>
+                <p className="text-xs text-[#6b7063]">
+                  {totalFiltered} {totalFiltered === 1 ? 'candidate' : 'candidates'} filtered
+                  {selectedJob ? ` for ${selectedJob.title}` : ''}
+                </p>
+              </div>
+            </div>
+
+            {/* Sort Dropdown */}
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-[#6b7063] font-medium whitespace-nowrap">Sort by:</label>
+              <select
+                value={sortBy}
+                onChange={(e) => {
+                  setSortBy(e.target.value as any);
+                  setCurrentPage(1);
+                }}
+                className="px-3 py-1.5 bg-white border border-[#e4e1da] rounded-lg text-xs text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+              >
+                <option value="match">Highest Match Fit</option>
+                <option value="match-asc">Lowest Match Fit</option>
+                <option value="velocity">Highest Velocity</option>
+                <option value="name">Name (A-Z)</option>
+              </select>
+            </div>
           </div>
-          <div>
-            <h3 className="text-[#1c1c1a] font-semibold text-base">Active Pipeline</h3>
-            <p className="text-xs text-[#6b7063]">
-              {sortedCandidates.length} {sortedCandidates.length === 1 ? 'candidate' : 'candidates'} in review
-              {selectedJob ? ` for ${selectedJob.title}` : ''}
-            </p>
+
+          {/* Filter Pills */}
+          <div className="flex flex-wrap gap-1.5 items-center">
+            <span className="text-xs text-[#6b7063] font-medium mr-1.5">Status:</span>
+            {[
+              { id: 'all', label: 'All' },
+              { id: 'staged', label: 'Staged' },
+              { id: 'invited', label: 'Invited' },
+              { id: 'applied', label: 'Applied' },
+              { id: 'screening', label: 'Screening' },
+              { id: 'completed', label: 'Completed' },
+              { id: 'interview_scheduled', label: 'Interview Scheduled' },
+              { id: 'rejected', label: 'Rejected' }
+            ].map(pill => {
+              const count = pill.id === 'all'
+                ? sortedCandidates.length
+                : sortedCandidates.filter(c => c.status === pill.id).length;
+              const isActive = filterStatus === pill.id;
+              return (
+                <button
+                  key={pill.id}
+                  onClick={() => {
+                    setFilterStatus(pill.id);
+                    setCurrentPage(1);
+                  }}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    isActive
+                      ? 'bg-[#2d6a55] text-white shadow-sm'
+                      : 'bg-[#f0ede8] text-[#6b7063] hover:text-[#1c1c1a]'
+                  }`}
+                >
+                  {pill.label} ({count})
+                </button>
+              );
+            })}
           </div>
+
+          {/* Dynamic Success Alert Banner */}
+          {inviteSuccessMessage && (
+            <div className="mt-3 flex items-center justify-between p-3.5 bg-[#e8f2ee] border border-[#2d6a55]/20 rounded-xl text-xs text-[#2d6a55] font-semibold animate-fadeIn">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#2d6a55]" />
+                <span>{inviteSuccessMessage}</span>
+              </div>
+              <button onClick={() => setInviteSuccessMessage('')} className="text-[#2d6a55] hover:text-[#245747] font-bold text-sm leading-none">×</button>
+            </div>
+          )}
         </div>
 
-        {sortedCandidates.length === 0 ? (
+        {totalFiltered === 0 ? (
           <div className="text-center py-14">
             <div className="w-14 h-14 bg-[#f0ede8] rounded-2xl flex items-center justify-center mx-auto mb-4">
               <Users className="w-7 h-7 text-[#c8c4bc]" />
             </div>
-            <p className="text-sm text-[#1c1c1a] mb-1 font-semibold">No candidates in pipeline yet</p>
-            <p className="text-xs text-[#6b7063]">Source candidates via LinkedIn or wait for inbound applications</p>
+            <p className="text-sm text-[#1c1c1a] mb-1 font-semibold">No candidates match this filter</p>
+            <p className="text-xs text-[#6b7063]">Try adjusting your search criteria or choosing a different status pill</p>
           </div>
         ) : (
           <Accordion.Root type="single" collapsible className="space-y-2.5">
-            {sortedCandidates.map((candidate, index) => {
+            {paginatedCandidates.map((candidate, index) => {
               const job = jobs.find(j => j.id === candidate.jobId);
               const displayName = getDisplayName(candidate);
               const displayEmail = getDisplayEmail(candidate);
               const actionEmail = getActionEmail(candidate);
+
+              // Form bindings
+              const draftOutreach = editedOutreach[candidate.email] ?? candidate.recruitmentEmail ?? '';
+              const draftFeedback = editedFeedback[candidate.email] ?? candidate.hrFeedback ?? '';
+              const isSavingThis = isSavingField[candidate.email] ?? false;
+
+              const saveOutreachAndFeedbackFields = async () => {
+                setIsSavingField(prev => ({ ...prev, [candidate.email]: true }));
+                try {
+                  await onUpdateOutreachNotes(actionEmail, candidate.jobId, draftOutreach, draftFeedback);
+                  setInviteSuccessMessage(`Outreach email & internal notes saved successfully for ${candidate.name}!`);
+                  setTimeout(() => setInviteSuccessMessage(''), 4000);
+                } catch (err: any) {
+                  setActionError(err.message || 'Failed to update outreach or HR notes.');
+                } finally {
+                  setIsSavingField(prev => ({ ...prev, [candidate.email]: false }));
+                }
+              };
 
               return (
                 <motion.div
@@ -518,15 +667,30 @@ export function CandidateDashboard({
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-0.5">
                                 <h4 className="text-sm text-[#1c1c1a] font-semibold">{displayName}</h4>
+                                
+                                {/* High Match fit badge */}
+                                {candidate.matchScore >= 80 && (
+                                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[#e8f2ee] text-[#2d6a55] whitespace-nowrap flex items-center gap-1">
+                                    ★ High Match
+                                  </span>
+                                )}
+
                                 <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
                                   candidate.status === 'invited' ? 'bg-[#e8f2ee] text-[#2d6a55]' :
                                   candidate.status === 'applied' ? 'bg-[#e8eef8] text-[#3a5d9e]' :
+                                  candidate.status === 'screening' ? 'bg-[#fdf0e6] text-[#c25a2a]' :
                                   candidate.status === 'completed' ? 'bg-[#fdf8ee] text-[#c9a84c]' :
+                                  candidate.status === 'rejected' ? 'bg-[#fdf2f2] text-[#b91c1c]' :
+                                  candidate.status === 'interview_scheduled' ? 'bg-[#eef2ff] text-[#3730a3]' :
                                   'bg-[#f0ede8] text-[#a8a49d]'
                                 }`}>
                                   {candidate.status === 'invited' ? 'Invited' :
                                    candidate.status === 'applied' ? 'Applied' :
-                                   candidate.status === 'completed' ? 'Completed' : 'Staged'}
+                                   candidate.status === 'screening' ? 'Screening' :
+                                   candidate.status === 'completed' ? 'Completed' :
+                                   candidate.status === 'rejected' ? 'Rejected' :
+                                   candidate.status === 'interview_scheduled' ? 'Interview Scheduled' :
+                                   'Staged'}
                                 </span>
                               </div>
                               <p className="text-xs text-[#6b7063] truncate">{neutralizeText(candidate.headline)}</p>
@@ -565,47 +729,127 @@ export function CandidateDashboard({
                           </div>
                         )}
 
+                        {/* Actions Control Panel */}
                         <div className="bg-white border border-[#e4e1da] rounded-xl p-4 shadow-sm">
                           <div className="flex items-center justify-between gap-3 mb-3">
-                            <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Manage Candidate</p>
+                            <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Manage Candidate Status</p>
                             {busyEmail === actionEmail && (
                               <span className="inline-flex items-center gap-1.5 text-xs text-[#2d6a55] font-semibold">
                                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                Updating
+                                Updating...
                               </span>
                             )}
                           </div>
                           <div className="flex flex-wrap gap-2">
                             {candidate.status === 'staged' && (
                               <button
-                                onClick={() => runAction(actionEmail, () => onInvite(actionEmail))}
+                                onClick={async () => {
+                                  await runAction(actionEmail, () => onInvite(actionEmail, draftOutreach, draftFeedback));
+                                  setInviteSuccessMessage(`Invitation and outreach email successfully sent to ${candidate.name}!`);
+                                  setTimeout(() => setInviteSuccessMessage(''), 4500);
+                                }}
                                 disabled={busyEmail === actionEmail}
-                                className="inline-flex items-center gap-2 px-3 py-2 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:opacity-50 text-xs font-medium transition-colors"
+                                className="inline-flex items-center gap-2 px-3 py-2 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
                               >
                                 <Mail className="w-3.5 h-3.5" />
-                                Send Invite
+                                Send Invite & Outreach
                               </button>
                             )}
-                            {candidate.status !== 'screening' && candidate.status !== 'completed' && (
-                              <button
-                                onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'screening', candidate.jobId))}
-                                disabled={busyEmail === actionEmail}
-                                className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f7f6f3] disabled:opacity-50 text-xs font-medium transition-colors"
-                              >
-                                <UserCheck className="w-3.5 h-3.5" />
-                                Mark Screening
-                              </button>
+
+                            {/* Manual screening workflow buttons for screening candidates (F5) */}
+                            {candidate.status === 'screening' ? (
+                              <div className="flex flex-wrap gap-2 w-full p-3 bg-[#fdf0e6]/40 border border-[#c25a2a]/20 rounded-xl mb-1">
+                                <div className="w-full text-xs font-semibold text-[#c25a2a] mb-1.5">Manual Screening Decisions:</div>
+                                <button
+                                  onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'completed', candidate.jobId))}
+                                  disabled={busyEmail === actionEmail}
+                                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                                >
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  Pass Screening / Mark Complete
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setScheduleTarget(candidate);
+                                    setScheduleDate('');
+                                    setScheduleTime('');
+                                    setScheduleLocation('To be confirmed');
+                                    setScheduleNotes('');
+                                  }}
+                                  disabled={busyEmail === actionEmail}
+                                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-[#eef2ff] border border-[#c7d2fe] text-[#3730a3] rounded-lg hover:bg-[#e0e7ff] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                                >
+                                  <Calendar className="w-3.5 h-3.5" />
+                                  Schedule Interview
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setRejectTarget(candidate);
+                                    setRejectFeedback('');
+                                    setRejectMessage('Thank you for applying. After careful consideration, we have decided to move forward with other candidates whose experience more closely matches our current needs. We appreciate the time you invested and wish you success in your career journey.');
+                                  }}
+                                  disabled={busyEmail === actionEmail}
+                                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-[#f0c9c9] text-[#b91c1c] rounded-lg hover:bg-[#fdf2f2] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                                >
+                                  <XCircle className="w-3.5 h-3.5" />
+                                  Reject Candidate
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                {candidate.status !== 'completed' && candidate.status !== 'rejected' && candidate.status !== 'interview_scheduled' && (
+                                  <button
+                                    onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'screening', candidate.jobId))}
+                                    disabled={busyEmail === actionEmail}
+                                    className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f7f6f3] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                                  >
+                                    <UserCheck className="w-3.5 h-3.5" />
+                                    Mark Screening
+                                  </button>
+                                )}
+                                {candidate.status !== 'completed' && candidate.status !== 'rejected' && candidate.status !== 'interview_scheduled' && (
+                                  <button
+                                    onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'completed', candidate.jobId))}
+                                    disabled={busyEmail === actionEmail}
+                                    className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f7f6f3] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                                  >
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    Mark Complete
+                                  </button>
+                                )}
+                                {candidate.status !== 'rejected' && candidate.status !== 'interview_scheduled' && (
+                                  <button
+                                    onClick={() => {
+                                      setScheduleTarget(candidate);
+                                      setScheduleDate('');
+                                      setScheduleTime('');
+                                      setScheduleLocation('To be confirmed');
+                                      setScheduleNotes('');
+                                    }}
+                                    disabled={busyEmail === actionEmail}
+                                    className="inline-flex items-center gap-2 px-3 py-2 bg-[#eef2ff] border border-[#c7d2fe] text-[#3730a3] rounded-lg hover:bg-[#e0e7ff] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                                  >
+                                    <Calendar className="w-3.5 h-3.5" />
+                                    Schedule Interview
+                                  </button>
+                                )}
+                                {candidate.status !== 'rejected' && (
+                                  <button
+                                    onClick={() => {
+                                      setRejectTarget(candidate);
+                                      setRejectFeedback('');
+                                      setRejectMessage('Thank you for applying. After careful consideration, we have decided to move forward with other candidates whose experience more closely matches our current needs. We appreciate the time you invested and wish you success in your career journey.');
+                                    }}
+                                    disabled={busyEmail === actionEmail}
+                                    className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#f0c9c9] text-[#b91c1c] rounded-lg hover:bg-[#fdf2f2] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                                  >
+                                    <XCircle className="w-3.5 h-3.5" />
+                                    Reject
+                                  </button>
+                                )}
+                              </>
                             )}
-                            {candidate.status !== 'completed' && (
-                              <button
-                                onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'completed', candidate.jobId))}
-                                disabled={busyEmail === actionEmail}
-                                className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f7f6f3] disabled:opacity-50 text-xs font-medium transition-colors"
-                              >
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                Mark Complete
-                              </button>
-                            )}
+
                             <button
                               onClick={() => {
                                 if (window.confirm(`Delete ${candidate.name} from the pipeline?`)) {
@@ -613,11 +857,64 @@ export function CandidateDashboard({
                                 }
                               }}
                               disabled={busyEmail === actionEmail}
-                              className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#f0c9c9] text-[#b91c1c] rounded-lg hover:bg-[#fdf2f2] disabled:opacity-50 text-xs font-medium transition-colors"
+                              className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#f0c9c9] text-[#b91c1c] rounded-lg hover:bg-[#fdf2f2] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                               Delete
                             </button>
+                          </div>
+                        </div>
+
+                        {/* F1: Outreach Email Editable Area & F2: Standalone Internal Notes / Feedback */}
+                        <div className="grid md:grid-cols-2 gap-4">
+                          {/* F1: Editable Outreach email text area */}
+                          <div className="bg-white border border-[#e4e1da] rounded-xl p-4 shadow-sm space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Outreach Recruitment Pitch</span>
+                              <span className="text-[10px] text-[#2d6a55] font-semibold">Draft</span>
+                            </div>
+                            <textarea
+                              value={draftOutreach}
+                              onChange={(e) => setEditedOutreach(prev => ({ ...prev, [candidate.email]: e.target.value }))}
+                              placeholder="Personalized outreach pitch sent or to be sent to candidate..."
+                              rows={5}
+                              className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-xs text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55] resize-none"
+                            />
+                            <div className="text-right">
+                              <button
+                                onClick={saveOutreachAndFeedbackFields}
+                                disabled={isSavingThis}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] text-xs font-medium transition-colors disabled:opacity-50 cursor-pointer"
+                              >
+                                {isSavingThis ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                                Save Outreach
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* F2: Standalone Internal notes / HR feedback */}
+                          <div className="bg-white border border-[#e4e1da] rounded-xl p-4 shadow-sm space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Internal HR Notes & Feedback</span>
+                              <span className="text-[10px] text-[#3730a3] font-semibold">Hiring Team Notes</span>
+                            </div>
+                            <textarea
+                              value={draftFeedback}
+                              onChange={(e) => setEditedFeedback(prev => ({ ...prev, [candidate.email]: e.target.value }))}
+                              placeholder="Add internal candidate performance notes, feedback, or interview impressions..."
+                              rows={5}
+                              className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-xs text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55] resize-none"
+                            />
+                            <div className="text-right">
+                              <button
+                                onClick={saveOutreachAndFeedbackFields}
+                                disabled={isSavingThis}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#3730a3] text-white rounded-lg hover:bg-[#312e81] text-xs font-medium transition-colors disabled:opacity-50 cursor-pointer"
+                              >
+                                {isSavingThis ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                                Save Notes & Feedback
+                              </button>
+                            </div>
                           </div>
                         </div>
 
@@ -808,14 +1105,14 @@ export function CandidateDashboard({
                         </div>
 
                         {/* Screening Results */}
-                        {candidate.status === 'completed' && candidate.screeningScore !== undefined && (
+                        {(candidate.status === 'completed' || candidate.status === 'screening') && candidate.screeningScore !== undefined && (
                           <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-4 flex items-center justify-between shadow-sm">
                             <div className="flex items-center gap-3">
                               <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
                                 <CheckCircle2 className="w-4.5 h-4.5 text-[#2d6a55]" style={{ width: '18px', height: '18px' }} />
                               </div>
                               <div>
-                                <p className="text-sm text-[#1c1c1a] font-semibold">Screening Complete</p>
+                                <p className="text-sm text-[#1c1c1a] font-semibold">Screening {candidate.status === 'completed' ? 'Complete' : 'In Progress'}</p>
                                 <p className="text-xs text-[#6b7063]">Interactive warm-up sandbox Q&A scored by AI</p>
                               </div>
                             </div>
@@ -826,21 +1123,33 @@ export function CandidateDashboard({
                           </div>
                         )}
 
-                        {/* Email Preview */}
-                        {candidate.recruitmentEmail && (
-                          <details className="group bg-white border border-[#e4e1da] rounded-xl overflow-hidden shadow-sm">
-                            <summary className="cursor-pointer px-4 py-3 hover:bg-[#f7f6f3] transition-colors flex items-center justify-between font-medium text-sm text-[#1c1c1a]">
-                              <span className="text-sm text-[#6b7063] group-hover:text-[#1c1c1a] transition-colors">
-                                View Outreach Email
-                              </span>
-                              <ChevronDown className="w-4 h-4 text-[#a8a49d] transition-transform group-open:rotate-180" />
-                            </summary>
-                            <div className="px-4 pb-4 pt-2 border-t border-[#e4e1da]">
-                              <pre className="whitespace-pre-wrap text-xs text-[#6b7063] leading-relaxed font-sans">
-                                {candidate.recruitmentEmail}
-                              </pre>
+                        {/* Interview Slot Details */}
+                        {candidate.status === 'interview_scheduled' && candidate.interviewSlot && (
+                          <div className="bg-[#eef2ff] border border-[#c7d2fe] rounded-xl p-4 shadow-sm">
+                            <div className="flex items-center gap-2 mb-3">
+                              <Calendar className="w-4 h-4 text-[#3730a3]" />
+                              <p className="text-xs text-[#3730a3] uppercase tracking-wider font-semibold">Interview Scheduled</p>
                             </div>
-                          </details>
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div><span className="text-[#6b7280]">Date</span><p className="text-[#1c1c1a] font-medium mt-0.5">{candidate.interviewSlot.date}</p></div>
+                              <div><span className="text-[#6b7280]">Time</span><p className="text-[#1c1c1a] font-medium mt-0.5">{candidate.interviewSlot.time}</p></div>
+                              <div><span className="text-[#6b7280]">Location</span><p className="text-[#1c1c1a] font-medium mt-0.5">{candidate.interviewSlot.location}</p></div>
+                              {candidate.interviewSlot.notes && <div className="col-span-2 mt-1.5"><span className="text-[#6b7280]">Notes</span><p className="text-[#1c1c1a] font-medium mt-0.5 leading-relaxed">{candidate.interviewSlot.notes}</p></div>}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Rejection Info */}
+                        {candidate.status === 'rejected' && (
+                          <div className="bg-[#fdf2f2] border border-[#f5c2c2] rounded-xl p-4 shadow-sm">
+                            <div className="flex items-center gap-2 mb-2">
+                              <XCircle className="w-4 h-4 text-[#b91c1c]" />
+                              <p className="text-xs text-[#b91c1c] uppercase tracking-wider font-semibold">Candidate Rejected</p>
+                            </div>
+                            {candidate.hrFeedback && <p className="text-xs text-[#6b7063] mt-1"><span className="font-semibold text-[#1c1c1a]">HR Notes:</span> {candidate.hrFeedback}</p>}
+                            {candidate.rejectionMessage && <p className="text-xs text-[#6b7063] mt-1"><span className="font-semibold text-[#1c1c1a]">Sent apology email:</span> "{candidate.rejectionMessage}"</p>}
+                            {candidate.rejectedAt && <p className="text-xs text-[#a8a49d] mt-1">Rejected at: {new Date(candidate.rejectedAt).toLocaleString()}</p>}
+                          </div>
                         )}
                       </div>
                     </Accordion.Content>
@@ -850,7 +1159,175 @@ export function CandidateDashboard({
             })}
           </Accordion.Root>
         )}
+
+        {/* Pagination Footer Controls */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between border-t border-[#e4e1da] pt-5 mt-5">
+            <span className="text-xs text-[#6b7063]">
+              Showing {Math.min(totalFiltered, (currentPage - 1) * pageSize + 1)} to {Math.min(totalFiltered, currentPage * pageSize)} of {totalFiltered} candidates
+            </span>
+            <div className="flex gap-2">
+              <button
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                className="px-3 py-1.5 border border-[#e4e1da] bg-white rounded-lg text-xs font-semibold text-[#6b7063] hover:bg-[#f7f6f3] disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Previous
+              </button>
+              <button
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                className="px-3 py-1.5 border border-[#e4e1da] bg-white rounded-lg text-xs font-semibold text-[#6b7063] hover:bg-[#f7f6f3] disabled:opacity-50 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </motion.div>
+
+      {/* Reject Candidate Modal */}
+      {rejectTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-[#e4e1da]">
+            <div className="flex items-center justify-between p-5 border-b border-[#e4e1da]">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-[#fdf2f2] rounded-lg flex items-center justify-center">
+                  <XCircle className="w-4 h-4 text-[#b91c1c]" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-[#1c1c1a]">Reject Candidate</h3>
+                  <p className="text-xs text-[#6b7063]">{rejectTarget.name}</p>
+                </div>
+              </div>
+              <button onClick={() => setRejectTarget(null)} className="text-[#a8a49d] hover:text-[#1c1c1a] transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs text-[#a8a49d] mb-1 font-medium font-semibold">HR Feedback / Internal Notes</label>
+                <textarea
+                  value={rejectFeedback}
+                  onChange={(e) => setRejectFeedback(e.target.value)}
+                  placeholder="Optional internal notes for the hiring team..."
+                  className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55] resize-none"
+                  rows={2}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-[#a8a49d] mb-1 font-medium font-semibold">Rejection Message (sent to candidate)</label>
+                <textarea
+                  value={rejectMessage}
+                  onChange={(e) => setRejectMessage(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55] resize-none"
+                  rows={4}
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 p-5 pt-0">
+              <button
+                onClick={() => setRejectTarget(null)}
+                className="flex-1 px-4 py-2.5 bg-white border border-[#e4e1da] text-[#6b7063] rounded-lg hover:bg-[#f7f6f3] text-sm font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const email = rejectTarget.managementEmail || rejectTarget.email;
+                  runAction(email, () => onReject(email, rejectTarget.jobId, rejectFeedback, rejectMessage));
+                  setRejectTarget(null);
+                }}
+                className="flex-1 px-4 py-2.5 bg-[#b91c1c] text-white rounded-lg hover:bg-[#991b1b] text-sm font-medium transition-colors"
+              >
+                Confirm Rejection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule Interview Modal */}
+      {scheduleTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-[#e4e1da]">
+            <div className="flex items-center justify-between p-5 border-b border-[#e4e1da]">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-[#eef2ff] rounded-lg flex items-center justify-center">
+                  <Calendar className="w-4 h-4 text-[#3730a3]" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-[#1c1c1a]">Schedule Interview</h3>
+                  <p className="text-xs text-[#6b7063]">{scheduleTarget.name}</p>
+                </div>
+              </div>
+              <button onClick={() => setScheduleTarget(null)} className="text-[#a8a49d] hover:text-[#1c1c1a] transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-[#a8a49d] mb-1 font-medium font-semibold">Date *</label>
+                  <input
+                    type="date"
+                    value={scheduleDate}
+                    onChange={(e) => setScheduleDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#3730a3]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-[#a8a49d] mb-1 font-medium font-semibold">Time *</label>
+                  <input
+                    type="time"
+                    value={scheduleTime}
+                    onChange={(e) => setScheduleTime(e.target.value)}
+                    className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#3730a3]"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-[#a8a49d] mb-1 font-medium font-semibold">Location</label>
+                <input
+                  value={scheduleLocation}
+                  onChange={(e) => setScheduleLocation(e.target.value)}
+                  placeholder="Office address, Zoom link, etc."
+                  className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#3730a3]"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-[#a8a49d] mb-1 font-medium font-semibold">Notes</label>
+                <textarea
+                  value={scheduleNotes}
+                  onChange={(e) => setScheduleNotes(e.target.value)}
+                  placeholder="Bring your portfolio, virtual meeting instructions, etc."
+                  className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#3730a3] resize-none"
+                  rows={2}
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 p-5 pt-0">
+              <button
+                onClick={() => setScheduleTarget(null)}
+                className="flex-1 px-4 py-2.5 bg-white border border-[#e4e1da] text-[#6b7063] rounded-lg hover:bg-[#f7f6f3] text-sm font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={!scheduleDate || !scheduleTime}
+                onClick={() => {
+                  const email = scheduleTarget.managementEmail || scheduleTarget.email;
+                  runAction(email, () => onScheduleInterview(email, scheduleTarget.jobId, scheduleDate, scheduleTime, scheduleLocation, scheduleNotes));
+                  setScheduleTarget(null);
+                }}
+                className="flex-1 px-4 py-2.5 bg-[#3730a3] text-white rounded-lg hover:bg-[#312e81] disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+              >
+                Confirm Schedule
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
