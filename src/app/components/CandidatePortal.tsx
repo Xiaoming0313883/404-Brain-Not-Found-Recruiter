@@ -29,7 +29,21 @@ export interface CandidateData {
   profilePictureUrl?: string;
   resumeUrl?: string;
   resumeSummary?: string;
+  profileExtractionWarning?: string;
+  emailVerified?: boolean;
   resumeData?: any;
+  profileVerified?: boolean;
+  age?: string;
+  address?: string;
+  cameFrom?: string;
+  location?: string;
+  headline?: string;
+  workExperience?: string;
+  qualification?: string;
+  gradeResults?: string;
+  awards?: string[];
+  phone?: string;
+  skills?: string[];
   sandboxAnswers?: string[];
   score?: number;
   recruitmentEmail?: string;
@@ -99,11 +113,12 @@ export function CandidatePortal() {
         <Route
           path="/sandbox"
           element={
-            candidateData ? (
+            candidateData?.jobId && candidateData.status !== 'completed' ? (
               <CandidateSandbox
                 candidateData={candidateData}
                 onComplete={(answers, score, evaluation) => {
                   const selectedPositionId = candidateData.jobId;
+                  const selectedApplicationId = candidateData.selectedApplicationId;
                   setCandidateData({
                     ...candidateData,
                     sandboxAnswers: answers,
@@ -112,7 +127,7 @@ export function CandidatePortal() {
                     progress: 100,
                     evaluation,
                     applications: candidateData.applications?.map(application =>
-                      application.position_id === selectedPositionId
+                      application.application_id === selectedApplicationId || application.position_id === selectedPositionId
                         ? { ...application, status: 'completed', progress: 100, answers, evaluation }
                         : application
                     )
@@ -120,7 +135,7 @@ export function CandidatePortal() {
                 }}
               />
             ) : (
-              <Navigate to="/candidate" replace />
+              <Navigate to={candidateData ? "/candidate/home" : "/candidate"} replace />
             )
           }
         />

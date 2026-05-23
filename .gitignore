@@ -12,3 +12,5 @@ __pycache__/
 !backend/.env.example
 docs/
 backend/data/recruiting_db.json
+backend/src/imports/
+backend/uploads/

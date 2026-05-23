@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import * as Progress from '@radix-ui/react-progress';
-import { ArrowLeft, BarChart3, Briefcase, FileText, Loader2, LogOut, MessageSquare, PlayCircle, Users } from 'lucide-react';
+import { ArrowLeft, BarChart3, Briefcase, FileText, Loader2, LogOut, MessageSquare, PlayCircle, Users, Save } from 'lucide-react';
 import { CandidateData } from '../CandidatePortal';
 
 interface Props {
@@ -44,7 +44,22 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
   const [positions, setPositions] = useState<any[]>([]);
   const [allPositions, setAllPositions] = useState<any[]>([]);
   const [isApplying, setIsApplying] = useState<number | null>(null);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [profileForm, setProfileForm] = useState({
+    name: candidateData.name || '',
+    age: candidateData.age || '',
+    phone: candidateData.phone || '',
+    address: candidateData.address || '',
+    cameFrom: candidateData.cameFrom || '',
+    location: candidateData.location || '',
+    headline: candidateData.headline || '',
+    workExperience: candidateData.workExperience || '',
+    qualification: candidateData.qualification || '',
+    gradeResults: candidateData.gradeResults || '',
+    awards: (candidateData.awards || []).join(', '),
+    skills: (candidateData.skills || []).join(', ')
+  });
   const applications = candidateData.applications || [];
   const [selectedApplicationId, setSelectedApplicationId] = useState(
     candidateData.selectedApplicationId || applications[applications.length - 1]?.application_id || ''
@@ -56,6 +71,8 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
   const selectedPosition = allPositions.find(position => position.id === selectedPositionId);
   const selectedStatus = normalizeApplicationStatus(selectedApplication?.status || candidateData.status);
   const progress = selectedApplication?.progress ?? (selectedStatus === 'completed' ? 100 : selectedStatus === 'screening' ? 70 : selectedStatus === 'profile' ? 10 : 40);
+  const selectedEvaluation = selectedApplication?.evaluation || candidateData.evaluation;
+  const selectedScore = selectedEvaluation?.screening_score ?? candidateData.score;
   const canReview = selectedStatus === 'completed';
   const canContinue = selectedStatus !== 'completed' && selectedStatus !== 'profile' && Boolean(selectedApplication);
   const appliedPositionIds = new Set(applications.map(application => application.position_id));
@@ -84,12 +101,21 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
             ? 'profile'
             : 'applied';
 
+    const normalizedApplications = (data.applications || []).map((application: any) => {
+      const applicationStatus = normalizeApplicationStatus(application.status);
+      return {
+        ...application,
+        status: applicationStatus,
+        progress: application.progress ?? (applicationStatus === 'completed' ? 100 : applicationStatus === 'screening' ? 70 : 40)
+      };
+    });
+
     return {
       email: data.email,
       name: data.name,
       jobId: data.position_id,
       selectedApplicationId: data.application_id,
-      applications: data.applications || [
+      applications: normalizedApplications.length ? normalizedApplications : [
         ...(candidateData.applications || []).filter(application => application.position_id !== data.position_id),
         {
           application_id: data.application_id || `position-${data.position_id}`,
@@ -111,7 +137,20 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
       profilePictureUrl: data.profile_picture_url || candidateData.profilePictureUrl,
       resumeUrl: data.resume_url || candidateData.resumeUrl,
       resumeSummary: data.resume_summary || candidateData.resumeSummary,
+      profileExtractionWarning: data.profile_data?.extraction_warning || candidateData.profileExtractionWarning,
       resumeData: data.resume_filename ? { filename: data.resume_filename } : candidateData.resumeData,
+      profileVerified: data.profile_verified ?? candidateData.profileVerified,
+      age: data.profile_data?.age || candidateData.age,
+      address: data.profile_data?.address || candidateData.address,
+      cameFrom: data.profile_data?.came_from || candidateData.cameFrom,
+      location: data.profile_data?.location || candidateData.location,
+      headline: data.profile_data?.headline || candidateData.headline,
+      workExperience: data.profile_data?.work_experience || candidateData.workExperience,
+      qualification: data.profile_data?.qualification || candidateData.qualification,
+      gradeResults: data.profile_data?.grade_results || candidateData.gradeResults,
+      awards: data.profile_data?.awards || candidateData.awards,
+      phone: data.profile_data?.phone || candidateData.phone,
+      skills: data.profile_data?.skills || candidateData.skills,
       recruitmentEmail: data.outreach_email,
       customQuestions: data.custom_questions,
       sandboxAnswers: data.answers,
@@ -121,6 +160,18 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
   };
 
   const handleApply = async (position: any) => {
+    if (candidateData.emailVerified === false) {
+      setErrorMessage('Verify your email address before applying to a position.');
+      return;
+    }
+    if (!candidateData.profileVerified) {
+      setErrorMessage('Verify your basic information before applying to a position.');
+      return;
+    }
+    if (appliedPositionIds.has(position.id)) {
+      setErrorMessage('You have already applied for this position.');
+      return;
+    }
     setIsApplying(position.id);
     setErrorMessage('');
     try {
@@ -142,6 +193,76 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
       setErrorMessage(err.message || 'Failed to apply for position.');
     } finally {
       setIsApplying(null);
+    }
+  };
+
+  const handleProfileFieldChange = (field: keyof typeof profileForm, value: string) => {
+    setProfileForm(current => ({ ...current, [field]: value }));
+  };
+
+  const profileReady = Boolean(
+    profileForm.name.trim() &&
+    profileForm.age.trim() &&
+    profileForm.address.trim() &&
+    profileForm.cameFrom.trim() &&
+    profileForm.phone.trim() &&
+    profileForm.workExperience.trim() &&
+    profileForm.qualification.trim() &&
+    profileForm.gradeResults.trim()
+  );
+
+  const handleSaveProfile = async () => {
+    if (!profileReady) {
+      setErrorMessage('Please complete name, age, address, came from, phone number, working experience, qualification, and grade/results before saving.');
+      return;
+    }
+    setIsSavingProfile(true);
+    setErrorMessage('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(candidateData.email)}/profile`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: profileForm.name.trim(),
+          age: profileForm.age.trim(),
+          phone: profileForm.phone.trim(),
+          address: profileForm.address.trim(),
+          came_from: profileForm.cameFrom.trim(),
+          location: profileForm.location.trim(),
+          headline: profileForm.headline.trim(),
+          work_experience: profileForm.workExperience.trim(),
+          qualification: profileForm.qualification.trim(),
+          grade_results: profileForm.gradeResults.trim(),
+          awards: profileForm.awards.split(',').map(award => award.trim()).filter(Boolean),
+          skills: profileForm.skills.split(',').map(skill => skill.trim()).filter(Boolean)
+        })
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to save profile details.');
+      }
+      const data = await response.json();
+      onUpdateCandidate({
+        ...candidateData,
+        name: data.name,
+        profileVerified: true,
+        profileExtractionWarning: data.profile_data?.extraction_warning || candidateData.profileExtractionWarning,
+        age: data.profile_data?.age || profileForm.age,
+        address: data.profile_data?.address || profileForm.address,
+        cameFrom: data.profile_data?.came_from || profileForm.cameFrom,
+        location: data.profile_data?.location || profileForm.location,
+        headline: data.profile_data?.headline || profileForm.headline,
+        workExperience: data.profile_data?.work_experience || profileForm.workExperience,
+        qualification: data.profile_data?.qualification || profileForm.qualification,
+        gradeResults: data.profile_data?.grade_results || profileForm.gradeResults,
+        awards: data.profile_data?.awards || profileForm.awards.split(',').map(award => award.trim()).filter(Boolean),
+        phone: data.profile_data?.phone || profileForm.phone,
+        skills: data.profile_data?.skills || profileForm.skills.split(',').map(skill => skill.trim()).filter(Boolean)
+      });
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to save profile details.');
+    } finally {
+      setIsSavingProfile(false);
     }
   };
 
@@ -180,6 +301,139 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
           </div>
         </div>
 
+        {candidateData.emailVerified === false && (
+          <div className="mb-5 rounded-xl border border-[#f2d3a4] bg-[#fff8ed] px-4 py-3 text-sm text-[#8a5a14]">
+            Email verification is required before applying to a position. Sign out and complete the verification step from the Candidate Portal.
+          </div>
+        )}
+
+        <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mb-5">
+          <div className="flex items-center gap-3 mb-4">
+            <FileText className="w-4 h-4 text-[#2d6a55]" />
+            <div>
+              <h2 className="text-[#1c1c1a] font-semibold">Information Details</h2>
+              <p className="text-xs text-[#6b7063]">Review resume-extracted details and complete any missing basic information.</p>
+            </div>
+          </div>
+          {candidateData.profileExtractionWarning && (
+            <div className="mb-4 rounded-xl border border-[#f2d3a4] bg-[#fff8ed] px-4 py-3 text-sm text-[#8a5a14]">
+              {candidateData.profileExtractionWarning}
+            </div>
+          )}
+          <div className="grid sm:grid-cols-2 gap-4 text-sm">
+            <div>
+              <label className="block text-xs text-[#a8a49d] mb-1">Full Name *</label>
+              <input
+                value={profileForm.name}
+                onChange={(event) => handleProfileFieldChange('name', event.target.value)}
+                className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-[#a8a49d] mb-1">Age *</label>
+              <input
+                value={profileForm.age}
+                onChange={(event) => handleProfileFieldChange('age', event.target.value)}
+                className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-[#a8a49d] mb-1">Phone Number *</label>
+              <input
+                value={profileForm.phone}
+                onChange={(event) => handleProfileFieldChange('phone', event.target.value)}
+                className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-[#a8a49d] mb-1">Location</label>
+              <input
+                value={profileForm.location}
+                onChange={(event) => handleProfileFieldChange('location', event.target.value)}
+                className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+              />
+            </div>
+          </div>
+          <div className="mt-4">
+            <label className="block text-xs text-[#a8a49d] mb-1">Came From *</label>
+            <input
+              value={profileForm.cameFrom}
+              onChange={(event) => handleProfileFieldChange('cameFrom', event.target.value)}
+              placeholder="Country, city, university, referral source, or previous company"
+              className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+            />
+          </div>
+          <div className="mt-4">
+            <label className="block text-xs text-[#a8a49d] mb-1">Address *</label>
+            <textarea
+              value={profileForm.address}
+              onChange={(event) => handleProfileFieldChange('address', event.target.value)}
+              className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55] resize-none"
+              rows={2}
+            />
+          </div>
+          <div className="mt-4">
+            <label className="block text-xs text-[#a8a49d] mb-1">Work Experience *</label>
+            <textarea
+              value={profileForm.workExperience}
+              onChange={(event) => handleProfileFieldChange('workExperience', event.target.value)}
+              className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55] resize-none"
+              rows={3}
+            />
+          </div>
+          <div className="grid sm:grid-cols-2 gap-4 mt-4">
+            <div>
+              <label className="block text-xs text-[#a8a49d] mb-1">Qualification *</label>
+              <input
+                value={profileForm.qualification}
+                onChange={(event) => handleProfileFieldChange('qualification', event.target.value)}
+                placeholder="Degree, diploma, certificate, or highest education"
+                className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-[#a8a49d] mb-1">Grade and Results *</label>
+              <input
+                value={profileForm.gradeResults}
+                onChange={(event) => handleProfileFieldChange('gradeResults', event.target.value)}
+                placeholder="CGPA, GPA, class, exam result, or honors"
+                className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+              />
+            </div>
+          </div>
+          <div className="mt-4">
+            <label className="block text-xs text-[#a8a49d] mb-1">Awards</label>
+            <input
+              value={profileForm.awards}
+              onChange={(event) => handleProfileFieldChange('awards', event.target.value)}
+              placeholder="Awards, scholarships, competitions, honors"
+              className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+            />
+          </div>
+          <div className="mt-4">
+            <label className="block text-xs text-[#a8a49d] mb-1">Skills</label>
+            <input
+              value={profileForm.skills}
+              onChange={(event) => handleProfileFieldChange('skills', event.target.value)}
+              placeholder="React, Python, SQL"
+              className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+            />
+          </div>
+          <div className="mt-4 flex items-center justify-between gap-3 pt-4 border-t border-[#e4e1da]">
+            <p className={`text-xs font-semibold ${candidateData.profileVerified ? 'text-[#2d6a55]' : 'text-[#c25a2a]'}`}>
+              {candidateData.profileVerified ? 'Profile verified' : 'Verification required before applying'}
+            </p>
+            <button
+              onClick={handleSaveProfile}
+              disabled={!profileReady || isSavingProfile}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed text-sm font-medium"
+            >
+              {isSavingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              Save Details
+            </button>
+          </div>
+        </div>
+
         {errorMessage && (
           <div className="mb-5 p-4 bg-[#fdf2f2] border border-[#f5c2c2] text-[#b91c1c] rounded-xl text-sm">
             {errorMessage}
@@ -211,7 +465,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
             <div className="border border-[#e4e1da] rounded-xl p-4">
               <BarChart3 className="w-4 h-4 text-[#2d6a55] mb-2" />
               <p className="text-xs text-[#a8a49d]">Score</p>
-              <p className="text-sm text-[#1c1c1a] font-medium">{candidateData.score ?? '--'} / 100</p>
+              <p className="text-sm text-[#1c1c1a] font-medium">{selectedScore ?? '--'} / 100</p>
             </div>
           </div>
         </div>
@@ -291,13 +545,28 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
               Continue Interview
             </Link>
           )}
-          <Link
-            to={canReview ? '/candidate/feedback' : '/candidate/sandbox'}
-            className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-xl hover:bg-[#f7f6f3] transition-colors text-sm font-medium shadow-sm"
-          >
-            <BarChart3 className="w-4 h-4" />
-            {canReview ? 'Review Results' : 'View Session'}
-          </Link>
+          {canReview ? (
+            <Link
+              to="/candidate/feedback"
+              className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-xl hover:bg-[#f7f6f3] transition-colors text-sm font-medium shadow-sm"
+            >
+              <BarChart3 className="w-4 h-4" />
+              Review Results
+            </Link>
+          ) : selectedApplication ? (
+            <Link
+              to="/candidate/sandbox"
+              className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-xl hover:bg-[#f7f6f3] transition-colors text-sm font-medium shadow-sm"
+            >
+              <BarChart3 className="w-4 h-4" />
+              View Session
+            </Link>
+          ) : (
+            <div className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-white border border-[#e4e1da] text-[#a8a49d] rounded-xl text-sm font-medium shadow-sm">
+              <BarChart3 className="w-4 h-4" />
+              Apply to a position
+            </div>
+          )}
         </div>
 
         <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mt-5">
@@ -333,11 +602,11 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
                   </div>
                   <button
                     onClick={() => handleApply(position)}
-                    disabled={isApplying !== null || appliedPositionIds.has(position.id)}
+                    disabled={isApplying !== null || appliedPositionIds.has(position.id) || !candidateData.profileVerified}
                     className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:opacity-50 transition-colors text-sm font-medium whitespace-nowrap"
                   >
                     {isApplying === position.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
-                    {appliedPositionIds.has(position.id) ? 'Applied' : 'Apply'}
+                    {!candidateData.profileVerified ? 'Verify Profile' : appliedPositionIds.has(position.id) ? 'Applied' : 'Apply'}
                   </button>
                 </div>
               </div>

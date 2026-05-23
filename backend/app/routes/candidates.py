@@ -3,7 +3,10 @@ import hmac
 import io
 import os
 import re
+import shutil
 import uuid
+import base64
+import secrets
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse
@@ -13,6 +16,7 @@ from pypdf import PdfReader
 
 from ..database import load_db, save_db
 from ..config import settings
+from ..services.agents.base_agent import get_openai_client
 from ..services.job_windows import is_open_for_applications
 from ..services.linkedin_profiles import build_fast_match_results, build_fast_outreach, scrape_linkedin_profile
 from ..services.agents import (
@@ -22,7 +26,7 @@ from ..services.agents import (
     run_interview_agent_phase_b,
     run_report_agent
 )
-from ..services.mailer import send_recruitment_email
+from ..services.mailer import send_candidate_verification_email, send_recruitment_email
 
 router = APIRouter(prefix="/candidates", tags=["Candidates"])
 MAX_RESUME_BYTES = 10 * 1024 * 1024
@@ -46,8 +50,25 @@ class CandidateLoginPayload(BaseModel):
     email: str
     password: str
 
+class CandidateEmailVerificationPayload(BaseModel):
+    code: str
+
 class CandidateApplyPositionPayload(BaseModel):
     position_id: int
+
+class CandidateProfilePayload(BaseModel):
+    name: str
+    age: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    came_from: Optional[str] = None
+    location: Optional[str] = None
+    headline: Optional[str] = None
+    work_experience: Optional[str] = None
+    qualification: Optional[str] = None
+    grade_results: Optional[str] = None
+    awards: Optional[List[str]] = None
+    skills: Optional[List[str]] = None
 
 class ScrapePayload(BaseModel):
     position_id: int
@@ -76,6 +97,28 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     return hmac.compare_digest(hash_password(password), password_hash)
+
+def normalize_candidate_email(email: str) -> str:
+    email_clean = (email or "").strip().lower()
+    email_pattern = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.IGNORECASE)
+    if not email_pattern.match(email_clean):
+        raise HTTPException(status_code=400, detail="Please enter a valid email address.")
+    return email_clean
+
+def create_email_verification(candidate: Dict[str, Any]) -> str:
+    code = f"{secrets.randbelow(900000) + 100000}"
+    candidate["email_verified"] = False
+    candidate["email_verification"] = {
+        "code": code,
+        "sent_at": datetime.now().isoformat(timespec="seconds"),
+        "prototype": True
+    }
+    return code
+
+def send_or_log_verification_email(email: str, code: str) -> bool:
+    sent = send_candidate_verification_email(email, code)
+    print(f"Prototype email verification code for {email}: {code}")
+    return sent
 
 def build_application_id(position_id: int) -> str:
     return f"position-{position_id}"
@@ -145,10 +188,12 @@ def serialize_application_candidate(candidate: Dict[str, Any], email: str, appli
 
 def serialize_candidate(candidate: Dict[str, Any], management_email: Optional[str] = None) -> Dict[str, Any]:
     normalize_candidate_applications(candidate)
-    serialized = {k: v for k, v in candidate.items() if k != "password_hash"}
+    serialized = {k: v for k, v in candidate.items() if k not in {"password_hash", "email_verification"}}
     serialized["management_email"] = management_email or candidate.get("email")
     serialized["has_password"] = bool(candidate.get("password_hash"))
     serialized["application_count"] = len(candidate.get("applications", []))
+    serialized["profile_verified"] = bool(candidate.get("profile_verified"))
+    serialized["email_verified"] = bool(candidate.get("email_verified", True))
     return serialized
 
 def neutralize_text(text: str) -> str:
@@ -184,6 +229,18 @@ def get_resume_summary(profile_data: Dict[str, Any], resume_text: str) -> str:
         latest = experiences[0]
         return f"{latest.get('title', 'Candidate')} with experience at {latest.get('company', 'previous organizations')}."
     return "Resume text could not be extracted automatically. Open the original PDF to review the candidate profile."
+
+def apply_resume_extraction_warning(profile_data: Dict[str, Any], resume_text: str) -> Dict[str, Any]:
+    text = resume_text or ""
+    sparse_text = len(text.strip()) < 80 or text.startswith("PDF text extraction did not find readable text")
+    if sparse_text:
+        profile_data["extraction_warning"] = (
+            "This resume looks like an image-based PDF. Automatic prefill needs selectable PDF text, "
+            "Tesseract OCR, or a vision-capable AI model. Please review and complete the fields manually."
+        )
+    else:
+        profile_data.pop("extraction_warning", None)
+    return profile_data
 
 def save_resume_file(email: str, filename: str, contents: bytes) -> str:
     os.makedirs(RESUME_DIR, exist_ok=True)
@@ -302,15 +359,16 @@ def get_candidates(neutralize: bool = Query(False)):
 @router.get("/lookup")
 def lookup_candidate(email: str):
     db = load_db()
-    candidate = db.get("candidates", {}).get(email.strip().lower())
+    email_clean = normalize_candidate_email(email)
+    candidate = db.get("candidates", {}).get(email_clean)
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate session not found.")
-    return serialize_candidate(candidate, email.strip().lower())
+    return serialize_candidate(candidate, email_clean)
 
 @router.post("/login")
 def login_candidate(payload: CandidateLoginPayload):
     db = load_db()
-    email_clean = payload.email.strip().lower()
+    email_clean = normalize_candidate_email(payload.email)
     candidate = db.get("candidates", {}).get(email_clean)
 
     if not candidate:
@@ -325,12 +383,77 @@ def login_candidate(payload: CandidateLoginPayload):
 @router.post("/{email}/password")
 def set_candidate_password(email: str, payload: CandidatePasswordPayload):
     db = load_db()
-    email_clean = email.strip().lower()
+    email_clean = normalize_candidate_email(email)
     candidate = db.get("candidates", {}).get(email_clean)
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate account not found.")
 
     candidate["password_hash"] = hash_password(payload.password)
+    save_db(db)
+    return serialize_candidate(candidate, email_clean)
+
+@router.post("/{email}/verify-email")
+def verify_candidate_email(email: str, payload: CandidateEmailVerificationPayload):
+    db = load_db()
+    email_clean = normalize_candidate_email(email)
+    candidate = db.get("candidates", {}).get(email_clean)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate account not found.")
+
+    verification = candidate.get("email_verification") or {}
+    expected_code = str(verification.get("code") or "").strip()
+    submitted_code = (payload.code or "").strip()
+    if not expected_code or submitted_code != expected_code:
+        raise HTTPException(status_code=400, detail="Invalid verification code.")
+
+    candidate["email_verified"] = True
+    candidate["email_verified_at"] = datetime.now().isoformat(timespec="seconds")
+    candidate.pop("email_verification", None)
+    save_db(db)
+    return serialize_candidate(candidate, email_clean)
+
+@router.post("/{email}/resend-verification")
+def resend_candidate_email_verification(email: str):
+    db = load_db()
+    email_clean = normalize_candidate_email(email)
+    candidate = db.get("candidates", {}).get(email_clean)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate account not found.")
+    if candidate.get("email_verified"):
+        return {**serialize_candidate(candidate, email_clean), "verification_sent": False}
+
+    code = create_email_verification(candidate)
+    sent = send_or_log_verification_email(email_clean, code)
+    save_db(db)
+    response = serialize_candidate(candidate, email_clean)
+    response["verification_sent"] = sent
+    response["prototype_verification_code"] = code
+    return response
+
+@router.patch("/{email}/profile")
+def update_candidate_profile(email: str, payload: CandidateProfilePayload):
+    db = load_db()
+    email_clean = normalize_candidate_email(email)
+    candidate = db.setdefault("candidates", {}).get(email_clean)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate account not found.")
+
+    profile_data = candidate.setdefault("profile_data", {})
+    candidate["name"] = payload.name.strip()
+    profile_data["name"] = payload.name.strip()
+    profile_data["age"] = (payload.age or "").strip()
+    profile_data["phone"] = (payload.phone or "").strip()
+    profile_data["address"] = (payload.address or "").strip()
+    profile_data["came_from"] = (payload.came_from or "").strip()
+    profile_data["location"] = (payload.location or "").strip()
+    profile_data["headline"] = (payload.headline or "").strip()
+    profile_data["work_experience"] = (payload.work_experience or "").strip()
+    profile_data["qualification"] = (payload.qualification or "").strip()
+    profile_data["grade_results"] = (payload.grade_results or "").strip()
+    profile_data["awards"] = payload.awards or []
+    profile_data["skills"] = payload.skills or []
+    candidate["profile_verified"] = True
+
     save_db(db)
     return serialize_candidate(candidate, email_clean)
 
@@ -345,14 +468,149 @@ async def read_resume_text(resume: UploadFile) -> tuple[str, bytes]:
             raise HTTPException(status_code=400, detail="Resume must be 10MB or smaller.")
 
         pdf_reader = PdfReader(io.BytesIO(contents))
-        resume_text = ""
-        for page in pdf_reader.pages:
-            resume_text += page.extract_text() or ""
+        resume_text = extract_text_from_pdf_layers(contents, pdf_reader)
+        if len(resume_text.strip()) < 80:
+            image_text = extract_text_from_image_pdf(pdf_reader)
+            if image_text:
+                resume_text = f"{resume_text}\n{image_text}".strip()
         return resume_text, contents
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read PDF resume: {e}")
+
+def extract_text_from_pdf_layers(contents: bytes, pdf_reader: PdfReader) -> str:
+    extractors = [
+        ("pypdf", lambda: "\n".join(page.extract_text() or "" for page in pdf_reader.pages)),
+        ("pymupdf", lambda: extract_text_with_pymupdf(contents)),
+        ("pdfminer", lambda: extract_text_with_pdfminer(contents)),
+    ]
+    best_text = ""
+    for name, extractor in extractors:
+        try:
+            text = extractor() or ""
+        except Exception as e:
+            print(f"{name} resume text extraction failed: {e}")
+            continue
+        if len(text.strip()) > len(best_text.strip()):
+            best_text = text
+        if len(best_text.strip()) >= 80:
+            break
+    return best_text.strip()
+
+def extract_text_with_pymupdf(contents: bytes) -> str:
+    try:
+        import fitz
+    except Exception:
+        return ""
+    with fitz.open(stream=contents, filetype="pdf") as doc:
+        return "\n".join(page.get_text("text") for page in doc)
+
+def extract_text_with_pdfminer(contents: bytes) -> str:
+    try:
+        from pdfminer.high_level import extract_text
+    except Exception:
+        return ""
+    return extract_text(io.BytesIO(contents)) or ""
+
+def extract_text_from_image_pdf(pdf_reader: PdfReader) -> str:
+    image_bytes: List[bytes] = []
+    for page in pdf_reader.pages[:3]:
+        try:
+            page_images = list(getattr(page, "images", []))[:3]
+        except Exception as e:
+            print(f"Resume image extraction unavailable: {e}")
+            page_images = []
+        for image in page_images:
+            data = getattr(image, "data", None)
+            if data and len(data) > 1024:
+                image_bytes.append(data)
+    if not image_bytes:
+        return ""
+
+    tesseract_text = extract_text_with_optional_tesseract(image_bytes)
+    if tesseract_text.strip():
+        return tesseract_text
+
+    rapidocr_text = extract_text_with_rapidocr(image_bytes)
+    if rapidocr_text.strip():
+        return rapidocr_text
+
+    return extract_text_with_openai_vision(image_bytes)
+
+def extract_text_with_optional_tesseract(image_bytes: List[bytes]) -> str:
+    if not shutil.which("tesseract"):
+        return ""
+    try:
+        from PIL import Image
+        import pytesseract
+    except Exception:
+        return ""
+
+    chunks = []
+    for data in image_bytes:
+        try:
+            image = Image.open(io.BytesIO(data))
+            text = pytesseract.image_to_string(image)
+            if text.strip():
+                chunks.append(text.strip())
+        except Exception as e:
+            print(f"Tesseract OCR skipped one resume image: {e}")
+    return "\n".join(chunks)
+
+def extract_text_with_rapidocr(image_bytes: List[bytes]) -> str:
+    try:
+        import numpy as np
+        from PIL import Image
+        from rapidocr_onnxruntime import RapidOCR
+    except Exception as e:
+        print(f"RapidOCR unavailable: {e}")
+        return ""
+
+    chunks = []
+    try:
+        ocr = RapidOCR()
+    except Exception as e:
+        print(f"RapidOCR initialization failed: {e}")
+        return ""
+
+    for data in image_bytes:
+        try:
+            image = Image.open(io.BytesIO(data)).convert("RGB")
+            result, _ = ocr(np.array(image))
+            if result:
+                chunks.extend(str(item[1]).strip() for item in result if len(item) > 1 and str(item[1]).strip())
+        except Exception as e:
+            print(f"RapidOCR skipped one resume image: {e}")
+    return "\n".join(chunks)
+
+def extract_text_with_openai_vision(image_bytes: List[bytes]) -> str:
+    client = get_openai_client()
+    if not client:
+        return ""
+
+    content: List[Dict[str, Any]] = [{
+        "type": "text",
+        "text": "Extract all readable resume text from these image-based PDF pages. Return plain text only."
+    }]
+    for data in image_bytes[:3]:
+        content.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{base64.b64encode(data).decode('ascii')}"
+            }
+        })
+
+    try:
+        response = client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            temperature=0,
+            messages=[{"role": "user", "content": content}]
+        )
+        return response.choices[0].message.content or ""
+    except Exception as e:
+        print(f"Vision OCR failed: {e}")
+        return ""
 
 def build_interview_for_position(db: Dict[str, Any], candidate: Dict[str, Any], position_id: int):
     job = db.get("positions", {}).get(str(position_id))
@@ -409,7 +667,7 @@ async def signup_candidate(
     resume: UploadFile = File(...)
 ):
     db = load_db()
-    email_clean = email.strip().lower()
+    email_clean = normalize_candidate_email(email)
 
     if email_clean in db.setdefault("candidates", {}):
         raise HTTPException(status_code=409, detail="Candidate account already exists. Please log in.")
@@ -430,13 +688,16 @@ async def signup_candidate(
             "experiences": [],
             "education": []
         }
+    profile_data = apply_resume_extraction_warning(profile_data, resume_text)
 
     resume_path = save_resume_file(email_clean, resume.filename or "resume.pdf", contents)
     profile_picture_url = extract_profile_picture(email_clean, contents)
     resume_summary = get_resume_summary(profile_data, resume_text)
 
+    parsed_name = profile_data.get("name") if profile_data.get("name") and profile_data.get("name") != "Candidate Full Name" else name
+
     candidate_record = {
-        "name": name,
+        "name": parsed_name,
         "email": email_clean,
         "status": "profile",
         "position_id": None,
@@ -457,20 +718,29 @@ async def signup_candidate(
         "evaluation": {},
         "applications": [],
         "hiring_manager_feedback": "",
+        "profile_verified": False,
+        "email_verified": False,
         "password_hash": hash_password(password)
     }
 
+    verification_code = create_email_verification(candidate_record)
+    verification_sent = send_or_log_verification_email(email_clean, verification_code)
     db.setdefault("candidates", {})[email_clean] = candidate_record
     save_db(db)
-    return serialize_candidate(candidate_record, email_clean)
+    response = serialize_candidate(candidate_record, email_clean)
+    response["verification_sent"] = verification_sent
+    response["prototype_verification_code"] = verification_code
+    return response
 
 @router.post("/{email}/apply-position")
 def apply_candidate_to_position(email: str, payload: CandidateApplyPositionPayload):
     db = load_db()
-    email_clean = email.strip().lower()
+    email_clean = normalize_candidate_email(email)
     candidate = db.setdefault("candidates", {}).get(email_clean)
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate account not found.")
+    if candidate.get("email_verified", True) is False:
+        raise HTTPException(status_code=403, detail="Please verify your email address before applying.")
 
     application = build_interview_for_position(db, candidate, payload.position_id)
     save_db(db)
@@ -537,7 +807,10 @@ async def apply_inbound(
     resume: UploadFile = File(...)
 ):
     db = load_db()
-    email_clean = email.strip().lower()
+    email_clean = normalize_candidate_email(email)
+    existing_candidate = db.setdefault("candidates", {}).get(email_clean)
+    if existing_candidate and find_application(existing_candidate, position_id):
+        raise HTTPException(status_code=409, detail="You have already applied for this position.")
     resume_text, contents = await read_resume_text(resume)
         
     if not resume_text:
@@ -556,6 +829,7 @@ async def apply_inbound(
             "experiences": [],
             "education": []
         }
+    profile_data = apply_resume_extraction_warning(profile_data, resume_text)
         
     # Fetch job requirements
     job = db.get("positions", {}).get(str(position_id))
@@ -603,8 +877,10 @@ async def apply_inbound(
         "outreach_email": "Thank you for applying!"
     }
 
+    parsed_name = profile_data.get("name") if profile_data.get("name") and profile_data.get("name") != "Candidate Full Name" else name
+
     candidate_record = {
-        "name": name,
+        "name": parsed_name,
         "email": email_clean,
         "status": "applied",
         "position_id": position_id,
@@ -625,12 +901,19 @@ async def apply_inbound(
         "answers": [],
         "evaluation": {},
         "applications": [application],
+        "profile_verified": False,
+        "email_verified": False,
         "password_hash": hash_password(password)
     }
-    
+
+    verification_code = create_email_verification(candidate_record)
+    verification_sent = send_or_log_verification_email(email_clean, verification_code)
     db.setdefault("candidates", {})[email_clean] = candidate_record
     save_db(db)
-    return serialize_candidate(candidate_record, email_clean)
+    response = serialize_candidate(candidate_record, email_clean)
+    response["verification_sent"] = verification_sent
+    response["prototype_verification_code"] = verification_code
+    return response
 
 @router.post("/{email}/sandbox")
 def submit_sandbox(email: str, payload: SandboxAnswers):
@@ -643,6 +926,8 @@ def submit_sandbox(email: str, payload: SandboxAnswers):
     application = find_application(candidate, payload.position_id)
     if not application:
         raise HTTPException(status_code=404, detail="Candidate application not found.")
+    if application.get("status") == "completed":
+        raise HTTPException(status_code=409, detail="This position's screening has already been completed.")
         
     # Validate answers length
     for idx, ans in enumerate(payload.answers):

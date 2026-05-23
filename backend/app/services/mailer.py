@@ -17,7 +17,8 @@ def send_recruitment_email(
     user = (smtp_settings or {}).get("SMTP_USER") or settings.SMTP_USER
     password = (smtp_settings or {}).get("SMTP_PASSWORD") or settings.SMTP_PASSWORD
 
-    if not user or not password:
+    placeholder_values = {"your_email@gmail.com", "recruiter-bot@company.com", "your_app_specific_password", "your-app-specific-password"}
+    if not user or not password or user in placeholder_values or password in placeholder_values:
         print("SMTP Credentials not configured. Skipping email dispatch.")
         return False
 
@@ -32,7 +33,7 @@ def send_recruitment_email(
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
 
         # Connect to SMTP server
-        server = smtplib.SMTP(host, int(port))
+        server = smtplib.SMTP(host, int(port), timeout=10)
         server.starttls()  # Force secure TLS communication
         server.login(user, password)
         server.sendmail(user, to_email, msg.as_string())
@@ -43,6 +44,21 @@ def send_recruitment_email(
     except Exception as e:
         print(f"Failed to dispatch SMTP email to {to_email}: {e}")
         return False
+
+def send_candidate_verification_email(to_email: str, code: str) -> bool:
+    """Prototype candidate email verification sender.
+
+    This attempts real SMTP delivery when credentials are configured. During
+    local prototype work, the code is also printed by the route that calls this
+    function and returned to the frontend as a demo-only value.
+    """
+    subject = "Verify your candidate account"
+    body = (
+        "Welcome to 404 Brain Not Found Recruiter.\n\n"
+        f"Your candidate account verification code is: {code}\n\n"
+        "Enter this code in the Candidate Portal to verify your email address."
+    )
+    return send_recruitment_email(to_email=to_email, subject=subject, body=body)
 
 def verify_smtp_connection(smtp_settings: Dict[str, Any]) -> bool:
     """Verifies that an SMTP connection can be established and authenticated."""

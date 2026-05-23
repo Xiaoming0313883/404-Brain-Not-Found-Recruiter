@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 from ..database import load_db, save_db
-from ..services.agents import run_requirement_agent
+from ..services.agents import run_requirement_agent, run_requirement_intake_agent
 from ..services.job_windows import is_open_for_applications, serialize_position, validate_position_window
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
@@ -11,8 +11,8 @@ router = APIRouter(prefix="/jobs", tags=["Jobs"])
 class JobCreate(BaseModel):
     title: str
     department: str
-    description: str
-    requirements: List[str]
+    description: Optional[str] = None
+    requirements: Optional[List[str]] = None
     active: bool = True
     open_time: Optional[str] = None
     end_time: Optional[str] = None
@@ -29,6 +29,11 @@ class JobUpdate(BaseModel):
     end_time: Optional[str] = None
     sourcing_criteria: Optional[Dict[str, Any]] = None
     intake_chat: Optional[List[Dict[str, str]]] = None
+
+class JobIntakePayload(BaseModel):
+    title: str
+    department: str
+    chat_messages: List[Dict[str, str]] = []
 
 @router.get("")
 def get_jobs(active_only: bool = False):
@@ -50,6 +55,12 @@ def get_jobs(active_only: bool = False):
         return [position for position in positions if is_open_for_applications(position)]
     return positions
 
+@router.post("/intake")
+def get_next_intake_turn(payload: JobIntakePayload):
+    if not payload.title.strip() or not payload.department.strip():
+        raise HTTPException(status_code=400, detail="Title and department are required before starting intake.")
+    return run_requirement_intake_agent(payload.title.strip(), payload.department.strip(), payload.chat_messages)
+
 @router.post("")
 def create_job(payload: JobCreate):
     validate_position_window(payload.open_time, payload.end_time)
@@ -61,27 +72,35 @@ def create_job(payload: JobCreate):
     if positions:
         new_id = max(int(k) for k in positions.keys()) + 1
         
-    # Trigger the Employer Requirement Agent to extract skill pillars and Boolean queries
+    intake_context = payload.sourcing_criteria or {}
+    provided_description = payload.description or intake_context.get("generated_description") or ""
+    provided_requirements = payload.requirements or intake_context.get("generated_requirements") or []
+
+    # Trigger the Employer Requirement Agent to generate the role spec and search profile.
     try:
         req_analysis = run_requirement_agent(
             payload.title,
-            f"{payload.description}\n\nHiring Manager Intake: {payload.sourcing_criteria or {}}"
+            f"{provided_description}\n\nHiring Manager Intake: {intake_context}"
         )
+        generated_description = req_analysis.get("job_description") or provided_description
+        generated_requirements = req_analysis.get("requirements") or provided_requirements
         boolean_queries = req_analysis.get("boolean_queries", "")
-        pillars = req_analysis.get("pillars", payload.requirements[:3])
+        pillars = req_analysis.get("pillars", generated_requirements[:3])
         behavioral = req_analysis.get("behavioral", [])
     except Exception as e:
         print(f"Error in requirement profiling: {e}")
+        generated_description = provided_description or f"{payload.title} role in {payload.department}."
+        generated_requirements = provided_requirements or [f"Relevant experience for {payload.title}"]
         boolean_queries = f'("{payload.title}")'
-        pillars = payload.requirements[:3]
+        pillars = generated_requirements[:3]
         behavioral = []
 
     new_job = {
         "id": new_id,
         "title": payload.title,
         "department": payload.department,
-        "description": payload.description,
-        "requirements": payload.requirements,
+        "description": generated_description,
+        "requirements": generated_requirements,
         "active": payload.active,
         "open_time": payload.open_time,
         "end_time": payload.end_time,
@@ -114,11 +133,16 @@ def update_job(job_id: int, payload: JobUpdate):
     job.update(update_data)
 
     if should_rebuild_query:
+        intake_context = job.get("sourcing_criteria", {})
+        provided_description = job.get("description") or intake_context.get("generated_description") or ""
+        provided_requirements = job.get("requirements") or intake_context.get("generated_requirements") or []
         try:
             req_analysis = run_requirement_agent(
                 job["title"],
-                f"{job['description']}\n\nHiring Manager Intake: {job.get('sourcing_criteria', {})}"
+                f"{provided_description}\n\nHiring Manager Intake: {intake_context}"
             )
+            job["description"] = req_analysis.get("job_description") or provided_description
+            job["requirements"] = req_analysis.get("requirements") or provided_requirements
             job["boolean_queries"] = req_analysis.get("boolean_queries", job.get("boolean_queries", ""))
             job["pillars"] = req_analysis.get("pillars", job.get("requirements", [])[:3])
             job["behavioral"] = req_analysis.get("behavioral", job.get("behavioral", []))

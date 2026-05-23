@@ -5,36 +5,13 @@ import { Plus, Briefcase, Calendar, X, Loader2, Edit3, Power, Bot, Send, Clock, 
 interface Props {
   jobs: Job[];
   candidates: ScrapedCandidate[];
-  onAddJob: (job: Omit<Job, 'id' | 'createdAt'>) => void;
+  onAddJob: (job: Omit<Job, 'id' | 'createdAt'>) => Promise<void>;
   onUpdateJob: (jobId: number, updates: Partial<Omit<Job, 'id' | 'createdAt'>>) => Promise<void>;
 }
 
-const intakeQuestions = [
-  {
-    key: 'candidate_profile',
-    question: 'What kind of candidate should I search for? Include seniority, current/previous job titles, and the problems they should have solved.'
-  },
-  {
-    key: 'must_have_skills',
-    question: 'Which skills or experiences are non-negotiable? Separate must-haves from things you can train later.'
-  },
-  {
-    key: 'domain_context',
-    question: 'What domain, product, or business context should the candidate understand? For example fintech, SaaS, healthcare, B2B, high-scale platforms.'
-  },
-  {
-    key: 'success_signals',
-    question: 'What evidence would make you excited about a profile? Mention measurable achievements, project types, open-source work, leadership, or growth trajectory.'
-  },
-  {
-    key: 'avoid_signals',
-    question: 'What should I avoid or treat as a concern when sourcing? Include disqualifiers, weak signals, or mismatches.'
-  },
-  {
-    key: 'search_keywords',
-    question: 'List keywords, companies, tools, communities, or alternate titles that could help me find this person.'
-  }
-];
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+const API_UNREACHABLE_MESSAGE =
+  'Cannot reach the FastAPI backend at http://localhost:8000. Start the backend server, then try again.';
 
 const toDateTimeLocalValue = (value?: string | Date) => {
   if (!value) return '';
@@ -75,29 +52,18 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
   const [active, setActive] = useState(true);
   const [openTime, setOpenTime] = useState('');
   const [endTime, setEndTime] = useState('');
-  const [requirementInput, setRequirementInput] = useState('');
   const [requirements, setRequirements] = useState<string[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [builderStep, setBuilderStep] = useState<'basic' | 'intake'>('basic');
   const [actionError, setActionError] = useState('');
-  const [intakeStep, setIntakeStep] = useState(0);
   const [chatInput, setChatInput] = useState('');
-  const [intakeAnswers, setIntakeAnswers] = useState<Record<string, string>>({});
+  const [intakeContext, setIntakeContext] = useState<Record<string, any>>({});
+  const [isIntakeComplete, setIsIntakeComplete] = useState(false);
+  const [isAgentThinking, setIsAgentThinking] = useState(false);
   const [chatMessages, setChatMessages] = useState<Array<{ role: 'agent' | 'manager'; content: string }>>([
-    { role: 'agent', content: intakeQuestions[0].question }
+    { role: 'agent', content: 'Enter the basic position details, then I will ask adaptive follow-up questions to generate the job description and requirements.' }
   ]);
-
-  const handleAddRequirement = () => {
-    if (requirementInput.trim()) {
-      setRequirements([...requirements, requirementInput.trim()]);
-      setRequirementInput('');
-    }
-  };
-
-  const handleRemoveRequirement = (index: number) => {
-    setRequirements(requirements.filter((_, i) => i !== index));
-  };
 
   const startCreate = () => {
     resetForm();
@@ -108,25 +74,33 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
   };
 
   const handlePublish = async () => {
-    if (!title || !department || !description || !openTime || !endTime || requirements.length === 0 || !isIntakeComplete) return;
+    if (!title || !department || !openTime || !endTime || !isIntakeComplete) return;
 
     setIsProcessing(true);
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    setActionError('');
+    try {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const generatedDescription = buildGeneratedDescription();
+      const generatedRequirements = buildGeneratedRequirements();
 
-    onAddJob({
-      title,
-      department,
-      description,
-      requirements,
-      active,
-      openTime,
-      endTime,
-      sourcingCriteria: buildSourcingCriteria(),
-      intakeChat: chatMessages.map(message => ({ role: message.role, content: message.content }))
-    });
+      await onAddJob({
+        title,
+        department,
+        description: generatedDescription,
+        requirements: generatedRequirements,
+        active,
+        openTime,
+        endTime,
+        sourcingCriteria: buildSourcingCriteria(),
+        intakeChat: chatMessages.map(message => ({ role: message.role, content: message.content }))
+      });
 
-    resetForm();
-    setIsProcessing(false);
+      resetForm();
+    } catch (err: any) {
+      setActionError(err instanceof TypeError ? API_UNREACHABLE_MESSAGE : err.message || 'Failed to publish position.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const resetForm = () => {
@@ -136,15 +110,15 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
     setActive(true);
     setOpenTime('');
     setEndTime('');
-    setRequirementInput('');
     setRequirements([]);
     setEditingId(null);
     setIsCreating(false);
     setBuilderStep('basic');
-    setIntakeStep(0);
     setChatInput('');
-    setIntakeAnswers({});
-    setChatMessages([{ role: 'agent', content: intakeQuestions[0].question }]);
+    setIntakeContext({});
+    setIsIntakeComplete(false);
+    setIsAgentThinking(false);
+    setChatMessages([{ role: 'agent', content: 'Enter the basic position details, then I will ask adaptive follow-up questions to generate the job description and requirements.' }]);
   };
 
   const handleEdit = (job: Job) => {
@@ -158,26 +132,27 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
     setOpenTime(toDateTimeLocalValue(job.openTime));
     setEndTime(toDateTimeLocalValue(job.endTime));
     setRequirements(job.requirements);
-    setIntakeAnswers(job.sourcingCriteria || {});
+    setIntakeContext(job.sourcingCriteria || {});
+    setIsIntakeComplete(Boolean(job.sourcingCriteria?.generated_description || job.description));
     setChatMessages((job.intakeChat as Array<{ role: 'agent' | 'manager'; content: string }>)?.length
       ? job.intakeChat as Array<{ role: 'agent' | 'manager'; content: string }>
-      : [{ role: 'agent', content: intakeQuestions[0].question }]
+      : [{ role: 'agent', content: 'I can continue refining this position. Tell me what changed about the role, team, or candidate profile.' }]
     );
-    setIntakeStep(Math.min(intakeQuestions.length, Object.keys(job.sourcingCriteria || {}).length));
-    setRequirementInput('');
     setActionError('');
   };
 
   const handleSaveEdit = async () => {
-    if (!editingId || !title || !department || !description || !openTime || !endTime || requirements.length === 0 || !isIntakeComplete) return;
+    if (!editingId || !title || !department || !openTime || !endTime || !isIntakeComplete) return;
     setIsProcessing(true);
     setActionError('');
     try {
+      const generatedDescription = buildGeneratedDescription();
+      const generatedRequirements = buildGeneratedRequirements();
       await onUpdateJob(editingId, {
         title,
         department,
-        description,
-        requirements,
+        description: generatedDescription,
+        requirements: generatedRequirements,
         active,
         openTime,
         endTime,
@@ -192,39 +167,75 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
     }
   };
 
+  const buildGeneratedRequirements = () => {
+    return intakeContext.generated_requirements?.length
+      ? intakeContext.generated_requirements
+      : requirements.length
+        ? requirements
+        : [`Role-aligned experience for ${title}`, `Relevant ${department} domain knowledge`];
+  };
+
+  const buildGeneratedDescription = () => {
+    return intakeContext.generated_description || description || `${title} role in ${department}.`;
+  };
+
   const buildSourcingCriteria = () => ({
-    ...intakeAnswers,
-    completeness_score: Math.round((Object.keys(intakeAnswers).length / intakeQuestions.length) * 100),
-    agent_summary: `Search for ${intakeAnswers.candidate_profile || title}. Must-have context: ${intakeAnswers.must_have_skills || requirements.join(', ')}. Strong signals: ${intakeAnswers.success_signals || 'role-aligned achievements'}. Avoid: ${intakeAnswers.avoid_signals || 'major role mismatch'}.`
+    ...intakeContext,
+    generated_description: buildGeneratedDescription(),
+    generated_requirements: buildGeneratedRequirements(),
+    completeness_score: isIntakeComplete ? 100 : 50,
+    agent_summary: intakeContext.agent_summary || `Search profile for ${title} in ${department}.`
   });
 
-  const isIntakeComplete = intakeQuestions.every(question => intakeAnswers[question.key]?.trim());
+  const requestRequirementAgentTurn = async (messages: Array<{ role: 'agent' | 'manager'; content: string }>) => {
+    setIsAgentThinking(true);
+    setActionError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/jobs/intake`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, department, chat_messages: messages })
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Requirement Agent could not continue intake.');
+      }
+      const data = await response.json();
+      setIntakeContext(data.context || {});
+      setIsIntakeComplete(Boolean(data.is_complete));
+      if (data.is_complete) {
+        setChatMessages([
+          ...messages,
+          { role: 'agent', content: data.context?.agent_summary || 'I have enough information to generate this position.' }
+        ]);
+      } else {
+        setChatMessages([...messages, { role: 'agent', content: data.question }]);
+      }
+    } catch (err: any) {
+      setActionError(err instanceof TypeError ? API_UNREACHABLE_MESSAGE : err.message || 'Requirement Agent intake failed.');
+    } finally {
+      setIsAgentThinking(false);
+    }
+  };
+
+  const beginAdaptiveIntake = () => {
+    setBuilderStep('intake');
+    setIsIntakeComplete(false);
+    setIntakeContext({});
+    requestRequirementAgentTurn([]);
+  };
 
   const handleChatSubmit = () => {
     const answer = chatInput.trim();
-    if (!answer || intakeStep >= intakeQuestions.length) return;
+    if (!answer || isIntakeComplete || isAgentThinking) return;
 
-    const currentQuestion = intakeQuestions[intakeStep];
-    const nextAnswers = { ...intakeAnswers, [currentQuestion.key]: answer };
     const nextMessages: Array<{ role: 'agent' | 'manager'; content: string }> = [
       ...chatMessages,
       { role: 'manager', content: answer }
     ];
-    const nextStep = intakeStep + 1;
-
-    if (nextStep < intakeQuestions.length) {
-      nextMessages.push({ role: 'agent', content: intakeQuestions[nextStep].question });
-    } else {
-      nextMessages.push({
-        role: 'agent',
-        content: 'I have enough sourcing context now. I will store this candidate-search profile with the position so matching, sourcing, and future candidate analysis can use it.'
-      });
-    }
-
-    setIntakeAnswers(nextAnswers);
     setChatMessages(nextMessages);
-    setIntakeStep(nextStep);
     setChatInput('');
+    requestRequirementAgentTurn(nextMessages);
   };
 
   const handleToggleActive = async (job: Job) => {
@@ -237,7 +248,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
   };
 
   const visibleJobs = editingId ? jobs.filter(job => job.id !== editingId) : jobs;
-  const basicInfoReady = Boolean(title && department && description && openTime && endTime && requirements.length > 0);
+  const basicInfoReady = Boolean(title && department && openTime && endTime);
   const applicantsForJob = (jobId: number) =>
     candidates.filter(candidate => candidate.jobId === jobId && ['applied', 'screening', 'completed'].includes(candidate.status));
 
@@ -357,58 +368,23 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
             </div>
           </div>
 
-          <div>
-            <label className="block mb-1.5 text-sm text-[#1c1c1a]">Job Description *</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe the role, responsibilities, and what makes this position compelling..."
-              className={`${inputClass} resize-none`}
-              rows={5}
-            />
-          </div>
-
-          <div>
-            <label className="block mb-1.5 text-sm text-[#1c1c1a]">Requirements *</label>
-            <div className="flex gap-2 mb-3">
-              <input
-                type="text"
-                value={requirementInput}
-                onChange={(e) => setRequirementInput(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleAddRequirement()}
-                placeholder="Add a requirement and press Enter"
-                className={`flex-1 ${inputClass}`}
-              />
-              <button
-                onClick={handleAddRequirement}
-                className="px-4 py-2.5 bg-[#f0ede8] text-[#1c1c1a] rounded-lg hover:bg-[#e8e4dc] transition-colors text-sm whitespace-nowrap"
-              >
-                Add
-              </button>
-            </div>
-            {requirements.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {requirements.map((req, index) => (
-                  <span
-                    key={index}
-                    className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#e8f2ee] text-[#2d6a55] rounded-full text-sm"
-                  >
-                    {req}
-                    <button
-                      onClick={() => handleRemoveRequirement(index)}
-                      className="text-[#2d6a55]/60 hover:text-[#2d6a55] transition-colors"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
+          <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-5">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 bg-[#e8f2ee] rounded-lg flex items-center justify-center flex-shrink-0">
+                <Bot className="w-4 h-4 text-[#2d6a55]" />
               </div>
-            )}
+              <div>
+                <p className="text-sm text-[#1c1c1a] font-semibold">Description and requirements are generated by the Job Builder Agent</p>
+                <p className="text-xs text-[#6b7063] mt-1 leading-relaxed">
+                  The next step asks adaptive questions about outcomes, candidate background, technical depth, domain context, success signals, and concerns. Those answers become the official job description and requirements.
+                </p>
+              </div>
+            </div>
           </div>
 
           <div className="pt-2 border-t border-[#e4e1da]">
             <button
-              onClick={() => setBuilderStep('intake')}
+              onClick={beginAdaptiveIntake}
               disabled={!basicInfoReady}
               className="w-full py-3 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors"
             >
@@ -428,7 +404,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
               <div>
                 <h4 className="text-[#1c1c1a] font-semibold">Sourcing Intake Agent</h4>
                 <p className="text-xs text-[#6b7063]">
-                  {isIntakeComplete ? 'Ready to source candidates' : `${Object.keys(intakeAnswers).length}/${intakeQuestions.length} details collected`}
+                  {isIntakeComplete ? 'Ready to source candidates' : isAgentThinking ? 'Requirement Agent is preparing the next question' : 'Requirement Agent is collecting role context'}
                 </p>
               </div>
             </div>
@@ -448,6 +424,14 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
                   </div>
                 </div>
               ))}
+              {isAgentThinking && (
+                <div className="flex justify-start">
+                  <div className="max-w-[82%] rounded-xl px-4 py-3 text-sm leading-relaxed bg-[#f0ede8] text-[#6b7063] inline-flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Requirement Agent is thinking...
+                  </div>
+                </div>
+              )}
             </div>
 
             {!isIntakeComplete ? (
@@ -461,10 +445,10 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
                 />
                 <button
                   onClick={handleChatSubmit}
-                  disabled={!chatInput.trim()}
+                  disabled={!chatInput.trim() || isAgentThinking}
                   className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors text-sm"
                 >
-                  <Send className="w-4 h-4" />
+                  {isAgentThinking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   Send
                 </button>
               </div>
@@ -486,7 +470,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
             <button
               onClick={handlePublish}
               hidden={Boolean(editingId)}
-              disabled={!title || !department || !description || !openTime || !endTime || requirements.length === 0 || !isIntakeComplete || isProcessing}
+              disabled={!title || !department || !openTime || !endTime || !isIntakeComplete || isProcessing}
               className="w-full py-3 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors"
             >
               {isProcessing ? (
@@ -501,7 +485,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
             {editingId && (
               <button
                 onClick={handleSaveEdit}
-                disabled={!title || !department || !description || !openTime || !endTime || requirements.length === 0 || !isIntakeComplete || isProcessing}
+                disabled={!title || !department || !openTime || !endTime || !isIntakeComplete || isProcessing}
                 className="w-full py-3 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors"
               >
                 {isProcessing ? (

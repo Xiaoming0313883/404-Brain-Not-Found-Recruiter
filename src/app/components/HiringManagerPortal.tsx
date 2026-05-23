@@ -56,6 +56,15 @@ export interface ScrapedCandidate {
   resumeSummary?: string;
   resumeUrl?: string;
   profilePictureUrl?: string;
+  phone?: string;
+  age?: string;
+  address?: string;
+  cameFrom?: string;
+  workExperience?: string;
+  qualification?: string;
+  gradeResults?: string;
+  awards?: string[];
+  skills?: string[];
 }
 
 interface AuthUser {
@@ -150,7 +159,16 @@ export function HiringManagerPortal() {
           resumeText: c.resume_text,
           resumeSummary: c.resume_summary,
           resumeUrl: c.resume_url,
-          profilePictureUrl: c.profile_picture_url
+          profilePictureUrl: c.profile_picture_url,
+          age: c.profile_data?.age || '',
+          phone: c.profile_data?.phone || c.profile_data?.basic_info?.phone || '',
+          address: c.profile_data?.address || '',
+          cameFrom: c.profile_data?.came_from || '',
+          workExperience: c.profile_data?.work_experience || '',
+          qualification: c.profile_data?.qualification || '',
+          gradeResults: c.profile_data?.grade_results || '',
+          awards: c.profile_data?.awards || [],
+          skills: c.profile_data?.skills || c.profile_data?.basic_info?.skills || []
         }));
         setCandidates(mapped);
       }
@@ -176,19 +194,17 @@ export function HiringManagerPortal() {
   };
 
   const addJob = async (job: Omit<Job, 'id' | 'createdAt'>) => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/jobs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(toJobApiPayload(job))
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setJobs(prev => [...prev, mapJobFromApi(data)]);
-      }
-    } catch (err) {
-      console.error("Failed to save job to API.");
+    const res = await fetch(`${API_BASE_URL}/jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(toJobApiPayload(job))
+    });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null);
+      throw new Error(errorData?.detail || 'Failed to save position.');
     }
+    const data = await res.json();
+    setJobs(prev => [...prev, mapJobFromApi(data)]);
   };
 
   const updateJob = async (jobId: number, updates: Partial<Omit<Job, 'id' | 'createdAt'>>) => {
@@ -211,11 +227,11 @@ export function HiringManagerPortal() {
     fetchCandidates();
   };
 
-  const updateCandidateStatusByEmail = async (email: string, status: ScrapedCandidate['status']) => {
+  const updateCandidateStatusByEmail = async (email: string, status: ScrapedCandidate['status'], positionId?: number) => {
     const res = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(email)}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
+      body: JSON.stringify({ status, position_id: positionId })
     });
     if (!res.ok) throw new Error('Failed to update candidate status.');
     await fetchCandidates();

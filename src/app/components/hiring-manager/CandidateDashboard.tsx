@@ -29,7 +29,7 @@ interface Props {
   onToggleNeutralize: (active: boolean) => void;
   isLoading?: boolean;
   onRefresh: () => Promise<void> | void;
-  onStatusChange: (email: string, status: ScrapedCandidate['status']) => Promise<void>;
+  onStatusChange: (email: string, status: ScrapedCandidate['status'], positionId?: number) => Promise<void>;
   onInvite: (email: string) => Promise<void>;
   onDelete: (email: string) => Promise<void>;
 }
@@ -51,19 +51,40 @@ export function CandidateDashboard({
   const [anonymizedMode, setAnonymizedMode] = useState(false);
   const [busyEmail, setBusyEmail] = useState('');
   const [actionError, setActionError] = useState('');
+  const [selectedPositionId, setSelectedPositionId] = useState<number | 'all'>('all');
 
   const activePositions = jobs.filter(job => job.isOpenForApplications).length;
-  const totalCandidates = candidates.length;
-  const screeningCompleted = candidates.filter(c => c.status === 'completed').length;
+  const selectedJob = selectedPositionId === 'all' ? null : jobs.find(job => job.id === selectedPositionId);
+  const scopedCandidates = useMemo(() => {
+    return selectedPositionId === 'all'
+      ? candidates
+      : candidates.filter(candidate => candidate.jobId === selectedPositionId);
+  }, [candidates, selectedPositionId]);
+  const totalCandidates = scopedCandidates.length;
+  const screeningCompleted = scopedCandidates.filter(c => c.status === 'completed').length;
+  const averageMatch = totalCandidates
+    ? Math.round(scopedCandidates.reduce((sum, candidate) => sum + candidate.matchScore, 0) / totalCandidates)
+    : 0;
+
+  const positionStats = useMemo(() => {
+    return jobs.map(job => {
+      const pool = candidates.filter(candidate => candidate.jobId === job.id);
+      const completed = pool.filter(candidate => candidate.status === 'completed').length;
+      const average = pool.length
+        ? Math.round(pool.reduce((sum, candidate) => sum + candidate.matchScore, 0) / pool.length)
+        : 0;
+      return { job, pool, completed, average };
+    });
+  }, [jobs, candidates]);
 
   const scatterData = useMemo(() => {
-    return candidates.map(c => ({
+    return scopedCandidates.map(c => ({
       name: anonymizedMode ? `Candidate #${c.id.toString().padStart(4, '0')}` : c.name,
       matchScore: c.matchScore,
       trajectoryScore: c.trajectoryScore,
       candidate: c
     }));
-  }, [candidates, anonymizedMode]);
+  }, [scopedCandidates, anonymizedMode]);
 
   const neutralizeText = (text: string): string => {
     if (!neutralize) return text;
@@ -90,7 +111,7 @@ export function CandidateDashboard({
   const getActionEmail = (candidate: ScrapedCandidate): string =>
     candidate.managementEmail || candidate.email;
 
-  const sortedCandidates = [...candidates].sort((a, b) => b.matchScore - a.matchScore);
+  const sortedCandidates = [...scopedCandidates].sort((a, b) => b.matchScore - a.matchScore);
 
   const runAction = async (email: string, action: () => Promise<void> | void) => {
     setBusyEmail(email);
@@ -127,9 +148,10 @@ export function CandidateDashboard({
   };
 
   const kpiCards = [
-    { label: 'Active Positions', value: activePositions, icon: Briefcase },
-    { label: 'Total Candidates', value: totalCandidates, icon: Users },
+    { label: selectedJob ? 'Selected Position Pool' : 'Active Positions', value: selectedJob ? totalCandidates : activePositions, icon: Briefcase },
+    { label: selectedJob ? 'Role Candidates' : 'Total Candidates', value: totalCandidates, icon: Users },
     { label: 'Screening Completed', value: screeningCompleted, icon: CheckCircle2 },
+    { label: 'Average Match', value: `${averageMatch}%`, icon: Target },
   ];
 
   return (
@@ -138,7 +160,9 @@ export function CandidateDashboard({
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-[#1c1c1a] text-xl font-semibold">Candidate Pipeline</h2>
-          <p className="text-sm text-[#6b7063] mt-0.5">AI-powered analytics and bias mitigation</p>
+          <p className="text-sm text-[#6b7063] mt-0.5">
+            {selectedJob ? `${selectedJob.title} dashboard` : 'All-position analytics and bias mitigation'}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {isLoading && (
@@ -163,8 +187,89 @@ export function CandidateDashboard({
         </div>
       )}
 
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm"
+      >
+        <div className="flex items-center justify-between gap-4 mb-5">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
+              <Briefcase className="w-4.5 h-4.5 text-[#2d6a55]" style={{ width: '18px', height: '18px' }} />
+            </div>
+            <div>
+              <h3 className="text-[#1c1c1a] font-semibold text-base">Position Dashboards</h3>
+              <p className="text-xs text-[#6b7063]">Select a role to scope the graph, results, and resume review list.</p>
+            </div>
+          </div>
+          <select
+            value={selectedPositionId}
+            onChange={(event) => setSelectedPositionId(event.target.value === 'all' ? 'all' : Number(event.target.value))}
+            className="min-w-56 px-3 py-2 bg-white border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55] focus:ring-1 focus:ring-[#2d6a55]/20"
+          >
+            <option value="all">All positions</option>
+            {jobs.map(job => (
+              <option key={job.id} value={job.id}>{job.title}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {positionStats.map(({ job, pool, completed, average }) => {
+            const isSelected = selectedPositionId === job.id;
+            return (
+              <button
+                key={job.id}
+                type="button"
+                onClick={() => setSelectedPositionId(job.id)}
+                className={`text-left border rounded-xl p-4 transition-colors ${
+                  isSelected ? 'border-[#2d6a55]/50 bg-[#f0f9f4]' : 'border-[#e4e1da] hover:border-[#2d6a55]/30 hover:bg-[#f7f6f3]'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div>
+                    <p className="text-sm text-[#1c1c1a] font-semibold">{job.title}</p>
+                    <p className="text-xs text-[#6b7063] mt-0.5">{job.department}</p>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                    job.isOpenForApplications ? 'bg-[#e8f2ee] text-[#2d6a55]' : 'bg-[#f0ede8] text-[#a8a49d]'
+                  }`}>
+                    {job.isOpenForApplications ? 'Open' : 'Closed'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <p className="text-lg text-[#1c1c1a] font-semibold">{pool.length}</p>
+                    <p className="text-xs text-[#a8a49d]">Candidates</p>
+                  </div>
+                  <div>
+                    <p className="text-lg text-[#2d6a55] font-semibold">{completed}</p>
+                    <p className="text-xs text-[#a8a49d]">Completed</p>
+                  </div>
+                  <div>
+                    <p className="text-lg text-[#c9a84c] font-semibold">{average}%</p>
+                    <p className="text-xs text-[#a8a49d]">Avg match</p>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {selectedPositionId !== 'all' && (
+          <button
+            type="button"
+            onClick={() => setSelectedPositionId('all')}
+            className="mt-4 text-xs text-[#2d6a55] font-semibold hover:underline"
+          >
+            View all-position dashboard
+          </button>
+        )}
+      </motion.div>
+
       {/* KPI Strip */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {kpiCards.map(({ label, value, icon: Icon }, idx) => (
           <motion.div
             key={label}
@@ -273,7 +378,7 @@ export function CandidateDashboard({
           </div>
         </div>
 
-        {candidates.length > 0 ? (
+        {scopedCandidates.length > 0 ? (
           <>
             <div className="bg-[#f7f6f3] rounded-xl p-4 shadow-inner">
               <ResponsiveContainer width="100%" height={360}>
@@ -336,6 +441,7 @@ export function CandidateDashboard({
           <div className="h-52 flex flex-col items-center justify-center text-[#a8a49d]">
             <Target className="w-10 h-10 mb-3 opacity-30 animate-pulse" />
             <p className="text-sm">No candidate data available</p>
+            {selectedJob && <p className="text-xs mt-1">No candidates have applied to {selectedJob.title} yet.</p>}
           </div>
         )}
       </motion.div>
@@ -355,6 +461,7 @@ export function CandidateDashboard({
             <h3 className="text-[#1c1c1a] font-semibold text-base">Active Pipeline</h3>
             <p className="text-xs text-[#6b7063]">
               {sortedCandidates.length} {sortedCandidates.length === 1 ? 'candidate' : 'candidates'} in review
+              {selectedJob ? ` for ${selectedJob.title}` : ''}
             </p>
           </div>
         </div>
@@ -383,7 +490,7 @@ export function CandidateDashboard({
                   transition={{ duration: 0.3, delay: index * 0.05 }}
                 >
                   <Accordion.Item
-                    value={`candidate-${candidate.id}`}
+                    value={`candidate-${candidate.id}-${candidate.applicationId || candidate.jobId || index}`}
                     className="border border-[#e4e1da] rounded-xl overflow-hidden hover:border-[#2d6a55]/30 transition-colors bg-white shadow-sm"
                   >
                     <Accordion.Header>
@@ -481,7 +588,7 @@ export function CandidateDashboard({
                             )}
                             {candidate.status !== 'screening' && candidate.status !== 'completed' && (
                               <button
-                                onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'screening'))}
+                                onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'screening', candidate.jobId))}
                                 disabled={busyEmail === actionEmail}
                                 className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f7f6f3] disabled:opacity-50 text-xs font-medium transition-colors"
                               >
@@ -491,7 +598,7 @@ export function CandidateDashboard({
                             )}
                             {candidate.status !== 'completed' && (
                               <button
-                                onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'completed'))}
+                                onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'completed', candidate.jobId))}
                                 disabled={busyEmail === actionEmail}
                                 className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f7f6f3] disabled:opacity-50 text-xs font-medium transition-colors"
                               >
@@ -524,9 +631,67 @@ export function CandidateDashboard({
                             </div>
                             <div>
                               <span className="text-xs text-[#a8a49d]">Location</span>
-                              <p className="text-[#1c1c1a] mt-0.5 font-medium">{candidate.location}</p>
+                              <p className="text-[#1c1c1a] mt-0.5 font-medium">{candidate.location || 'Not extracted'}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs text-[#a8a49d]">Age</span>
+                              <p className="text-[#1c1c1a] mt-0.5 font-medium">{candidate.age || 'Not extracted'}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs text-[#a8a49d]">Phone</span>
+                              <p className="text-[#1c1c1a] mt-0.5 font-medium">{candidate.phone || 'Not extracted'}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs text-[#a8a49d]">Address</span>
+                              <p className="text-[#1c1c1a] mt-0.5 font-medium">{candidate.address || 'Not extracted'}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs text-[#a8a49d]">Came From</span>
+                              <p className="text-[#1c1c1a] mt-0.5 font-medium">{candidate.cameFrom || 'Not extracted'}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs text-[#a8a49d]">Qualification</span>
+                              <p className="text-[#1c1c1a] mt-0.5 font-medium">{candidate.qualification || 'Not extracted'}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs text-[#a8a49d]">Grade and Results</span>
+                              <p className="text-[#1c1c1a] mt-0.5 font-medium">{candidate.gradeResults || 'Not extracted'}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs text-[#a8a49d]">Resume File</span>
+                              <p className="text-[#1c1c1a] mt-0.5 font-medium">{candidate.resumeFilename || 'No PDF stored'}</p>
                             </div>
                           </div>
+                          {candidate.awards?.length ? (
+                            <div className="mt-3 pt-3 border-t border-[#e4e1da]">
+                              <span className="text-xs text-[#a8a49d]">Awards</span>
+                              <div className="flex flex-wrap gap-1.5 mt-2">
+                                {candidate.awards.map((award, idx) => (
+                                  <span key={`${award}-${idx}`} className="px-2 py-0.5 bg-[#f0ede8] rounded-full text-xs text-[#6b7063]">
+                                    {award}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {candidate.workExperience && (
+                            <div className="mt-3 pt-3 border-t border-[#e4e1da]">
+                              <span className="text-xs text-[#a8a49d]">Work Experience</span>
+                              <p className="text-sm text-[#6b7063] mt-1 leading-relaxed">{candidate.workExperience}</p>
+                            </div>
+                          )}
+                          {candidate.skills?.length ? (
+                            <div className="mt-3 pt-3 border-t border-[#e4e1da]">
+                              <span className="text-xs text-[#a8a49d]">Resume Agent Skills</span>
+                              <div className="flex flex-wrap gap-1.5 mt-2">
+                                {candidate.skills.slice(0, 10).map((skill, idx) => (
+                                  <span key={`${skill}-${idx}`} className="px-2 py-0.5 bg-[#f0ede8] rounded-full text-xs text-[#6b7063]">
+                                    {skill}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
                           {candidate.about && (
                             <div className="mt-3 pt-3 border-t border-[#e4e1da]">
                               <p className="text-sm text-[#6b7063] leading-relaxed">{neutralizeText(candidate.about)}</p>

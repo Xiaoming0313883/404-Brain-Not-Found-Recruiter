@@ -1,5 +1,5 @@
-import json
-from typing import Dict, Any, List
+import re
+from typing import Dict, Any, List, Optional
 from app.config import settings
 from .base_agent import get_openai_client, parse_llm_json
 
@@ -24,9 +24,19 @@ Conversion Mapping Rules:
 Output JSON Schema:
 {{
   "name": "Candidate Full Name",
+  "email": "Email address if present",
+  "phone": "Phone number if present",
+  "age": "Age if explicitly present, otherwise empty string",
+  "address": "Address or most specific location if present",
+  "came_from": "Where the candidate came from, such as country, hometown, current city, referral source, university, or previous company if present",
   "headline": "Brief professional tagline",
   "location": "City, State/Country",
   "about": "Sanitized professional summary",
+  "work_experience": "Short summary of total years, seniority, and primary experience",
+  "qualification": "Highest qualification, credential, or education level",
+  "grade_results": "Grades, GPA, CGPA, honors, or exam results if present",
+  "awards": ["Awards, scholarships, competitions, honors, or recognitions"],
+  "skills": ["Skill or technology mentioned in the resume"],
   "experiences": [
     {{"title": "Job Title", "company": "Sanitized/Neutralized Employer Name", "duration": "Duration (e.g. 2021-2024)", "description": "Key achievements and skills"}}
   ],
@@ -47,37 +57,236 @@ Return ONLY valid JSON.
                     {"role": "user", "content": f"Parse this resume:\n{resume_text}"}
                 ]
             )
-            return parse_llm_json(response.choices[0].message.content)
+            parsed_profile = parse_llm_json(response.choices[0].message.content)
+            return merge_missing_profile_fields(parsed_profile, parse_resume_text_fallback(resume_text))
         except Exception as e:
             print(f"Resume Agent API error: {e}. Falling back to rule-based parser.")
             
-    # High-quality rule-based fallback
+    return parse_resume_text_fallback(resume_text)
+
+def parse_resume_text_fallback(resume_text: str) -> Dict[str, Any]:
+    text = resume_text or ""
+    normalized = re.sub(r"[ \t]+", " ", text)
+    # Rule-based fallback that only uses data present in the resume. It avoids
+    # inventing schools, employers, or experience when PDF/OCR extraction is weak.
     name = "Candidate Profile"
     lines = [l.strip() for l in resume_text.split("\n") if l.strip()]
     if lines:
-        name = lines[0]
+        name = next((
+            clean_label(line)
+            for line in lines[:8]
+            if "@" not in line
+            and not re.search(r"\d{3,}", line)
+            and len(line.split()) <= 6
+            and not looks_like_section_header(line)
+        ), clean_label(lines[0]))
+    email_match = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", resume_text)
+    phone_match = re.search(r"(?:\+?\d[\d\s().-]{7,}\d)", resume_text)
+    age_match = re.search(r"\bage\s*[:\-]?\s*([1-9][0-9])\b|\b([1-9][0-9])\s*(?:years old|y/o)\b", resume_text, flags=re.IGNORECASE)
+    email = email_match.group(0) if email_match else ""
+    phone = phone_match.group(0).strip() if phone_match else first_labeled_value(lines, ["phone", "mobile", "contact", "tel"])
+    age = next((group for group in (age_match.groups() if age_match else []) if group), "")
+    awards = [
+        clean_label(line) for line in lines
+        if any(keyword in line.lower() for keyword in ("award", "scholarship", "honor", "winner", "competition", "dean"))
+        and not looks_like_section_header(line)
+        and "awardsandachievements" not in line.lower()
+    ][:5]
     
-    headline = "Software Engineer"
+    headline = ""
     for line in lines:
-        if "engineer" in line.lower() or "developer" in line.lower() or "architect" in line.lower():
+        if any(role in line.lower() for role in ("engineer", "developer", "architect", "designer", "analyst", "chef", "manager", "intern")):
             headline = line
             break
 
-    # Mock experiences
-    experiences = [
-        {"title": "Senior Software Engineer", "company": "[Tier-1 Tech Corporation]" if prestige_neutralize else "Google", "duration": "2021 - Present", "description": "Designed and deployed fault-tolerant distributed services using React, Node.js, and TypeScript, improving latency by 35%."},
-        {"title": "Software Engineer", "company": "[Mid-Market Software Startup]" if prestige_neutralize else "Hooli Inc", "duration": "2018 - 2021", "description": "Maintained and scaled multiple frontend applications using React and state management libraries."}
-    ]
-    education = [
-        {"school": "[Tier-1 Research University]" if prestige_neutralize else "Stanford University", "degree": "BS Computer Science", "duration": "2014 - 2018"}
-    ]
+    skills = extract_skills(text, lines)
+    education = extract_education(lines)
+    experiences = extract_experiences(lines)
+    qualification = extract_qualification(lines) or first_labeled_value(lines, ["qualification", "education", "degree"]) or (
+        education[0].get("degree") if education else ""
+    )
+    grade_results = extract_grade_results(normalized)
+    address = extract_address(lines) or first_labeled_value(lines, ["address"])
+    location = first_labeled_value(lines, ["location", "city"]) or address
+    came_from = first_labeled_value(lines, ["came from", "from", "hometown", "nationality"]) or extract_came_from(lines, address) or location
+    work_experience = summarize_work_experience(experiences, lines)
     
     return {
         "name": name,
+        "email": email,
+        "phone": phone,
+        "age": age,
+        "address": address,
+        "came_from": came_from,
         "headline": headline,
-        "location": "San Francisco, CA",
-        "about": "Experienced software developer passionate about frontend engineering and scalable microservices.",
+        "location": location,
+        "about": extract_summary(lines),
+        "work_experience": work_experience,
+        "qualification": qualification,
+        "grade_results": grade_results,
+        "awards": awards,
+        "skills": skills,
         "experiences": experiences,
-        "education": education
+        "education": education,
+        "extraction_warning": "Resume text was sparse; review and complete missing fields manually." if len(text.strip()) < 120 else ""
     }
+
+def merge_missing_profile_fields(parsed: Dict[str, Any], fallback: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(parsed, dict):
+        return fallback
+    merged = dict(parsed)
+    for key, fallback_value in fallback.items():
+        current_value = merged.get(key)
+        if current_value in ("", None, [], {}):
+            merged[key] = fallback_value
+    for key in ("awards", "skills", "experiences", "education"):
+        current_value = merged.get(key)
+        fallback_value = fallback.get(key)
+        if isinstance(current_value, list) and isinstance(fallback_value, list):
+            merged[key] = current_value or fallback_value
+    return merged
+
+def clean_label(value: str) -> str:
+    return re.sub(r"^\s*[A-Za-z /_-]{2,24}\s*:\s*", "", value).strip()
+
+def looks_like_section_header(line: str) -> bool:
+    return re.sub(r"[^a-z]", "", line.strip().lower()) in {
+        "summary", "profile", "education", "experience", "workexperience",
+        "skills", "awards", "projects", "qualification", "qualifications",
+        "contact", "reference", "references", "language", "awardsandachievements",
+        "extracurricularactivities"
+    }
+
+def first_labeled_value(lines: List[str], labels: List[str]) -> str:
+    for line in lines:
+        lower = line.lower()
+        for label in labels:
+            if lower.startswith(label.lower()):
+                parts = re.split(r":|-", line, maxsplit=1)
+                if len(parts) > 1:
+                    return parts[1].strip()
+    return ""
+
+def extract_skills(text: str, lines: List[str]) -> List[str]:
+    skills_line = first_labeled_value(lines, ["skills", "technical skills", "key skills"])
+    explicit = [item.strip(" .") for item in re.split(r"[,|;/]", skills_line) if item.strip()]
+    known_skills = [
+        "React", "TypeScript", "JavaScript", "Node.js", "Python", "FastAPI",
+        "SQL", "PostgreSQL", "MongoDB", "AWS", "Docker", "Kubernetes",
+        "Machine Learning", "Data Analysis", "Figma", "REST APIs", "HTML",
+        "CSS", "Java", "C++", "C#", "PHP", "Laravel", "Vue", "Angular",
+        "Excel", "Power BI", "Tableau", "UI/UX", "Photoshop", "Illustrator",
+        "Microsoft Office", "Canva", "CapCut", "MySQL"
+    ]
+    detected = [skill for skill in known_skills if re.search(rf"\b{re.escape(skill)}\b", text, flags=re.IGNORECASE)]
+    return list(dict.fromkeys([*explicit, *detected]))[:20]
+
+def extract_education(lines: List[str]) -> List[Dict[str, str]]:
+    education_keywords = ("degree", "diploma", "bachelor", "master", "phd", "university", "college", "school", "foundation", "certificate")
+    education = []
+    for line in lines:
+        if any(keyword in line.lower() for keyword in education_keywords):
+            education.append({"school": "", "degree": clean_label(line), "duration": extract_duration(line)})
+    return education[:4]
+
+def extract_address(lines: List[str]) -> str:
+    for index, line in enumerate(lines):
+        if re.match(r"^(no\.?\s*\d+|\d+\s*,?\s*(jalan|jln|lorong|persiaran|taman))", line, flags=re.IGNORECASE):
+            address_parts = [line]
+            for next_line in lines[index + 1:index + 12]:
+                lower = next_line.lower()
+                if looks_like_section_header(next_line) or "educat" in lower:
+                    break
+                address_like = (
+                    re.search(r"\b\d{5}\b", next_line)
+                    or any(marker in lower for marker in ("jalan", "jln", "taman", "bukit", "pasir", "negeri", "sembilan", "malaysia"))
+                    or re.match(r"^\d+\s*,", next_line)
+                )
+                if address_like:
+                    address_parts.append(next_line)
+                if any(place in lower for place in ("malaysia", "singapore", "indonesia", "thailand")):
+                    break
+            return " ".join(address_parts)
+    return ""
+
+def extract_came_from(lines: List[str], address: str) -> str:
+    university = next((line for line in lines if "university" in line.lower() or "universiti" in line.lower()), "")
+    if address:
+        places = [part.strip() for part in re.split(r",", address) if part.strip()]
+        if len(places) >= 2:
+            return "; ".join([places[-2], university] if university else [places[-2]])
+    return university
+
+def extract_qualification(lines: List[str]) -> str:
+    text = "\n".join(lines)
+    compact_text = re.sub(r"\s+", " ", text)
+    qualifications = []
+    lower = compact_text.lower()
+    if all(term in lower for term in ("bachelor", "artificial", "intelligence", "honours")):
+        qualifications.append("Bachelor of Artificial Intelligence with Honours")
+    if "matriculation certification" in lower:
+        qualifications.append("Matriculation Certification")
+    if "sijil pelajaran malaysia" in lower or "spm" in lower:
+        qualifications.append("Sijil Pelajaran Malaysia (SPM)")
+    for pattern in (r"Diploma\s+(?:of|in)?\s*[A-Za-z ]+", r"Master\s+(?:of|in)?\s*[A-Za-z ]+"):
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            value = " ".join(match.group(0).split())
+            if value and value.lower() not in {q.lower() for q in qualifications}:
+                qualifications.append(value)
+    return "; ".join(qualifications[:4])
+
+def extract_experiences(lines: List[str]) -> List[Dict[str, str]]:
+    role_keywords = ("engineer", "developer", "designer", "analyst", "manager", "assistant", "chef", "consultant", "specialist", "ambassador", "tutor", "teacher")
+    experiences = []
+    for line in lines:
+        lower = line.lower()
+        if "seeking" in lower:
+            continue
+        if any(keyword in lower for keyword in role_keywords) and not looks_like_section_header(line):
+            experiences.append({
+                "title": clean_label(line),
+                "company": "",
+                "duration": extract_duration(line),
+                "description": ""
+            })
+    return experiences[:5]
+
+def extract_duration(line: str) -> str:
+    match = re.search(r"(20\d{2}|19\d{2})\s*(?:-|to|–)\s*(present|current|20\d{2}|19\d{2})", line, flags=re.IGNORECASE)
+    return match.group(0) if match else ""
+
+def extract_grade_results(text: str) -> str:
+    matches = []
+    for pattern in (
+        r"\b(?:cgpa|gpa|pngk)\s*[:\-]?\s*[0-4](?:\.\d{1,2})?\b",
+        r"\b\d{1,2}A\s+\d{1,2}B\+?\b",
+        r"\b\d{1,2}A\+?\b",
+    ):
+        matches.extend(match.group(0).strip() for match in re.finditer(pattern, text, flags=re.IGNORECASE))
+    unique = list(dict.fromkeys(matches))
+    filtered = [
+        value for value in unique
+        if not (re.fullmatch(r"\d{1,2}A\+?", value, flags=re.IGNORECASE) and any(value.lower() in other.lower() and value != other for other in unique))
+    ]
+    return "; ".join(filtered)
+
+def extract_summary(lines: List[str]) -> str:
+    for index, line in enumerate(lines):
+        normalized = re.sub(r"[^a-z]", "", line.lower())
+        if normalized in {"summary", "profile", "proele", "about"} and index + 1 < len(lines):
+            summary_lines = []
+            for next_line in lines[index + 1:index + 8]:
+                if looks_like_section_header(next_line):
+                    break
+                summary_lines.append(next_line)
+            return " ".join(summary_lines).strip()
+    return ""
+
+def summarize_work_experience(experiences: List[Dict[str, str]], lines: List[str]) -> str:
+    labeled = first_labeled_value(lines, ["work experience", "experience"])
+    if labeled:
+        return labeled
+    if experiences:
+        return "; ".join(exp["title"] for exp in experiences[:3])
+    return ""
 
