@@ -1,0 +1,10 @@
+fastapi>=0.110.0
+uvicorn>=0.28.0
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+openai>=1.14.0
+python-dotenv>=1.0.1
+playwright>=1.42.0
+linkedin-scraper>=3.1.2
+pypdf>=4.1.0
+python-multipart>=0.0.9

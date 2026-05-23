@@ -1,0 +1,14 @@
+node_modules/
+dist/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+*.log
+.env
+.env.*
+!.env.example
+!backend/.env.example
+docs/
+backend/data/recruiting_db.json
