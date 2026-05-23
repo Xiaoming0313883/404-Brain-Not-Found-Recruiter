@@ -10,6 +10,7 @@ interface Props {
 export function CandidateFeedback({ candidateData }: Props) {
   const score = candidateData.score || 0;
   const isHighScore = score >= 70;
+  const scoreBreakdown = candidateData.evaluation?.score_breakdown;
 
   // Retrieve dynamically generated AI upskilling roadmap from evaluation details
   const rawRoadmap = candidateData.evaluation?.upskilling_roadmap || {};
@@ -87,11 +88,41 @@ export function CandidateFeedback({ candidateData }: Props) {
             </h2>
           </div>
           <p className="text-sm text-[#6b7063] max-w-md mx-auto leading-relaxed">
-            {isHighScore
-              ? 'Your responses demonstrate strong technical depth and excellent problem-solving ability. The hiring team will be reviewing your profile shortly.'
-              : "Your responses show solid foundational thinking. We've prepared a personalized development roadmap to support your growth."}
+            {candidateData.evaluation?.role_alignment_summary || (
+              isHighScore
+                ? 'Your responses demonstrate strong current-position alignment and practical problem-solving ability. The hiring team will be reviewing your profile shortly.'
+                : "Your responses show some relevant thinking for this position. We've prepared a personalized development roadmap to support your growth."
+            )}
           </p>
         </div>
+
+        {scoreBreakdown && (
+          <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 mb-5 shadow-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-8 h-8 bg-[#e8f2ee] rounded-lg flex items-center justify-center">
+                <Target className="w-4 h-4 text-[#2d6a55]" />
+              </div>
+              <div>
+                <h3 className="text-[#1c1c1a] font-semibold text-base">Position-Focused Score Breakdown</h3>
+                <p className="text-xs text-[#6b7063]">{candidateData.evaluation?.position_fit_verdict || 'Marked against the current position requirements'}</p>
+              </div>
+            </div>
+            <div className="grid sm:grid-cols-5 gap-2">
+              {[
+                ['Role', scoreBreakdown.role_requirement_alignment, 35],
+                ['Depth', scoreBreakdown.technical_correctness_depth, 25],
+                ['Evidence', scoreBreakdown.evidence_specificity, 20],
+                ['Impact', scoreBreakdown.position_impact, 10],
+                ['Clarity', scoreBreakdown.communication_clarity, 10]
+              ].map(([label, value, max]) => (
+                <div key={label} className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-3 text-center">
+                  <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">{label}</p>
+                  <p className="text-sm text-[#1c1c1a] font-semibold mt-1">{value || 0}/{max}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Qualitative Critique from AI Agent */}
         {critiques && critiques.length > 0 ? (
@@ -110,7 +141,18 @@ export function CandidateFeedback({ candidateData }: Props) {
               {critiques.map((item: any, idx: number) => (
                 <div key={idx} className="border-l-2 border-[#2d6a55] bg-[#f8faf8] rounded-r-xl p-5 space-y-3">
                   <p className="text-xs font-semibold tracking-wide uppercase text-[#2d6a55] mb-1.5">Question {idx + 1}</p>
+                  {item.per_answer_score !== undefined && (
+                    <p className="text-xs text-[#2d6a55] font-semibold">Answer score: {item.per_answer_score}/100</p>
+                  )}
+                  {item.requirement_focus && (
+                    <p className="text-xs text-[#6b7063]">Role focus: {item.requirement_focus}</p>
+                  )}
                   <p className="text-xs text-[#1c1c1a] italic leading-relaxed font-medium">"{item.question}"</p>
+                  {item.candidate_answer_excerpt && (
+                    <p className="text-xs text-[#52574e] leading-relaxed">
+                      <span className="font-semibold text-[#1c1c1a]">Your answer:</span> {item.candidate_answer_excerpt}
+                    </p>
+                  )}
                   <p className="text-xs text-[#52574e] leading-relaxed">{item.critique}</p>
 
                   {(item.strengths || item.weaknesses || item.suggested_improvement) && (

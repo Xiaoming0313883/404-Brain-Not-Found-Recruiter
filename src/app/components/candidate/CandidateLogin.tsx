@@ -78,20 +78,23 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
         ? 'sourced'
         : statusValue === 'completed'
           ? 'completed'
-          : statusValue === 'screening'
-            ? 'screening'
-            : statusValue === 'rejected'
-              ? 'rejected'
-              : statusValue === 'interview_scheduled'
-                ? 'interview_scheduled'
-                : statusValue === 'profile'
-                  ? 'profile'
-                  : 'applied';
+          : statusValue === 'hired'
+            ? 'hired'
+            : statusValue === 'screening'
+              ? 'screening'
+              : statusValue === 'rejected'
+                ? 'rejected'
+                : statusValue === 'interview_scheduled'
+                  ? 'interview_scheduled'
+                  : statusValue === 'profile'
+                    ? 'profile'
+                    : 'applied';
     const applications = (data.applications || []).map((application: any) => ({
       ...application,
       status: normalizeStatus(application.status),
       progress: application.progress ?? (
         normalizeStatus(application.status) === 'completed' ? 100 :
+        normalizeStatus(application.status) === 'hired' ? 100 :
         normalizeStatus(application.status) === 'rejected' ? 100 :
         normalizeStatus(application.status) === 'interview_scheduled' ? 85 :
         normalizeStatus(application.status) === 'screening' ? 70 : 40
@@ -111,6 +114,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       status,
       progress: selectedApplication?.progress ?? (
         status === 'completed' ? 100 :
+        status === 'hired' ? 100 :
         status === 'rejected' ? 100 :
         status === 'interview_scheduled' ? 85 :
         status === 'screening' ? 70 :
@@ -123,6 +127,8 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       resumeUrl: data.resume_url,
       resumeSummary: data.resume_summary,
       profileExtractionWarning: data.profile_data?.extraction_warning || '',
+      profileMissingFields: data.profile_missing_fields || [],
+      profileCompletion: data.profile_completion ?? 0,
       emailVerified: data.email_verified,
       profileVerified: data.profile_verified,
       age: data.profile_data?.age || '',
@@ -130,12 +136,15 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       cameFrom: data.profile_data?.came_from || '',
       location: data.profile_data?.location || '',
       headline: data.profile_data?.headline || '',
+      about: data.profile_data?.about || '',
       workExperience: data.profile_data?.work_experience || '',
       qualification: data.profile_data?.qualification || '',
       gradeResults: data.profile_data?.grade_results || '',
       awards: data.profile_data?.awards || [],
       phone: data.profile_data?.phone || '',
       skills: data.profile_data?.skills || [],
+      experiences: data.profile_data?.experiences || [],
+      education: data.profile_data?.education || [],
       recruitmentEmail: data.outreach_email,
       customQuestions: selectedApplication?.custom_questions || data.custom_questions,
       sandboxAnswers: selectedApplication?.answers || data.answers,
@@ -144,6 +153,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       hrFeedback: selectedApplication?.hr_feedback || data.hr_feedback || '',
       rejectionMessage: selectedApplication?.rejection_message || data.rejection_message || '',
       rejectedAt: selectedApplication?.rejected_at || data.rejected_at,
+      hiredAt: selectedApplication?.hired_at || data.hired_at,
       interviewSlot: selectedApplication?.interview_slot || data.interview_slot
     };
   };
@@ -319,6 +329,8 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
         resumeUrl: data.resume_url,
         resumeSummary: data.resume_summary,
         profileExtractionWarning: data.profile_data?.extraction_warning || '',
+        profileMissingFields: data.profile_missing_fields || [],
+        profileCompletion: data.profile_completion ?? 0,
         emailVerified: data.email_verified,
         profileVerified: data.profile_verified,
         age: data.profile_data?.age || '',
@@ -326,12 +338,15 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
         cameFrom: data.profile_data?.came_from || '',
         location: data.profile_data?.location || '',
         headline: data.profile_data?.headline || '',
+        about: data.profile_data?.about || '',
         workExperience: data.profile_data?.work_experience || '',
         qualification: data.profile_data?.qualification || '',
         gradeResults: data.profile_data?.grade_results || '',
         awards: data.profile_data?.awards || [],
         phone: data.profile_data?.phone || '',
         skills: data.profile_data?.skills || [],
+        experiences: data.profile_data?.experiences || [],
+        education: data.profile_data?.education || [],
         applications: data.applications || [],
         customQuestions: data.custom_questions,
         evaluation: data.evaluation
@@ -728,13 +743,13 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm text-[#6b7063]">Application Progress</span>
                 <span className="text-sm text-[#2d6a55] font-medium">
-                  {loadedCandidate.status === 'completed' ? '100% - Screening Completed' : '33% - Profile Configured'}
+                  {loadedCandidate.status === 'hired' ? '100% - Hired' : loadedCandidate.status === 'completed' ? '100% - Screening Completed' : '33% - Profile Configured'}
                 </span>
               </div>
               <Progress.Root className="relative overflow-hidden bg-[#f0ede8] rounded-full h-1.5 w-full">
                 <Progress.Indicator
                   className="bg-[#2d6a55] h-full transition-transform duration-500 ease-out"
-                  style={{ transform: `translateX(-${loadedCandidate.status === 'completed' ? 0 : 67}%)`, width: '100%' }}
+                  style={{ transform: `translateX(-${loadedCandidate.status === 'completed' || loadedCandidate.status === 'hired' ? 0 : 67}%)`, width: '100%' }}
                 />
               </Progress.Root>
             </div>

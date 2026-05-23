@@ -14,15 +14,20 @@ export interface CandidateData {
   applications?: Array<{
     application_id: string;
     position_id: number;
-    status: 'profile' | 'sourced' | 'applied' | 'screening' | 'completed' | 'rejected' | 'interview_scheduled';
+    status: 'profile' | 'sourced' | 'applied' | 'screening' | 'completed' | 'hired' | 'rejected' | 'interview_scheduled';
     applied_at?: string;
     progress?: number;
     custom_questions?: string[];
     answers?: string[];
     evaluation?: any;
     match_results?: any;
+    hr_feedback?: string;
+    rejection_message?: string;
+    rejected_at?: string;
+    hired_at?: string;
+    interview_slot?: any;
   }>;
-  status: 'profile' | 'sourced' | 'applied' | 'screening' | 'completed' | 'rejected' | 'interview_scheduled';
+  status: 'profile' | 'sourced' | 'applied' | 'screening' | 'completed' | 'hired' | 'rejected' | 'interview_scheduled';
   progress: number;
   isInvited: boolean;
   appliedAt?: string;
@@ -30,6 +35,8 @@ export interface CandidateData {
   resumeUrl?: string;
   resumeSummary?: string;
   profileExtractionWarning?: string;
+  profileMissingFields?: Array<{ field: string; label: string }>;
+  profileCompletion?: number;
   emailVerified?: boolean;
   resumeData?: any;
   profileVerified?: boolean;
@@ -38,17 +45,34 @@ export interface CandidateData {
   cameFrom?: string;
   location?: string;
   headline?: string;
+  about?: string;
   workExperience?: string;
   qualification?: string;
   gradeResults?: string;
   awards?: string[];
   phone?: string;
   skills?: string[];
+  experiences?: Array<{
+    title?: string;
+    company?: string;
+    duration?: string;
+    description?: string;
+  }>;
+  education?: Array<{
+    school?: string;
+    degree?: string;
+    duration?: string;
+  }>;
   sandboxAnswers?: string[];
   score?: number;
   recruitmentEmail?: string;
   customQuestions?: string[];
   evaluation?: any;
+  hrFeedback?: string;
+  rejectionMessage?: string;
+  rejectedAt?: string;
+  hiredAt?: string;
+  interviewSlot?: any;
 }
 
 const CANDIDATE_SESSION_KEY = 'candidateSessionV3';
@@ -113,7 +137,7 @@ export function CandidatePortal() {
         <Route
           path="/sandbox"
           element={
-            candidateData?.jobId && candidateData.status !== 'completed' && candidateData.status !== 'rejected' && candidateData.status !== 'interview_scheduled' ? (
+            candidateData?.jobId && candidateData.status !== 'completed' && candidateData.status !== 'hired' && candidateData.status !== 'rejected' && candidateData.status !== 'interview_scheduled' ? (
               <CandidateSandbox
                 candidateData={candidateData}
                 onComplete={(answers, score, evaluation) => {
@@ -142,7 +166,7 @@ export function CandidatePortal() {
         <Route
           path="/feedback"
           element={
-            candidateData?.status === 'completed' ? (
+            candidateData && (candidateData.status === 'completed' || candidateData.status === 'hired') ? (
               <CandidateFeedback candidateData={candidateData} />
             ) : (
               <Navigate to="/candidate" replace />

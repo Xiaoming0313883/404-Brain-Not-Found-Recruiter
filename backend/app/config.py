@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = "your_openai_key_here"
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     OPENAI_MODEL: str = "gpt-4o-mini"
+    LLM_TIMEOUT: float = 120.0
     RESUME_AGENT_TEMP: float = 0.1
     REQUIREMENT_AGENT_TEMP: float = 0.2
     MATCHING_AGENT_TEMP: float = 0.4

@@ -1,5 +1,9 @@
+import html
 import re
+import urllib.error
+import urllib.request
 from typing import Any, Dict
+from .agents.matching_agent import build_position_fit_assessment
 
 
 def _name_from_url(linkedin_url: str) -> str:
@@ -9,53 +13,97 @@ def _name_from_url(linkedin_url: str) -> str:
     return slug.replace("-", " ").replace("_", " ").strip().title() or "Alex Mercer"
 
 
+def _is_linkedin_profile_url(linkedin_url: str) -> bool:
+    return bool(re.match(r"^https?://([a-z]{2,3}\.)?www\.linkedin\.com/in/[^/?#]+", linkedin_url.strip(), flags=re.IGNORECASE))
+
+
+def _extract_meta(html_text: str, property_name: str) -> str:
+    patterns = [
+        rf'<meta[^>]+property=["\']{re.escape(property_name)}["\'][^>]+content=["\']([^"\']+)["\']',
+        rf'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']{re.escape(property_name)}["\']'
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html_text, flags=re.IGNORECASE)
+        if match:
+            return html.unescape(match.group(1)).strip()
+    return ""
+
+
+def _fetch_public_metadata(linkedin_url: str) -> Dict[str, str]:
+    request = urllib.request.Request(
+        linkedin_url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; RecruitingWorkspace/1.0; +https://localhost)",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        html_text = response.read(400_000).decode("utf-8", errors="ignore")
+
+    return {
+        "title": _extract_meta(html_text, "og:title"),
+        "description": _extract_meta(html_text, "og:description"),
+        "image": _extract_meta(html_text, "og:image"),
+    }
+
+
 def scrape_linkedin_profile(linkedin_url: str) -> Dict[str, Any]:
-    """Best-effort LinkedIn profile read using linkedin-scraper when available.
+    """Best-effort LinkedIn profile read from public metadata.
 
-    The package normally needs a Selenium driver/session. For this prototype we
-    try the dependency first, then fall back quickly to deterministic URL parsing
-    so automatic discovery never stalls the hiring manager workflow.
+    LinkedIn frequently blocks unauthenticated scraping, so this function never
+    fabricates work history. If public metadata is unavailable, it returns only
+    URL-derived identity with an explicit verification warning.
     """
-    candidate_name = _name_from_url(linkedin_url)
-    try:
-        from linkedin_scraper import Person  # type: ignore
+    if not _is_linkedin_profile_url(linkedin_url):
+        raise ValueError("Please enter a valid LinkedIn profile URL such as https://www.linkedin.com/in/username.")
 
-        person = Person(linkedin_url, scrape=False)
-        candidate_name = getattr(person, "name", None) or candidate_name
-    except Exception as e:
-        print(f"linkedin-scraper fallback used: {e}")
+    candidate_name = _name_from_url(linkedin_url)
+    headline = "LinkedIn profile pending verification"
+    about = ""
+    profile_image_url = ""
+    scrape_status = "url_only"
+    scrape_warning = (
+        "LinkedIn did not expose public profile details to this scraper. "
+        "Only the profile URL/name were captured; verify the candidate manually before outreach."
+    )
+
+    try:
+        metadata = _fetch_public_metadata(linkedin_url)
+        title = metadata.get("title", "")
+        description = metadata.get("description", "")
+        if title and "linkedin" not in title.lower():
+            candidate_name = title.split("|")[0].split("-")[0].strip() or candidate_name
+        if description:
+            headline = description[:180]
+            about = description
+            scrape_status = "public_metadata"
+            scrape_warning = (
+                "Only public LinkedIn metadata was available. Experience, education, location, and skills still need verification."
+            )
+        profile_image_url = metadata.get("image", "")
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
+        # LinkedIn blocks unauthenticated scrapers — this is expected. Fall back to url_only mode.
+        import logging
+        logging.getLogger(__name__).debug("LinkedIn public metadata unavailable (expected): %s", e)
 
     slug = re.sub(r"[^a-z0-9]+", ".", candidate_name.lower()).strip(".") or "candidate"
     return {
         "name": candidate_name,
         "email": f"{slug}@email.com",
-        "headline": "LinkedIn-sourced professional profile",
-        "location": "Profile location pending verification",
-        "about": "Profile discovered through LinkedIn sourcing. Full details should be verified during outreach.",
-        "experiences": [
-            {"title": "Relevant Professional", "company": "LinkedIn Profile Company", "duration": "Recent", "description": "Experience inferred from sourced profile."}
-        ],
-        "education": []
+        "headline": headline,
+        "location": "Pending manual verification",
+        "about": about,
+        "experiences": [],
+        "education": [],
+        "profile_image_url": profile_image_url,
+        "scrape_status": scrape_status,
+        "scrape_warning": scrape_warning,
+        "source_url": linkedin_url
     }
 
 
 def build_fast_match_results(job: Dict[str, Any], profile_data: Dict[str, Any]) -> Dict[str, Any]:
-    job_words = " ".join(job.get("requirements", []) + job.get("pillars", [])).lower()
-    profile_words = str(profile_data).lower()
-    hits = sum(1 for word in set(re.findall(r"[a-zA-Z][a-zA-Z+#.]{2,}", job_words)) if word in profile_words)
-    score = max(72, min(94, 76 + hits * 4))
-    return {
-        "debate": {
-            "critical_recruiter_cons": ["Profile requires verification before final shortlist."],
-            "talent_advocate_pros": [f"Profile appears directionally aligned with {job.get('title', 'the role')}."]
-        },
-        "scores": {
-            "technical": score,
-            "domain": max(68, score - 5),
-            "culture": 82,
-            "trajectory_slope": 84
-        }
-    }
+    return build_position_fit_assessment(job, profile_data)
 
 
 def build_fast_outreach(profile_data: Dict[str, Any], job: Dict[str, Any]) -> Dict[str, str]:

@@ -16,6 +16,8 @@ import {
   RefreshCcw,
   Trash2,
   UserCheck,
+  UserCog,
+  KeyRound,
   XCircle,
   X,
   Calendar
@@ -38,6 +40,8 @@ interface Props {
   onReject: (email: string, positionId?: number, hrFeedback?: string, rejectionMessage?: string) => Promise<void>;
   onScheduleInterview: (email: string, positionId: number | undefined, date: string, time: string, location: string, notes?: string) => Promise<void>;
   onUpdateOutreachNotes: (email: string, positionId?: number, outreachEmail?: string, hrFeedback?: string) => Promise<void>;
+  onUpdateAccount: (email: string, updates: { emailVerified?: boolean; profileVerified?: boolean }) => Promise<void>;
+  onResetPassword: (email: string) => Promise<string>;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -55,7 +59,9 @@ export function CandidateDashboard({
   onDelete,
   onReject,
   onScheduleInterview,
-  onUpdateOutreachNotes
+  onUpdateOutreachNotes,
+  onUpdateAccount,
+  onResetPassword
 }: Props) {
   const [anonymizedMode, setAnonymizedMode] = useState(false);
   const [busyEmail, setBusyEmail] = useState('');
@@ -65,6 +71,9 @@ export function CandidateDashboard({
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'match' | 'match-asc' | 'velocity' | 'name'>('match');
   const [currentPage, setCurrentPage] = useState<number>(1);
+  const [accountSearch, setAccountSearch] = useState('');
+  const [accountFilter, setAccountFilter] = useState<'all' | 'verified' | 'unverified' | 'password_set' | 'password_missing'>('all');
+  const [passwordResetMessage, setPasswordResetMessage] = useState('');
   const pageSize = 50;
 
   const [editedOutreach, setEditedOutreach] = useState<Record<string, string>>({});
@@ -91,6 +100,8 @@ export function CandidateDashboard({
   }, [candidates, selectedPositionId]);
   const totalCandidates = scopedCandidates.length;
   const screeningCompleted = scopedCandidates.filter(c => c.status === 'completed').length;
+  const hiredCandidates = scopedCandidates.filter(c => c.status === 'hired').length;
+  const activePipelineCount = scopedCandidates.filter(c => c.status !== 'hired' && c.status !== 'rejected').length;
   const averageMatch = totalCandidates
     ? Math.round(scopedCandidates.reduce((sum, candidate) => sum + candidate.matchScore, 0) / totalCandidates)
     : 0;
@@ -99,10 +110,11 @@ export function CandidateDashboard({
     return jobs.map(job => {
       const pool = candidates.filter(candidate => candidate.jobId === job.id);
       const completed = pool.filter(candidate => candidate.status === 'completed').length;
+      const hired = pool.filter(candidate => candidate.status === 'hired').length;
       const average = pool.length
         ? Math.round(pool.reduce((sum, candidate) => sum + candidate.matchScore, 0) / pool.length)
         : 0;
-      return { job, pool, completed, average };
+      return { job, pool, completed, hired, average };
     });
   }, [jobs, candidates]);
 
@@ -139,6 +151,38 @@ export function CandidateDashboard({
 
   const getActionEmail = (candidate: ScrapedCandidate): string =>
     candidate.managementEmail || candidate.email;
+
+  const candidateAccounts = useMemo(() => {
+    const accounts = new Map<string, ScrapedCandidate>();
+    candidates.forEach(candidate => {
+      const emailKey = getActionEmail(candidate).toLowerCase();
+      const existing = accounts.get(emailKey);
+      if (!existing) {
+        accounts.set(emailKey, candidate);
+        return;
+      }
+      if ((candidate.applicationCount || 0) > (existing.applicationCount || 0)) {
+        accounts.set(emailKey, candidate);
+      }
+    });
+    return Array.from(accounts.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [candidates]);
+
+  const filteredAccounts = useMemo(() => {
+    const query = accountSearch.trim().toLowerCase();
+    return candidateAccounts.filter(candidate => {
+      const matchesQuery = !query
+        || candidate.name.toLowerCase().includes(query)
+        || getActionEmail(candidate).toLowerCase().includes(query);
+      const matchesFilter =
+        accountFilter === 'all'
+        || (accountFilter === 'verified' && candidate.emailVerified)
+        || (accountFilter === 'unverified' && !candidate.emailVerified)
+        || (accountFilter === 'password_set' && candidate.hasPassword)
+        || (accountFilter === 'password_missing' && !candidate.hasPassword);
+      return matchesQuery && matchesFilter;
+    });
+  }, [accountFilter, accountSearch, candidateAccounts]);
 
   // Filter candidates based on selected status pill
   const filteredCandidates = useMemo(() => {
@@ -195,7 +239,7 @@ export function CandidateDashboard({
           <p className="text-sm text-[#1c1c1a] mb-2 font-semibold">{data.name}</p>
           <div className="space-y-1">
             <div className="flex justify-between gap-4 text-xs font-medium">
-              <span className="text-[#6b7063]">Match Score</span>
+              <span className="text-[#6b7063]">Position Fit</span>
               <span className="text-[#2d6a55]">{data.matchScore}%</span>
             </div>
             <div className="flex justify-between gap-4 text-xs font-medium">
@@ -211,9 +255,10 @@ export function CandidateDashboard({
 
   const kpiCards = [
     { label: selectedJob ? 'Selected Position Pool' : 'Active Positions', value: selectedJob ? totalCandidates : activePositions, icon: Briefcase },
-    { label: selectedJob ? 'Role Candidates' : 'Total Candidates', value: totalCandidates, icon: Users },
+    { label: 'Active Pipeline', value: activePipelineCount, icon: Users },
     { label: 'Screening Completed', value: screeningCompleted, icon: CheckCircle2 },
-    { label: 'Average Match', value: `${averageMatch}%`, icon: Target },
+    { label: 'Hired', value: hiredCandidates, icon: Award },
+    { label: 'Average Position Fit', value: `${averageMatch}%`, icon: Target },
   ];
 
   return (
@@ -278,7 +323,7 @@ export function CandidateDashboard({
         </div>
 
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {positionStats.map(({ job, pool, completed, average }) => {
+          {positionStats.map(({ job, pool, completed, hired, average }) => {
             const isSelected = selectedPositionId === job.id;
             return (
               <button
@@ -300,7 +345,7 @@ export function CandidateDashboard({
                     {job.isOpenForApplications ? 'Open' : 'Closed'}
                   </span>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-4 gap-2">
                   <div>
                     <p className="text-lg text-[#1c1c1a] font-semibold">{pool.length}</p>
                     <p className="text-xs text-[#a8a49d]">Candidates</p>
@@ -310,8 +355,12 @@ export function CandidateDashboard({
                     <p className="text-xs text-[#a8a49d]">Completed</p>
                   </div>
                   <div>
+                    <p className="text-lg text-[#245747] font-semibold">{hired}</p>
+                    <p className="text-xs text-[#a8a49d]">Hired</p>
+                  </div>
+                  <div>
                     <p className="text-lg text-[#c9a84c] font-semibold">{average}%</p>
-                    <p className="text-xs text-[#a8a49d]">Avg match</p>
+                    <p className="text-xs text-[#a8a49d]">Avg fit</p>
                   </div>
                 </div>
               </button>
@@ -331,7 +380,7 @@ export function CandidateDashboard({
       </motion.div>
 
       {/* KPI Strip */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         {kpiCards.map(({ label, value, icon: Icon }, idx) => (
           <motion.div
             key={label}
@@ -436,7 +485,7 @@ export function CandidateDashboard({
           </div>
           <div>
             <h3 className="text-[#1c1c1a] font-semibold text-base">Trajectory Analysis</h3>
-            <p className="text-xs text-[#6b7063]">Match fit vs. learning velocity</p>
+            <p className="text-xs text-[#6b7063]">Current-position fit vs. learning velocity</p>
           </div>
         </div>
 
@@ -449,10 +498,10 @@ export function CandidateDashboard({
                   <XAxis
                     type="number"
                     dataKey="matchScore"
-                    name="Core Match Fit"
+                    name="Position Fit"
                     unit="%"
                     domain={[0, 100]}
-                    label={{ value: 'Core Match Fit (%)', position: 'insideBottom', offset: -12, style: { fill: '#6b7063', fontSize: 12, fontWeight: 500 } }}
+                    label={{ value: 'Position Fit (%)', position: 'insideBottom', offset: -12, style: { fill: '#6b7063', fontSize: 12, fontWeight: 500 } }}
                     stroke="#e4e1da"
                     tick={{ fill: '#a8a49d', fontSize: 11 }}
                   />
@@ -482,7 +531,7 @@ export function CandidateDashboard({
               <div className="bg-[#f0f9f4] border border-[#c8e6d8] rounded-xl p-4 shadow-sm">
                 <div className="flex items-center gap-2 mb-1.5">
                   <div className="w-2 h-2 rounded-full bg-[#2d6a55]" />
-                  <p className="text-xs text-[#2d6a55] uppercase tracking-wider font-semibold">High Match + High Trajectory</p>
+                  <p className="text-xs text-[#2d6a55] uppercase tracking-wider font-semibold">High Position Fit + High Trajectory</p>
                 </div>
                 <p className="text-xs text-[#3d5a4a] leading-relaxed">
                   Ideal candidates with strong fit and exceptional growth potential
@@ -508,6 +557,156 @@ export function CandidateDashboard({
         )}
       </motion.div>
 
+      {/* Candidate Account Management */}
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.45 }}
+        className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm"
+      >
+        <div className="flex flex-col gap-4 mb-5 border-b border-[#e4e1da] pb-5">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
+                <UserCog className="w-4.5 h-4.5 text-[#2d6a55]" style={{ width: '18px', height: '18px' }} />
+              </div>
+              <div>
+                <h3 className="text-[#1c1c1a] font-semibold text-base">Candidate Account Management</h3>
+                <p className="text-xs text-[#6b7063]">
+                  {filteredAccounts.length} of {candidateAccounts.length} registered {candidateAccounts.length === 1 ? 'account' : 'accounts'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                value={accountSearch}
+                onChange={(event) => setAccountSearch(event.target.value)}
+                placeholder="Search name or email"
+                className="min-w-56 px-3 py-2 bg-white border border-[#e4e1da] rounded-lg text-xs text-[#1c1c1a] placeholder-[#a8a49d] focus:outline-none focus:border-[#2d6a55]"
+              />
+              <select
+                value={accountFilter}
+                onChange={(event) => setAccountFilter(event.target.value as typeof accountFilter)}
+                className="px-3 py-2 bg-white border border-[#e4e1da] rounded-lg text-xs text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+              >
+                <option value="all">All accounts</option>
+                <option value="verified">Email verified</option>
+                <option value="unverified">Email unverified</option>
+                <option value="password_set">Password set</option>
+                <option value="password_missing">Password missing</option>
+              </select>
+            </div>
+          </div>
+
+          {passwordResetMessage && (
+            <div className="flex items-start justify-between gap-3 rounded-xl border border-[#f2d3a4] bg-[#fff8ed] px-4 py-3 text-xs text-[#8a5a14]">
+              <span>{passwordResetMessage}</span>
+              <button onClick={() => setPasswordResetMessage('')} className="text-[#8a5a14] hover:text-[#5a3b0d] font-bold leading-none">x</button>
+            </div>
+          )}
+        </div>
+
+        {filteredAccounts.length === 0 ? (
+          <div className="text-center py-10">
+            <div className="w-12 h-12 bg-[#f0ede8] rounded-2xl flex items-center justify-center mx-auto mb-3">
+              <UserCog className="w-6 h-6 text-[#c8c4bc]" />
+            </div>
+            <p className="text-sm text-[#1c1c1a] mb-1 font-semibold">No candidate accounts match this filter</p>
+            <p className="text-xs text-[#6b7063]">Try a different account status or search term.</p>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {filteredAccounts.map(candidate => {
+              const accountEmail = getActionEmail(candidate);
+              const displayName = getDisplayName(candidate);
+              const displayEmail = anonymizedMode ? getDisplayEmail(candidate) : accountEmail;
+              const isBusy = busyEmail === accountEmail;
+              return (
+                <div key={accountEmail} className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 p-4 bg-[#f7f6f3] border border-[#e4e1da] rounded-xl">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {candidate.profilePictureUrl ? (
+                      <img
+                        src={`${API_ORIGIN}${candidate.profilePictureUrl}`}
+                        alt={displayName}
+                        className="w-11 h-11 rounded-xl object-cover border border-[#e4e1da]"
+                      />
+                    ) : (
+                      <div className="w-11 h-11 bg-[#e8f2ee] rounded-xl flex items-center justify-center text-[#2d6a55] font-semibold flex-shrink-0">
+                        {displayName.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm text-[#1c1c1a] font-semibold truncate">{displayName}</p>
+                      <p className="text-xs text-[#6b7063] truncate">{displayEmail}</p>
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${candidate.emailVerified ? 'bg-[#e8f2ee] text-[#2d6a55]' : 'bg-[#fff8ed] text-[#8a5a14]'}`}>
+                          {candidate.emailVerified ? 'Email verified' : 'Email unverified'}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${candidate.hasPassword ? 'bg-[#e8eef8] text-[#3a5d9e]' : 'bg-[#fdf2f2] text-[#b91c1c]'}`}>
+                          {candidate.hasPassword ? 'Password set' : 'No password'}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${candidate.profileVerified ? 'bg-[#e8f2ee] text-[#2d6a55]' : 'bg-[#f0ede8] text-[#6b7063]'}`}>
+                          {candidate.profileVerified ? 'Profile verified' : 'Profile pending'}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-white text-[#6b7063] border border-[#e4e1da]">
+                          {candidate.applicationCount || 0} {(candidate.applicationCount || 0) === 1 ? 'application' : 'applications'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 xl:justify-end">
+                    <button
+                      onClick={() => runAction(accountEmail, () => onUpdateAccount(accountEmail, { emailVerified: !candidate.emailVerified }))}
+                      disabled={isBusy}
+                      className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f0ede8] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      {candidate.emailVerified ? 'Unverify Email' : 'Verify Email'}
+                    </button>
+                    <button
+                      onClick={() => runAction(accountEmail, () => onUpdateAccount(accountEmail, { profileVerified: !candidate.profileVerified }))}
+                      disabled={isBusy}
+                      className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f0ede8] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                    >
+                      <UserCheck className="w-3.5 h-3.5" />
+                      {candidate.profileVerified ? 'Mark Pending' : 'Verify Profile'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!window.confirm(`Reset password for ${candidate.name}? A temporary password will be generated.`)) return;
+                        runAction(accountEmail, async () => {
+                          const temporaryPassword = await onResetPassword(accountEmail);
+                          setPasswordResetMessage(`Temporary password for ${candidate.name}: ${temporaryPassword}`);
+                        });
+                      }}
+                      disabled={isBusy}
+                      className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#3a5d9e] rounded-lg hover:bg-[#e8eef8] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                    >
+                      <KeyRound className="w-3.5 h-3.5" />
+                      Reset Password
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Delete candidate account for ${candidate.name}? This removes their profile and application records.`)) {
+                          runAction(accountEmail, () => onDelete(accountEmail));
+                        }
+                      }}
+                      disabled={isBusy}
+                      className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#f0c9c9] text-[#b91c1c] rounded-lg hover:bg-[#fdf2f2] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                    >
+                      {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      Delete Account
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </motion.div>
+
       {/* Active Pipeline */}
       <motion.div
 initial={{ opacity: 0, y: 16 }}
@@ -522,7 +721,7 @@ initial={{ opacity: 0, y: 16 }}
                 <Users className="w-4.5 h-4.5 text-[#2d6a55]" style={{ width: '18px', height: '18px' }} />
               </div>
               <div>
-                <h3 className="text-[#1c1c1a] font-semibold text-base">Active Pipeline</h3>
+                <h3 className="text-[#1c1c1a] font-semibold text-base">Candidate Pipelines</h3>
                 <p className="text-xs text-[#6b7063]">
                   {totalFiltered} {totalFiltered === 1 ? 'candidate' : 'candidates'} filtered
                   {selectedJob ? ` for ${selectedJob.title}` : ''}
@@ -541,12 +740,25 @@ initial={{ opacity: 0, y: 16 }}
                 }}
                 className="px-3 py-1.5 bg-white border border-[#e4e1da] rounded-lg text-xs text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
               >
-                <option value="match">Highest Match Fit</option>
-                <option value="match-asc">Lowest Match Fit</option>
+                <option value="match">Highest Position Fit</option>
+                <option value="match-asc">Lowest Position Fit</option>
                 <option value="velocity">Highest Velocity</option>
                 <option value="name">Name (A-Z)</option>
               </select>
             </div>
+          </div>
+
+          <div className="grid sm:grid-cols-3 gap-2">
+            {[
+              { label: 'Active', value: activePipelineCount, tone: 'bg-[#eef2ff] text-[#3730a3] border-[#c7d2fe]' },
+              { label: 'Hired', value: hiredCandidates, tone: 'bg-[#e8f2ee] text-[#245747] border-[#c8e6d8]' },
+              { label: 'Rejected', value: scopedCandidates.filter(c => c.status === 'rejected').length, tone: 'bg-[#fdf2f2] text-[#b91c1c] border-[#f5c2c2]' }
+            ].map(item => (
+              <div key={item.label} className={`rounded-xl border px-4 py-3 ${item.tone}`}>
+                <p className="text-xs uppercase tracking-wider font-semibold">{item.label}</p>
+                <p className="text-xl font-semibold mt-0.5">{item.value}</p>
+              </div>
+            ))}
           </div>
 
           {/* Filter Pills */}
@@ -559,12 +771,13 @@ initial={{ opacity: 0, y: 16 }}
               { id: 'applied', label: 'Applied' },
               { id: 'screening', label: 'Screening' },
               { id: 'completed', label: 'Completed' },
+              { id: 'hired', label: 'Hired' },
               { id: 'interview_scheduled', label: 'Interview Scheduled' },
               { id: 'rejected', label: 'Rejected' }
             ].map(pill => {
               const count = pill.id === 'all'
-                ? sortedCandidates.length
-                : sortedCandidates.filter(c => c.status === pill.id).length;
+                ? scopedCandidates.length
+                : scopedCandidates.filter(c => c.status === pill.id).length;
               const isActive = filterStatus === pill.id;
               return (
                 <button
@@ -661,6 +874,7 @@ initial={{ opacity: 0, y: 16 }}
                               <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-white rounded-full flex items-center justify-center shadow-sm border border-[#e4e1da]">
                                 {candidate.status === 'invited' && <CheckCircle2 className="w-2.5 h-2.5 text-[#2d6a55]" />}
                                 {candidate.status === 'completed' && <Award className="w-2.5 h-2.5 text-[#c9a84c]" />}
+                                {candidate.status === 'hired' && <CheckCircle2 className="w-2.5 h-2.5 text-[#245747]" />}
                               </div>
                             </div>
 
@@ -668,10 +882,10 @@ initial={{ opacity: 0, y: 16 }}
                               <div className="flex items-center gap-2 mb-0.5">
                                 <h4 className="text-sm text-[#1c1c1a] font-semibold">{displayName}</h4>
                                 
-                                {/* High Match fit badge */}
+                                {/* High position fit badge */}
                                 {candidate.matchScore >= 80 && (
                                   <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[#e8f2ee] text-[#2d6a55] whitespace-nowrap flex items-center gap-1">
-                                    ★ High Match
+                                    ★ High Fit
                                   </span>
                                 )}
 
@@ -680,6 +894,7 @@ initial={{ opacity: 0, y: 16 }}
                                   candidate.status === 'applied' ? 'bg-[#e8eef8] text-[#3a5d9e]' :
                                   candidate.status === 'screening' ? 'bg-[#fdf0e6] text-[#c25a2a]' :
                                   candidate.status === 'completed' ? 'bg-[#fdf8ee] text-[#c9a84c]' :
+                                  candidate.status === 'hired' ? 'bg-[#e8f2ee] text-[#245747]' :
                                   candidate.status === 'rejected' ? 'bg-[#fdf2f2] text-[#b91c1c]' :
                                   candidate.status === 'interview_scheduled' ? 'bg-[#eef2ff] text-[#3730a3]' :
                                   'bg-[#f0ede8] text-[#a8a49d]'
@@ -688,6 +903,7 @@ initial={{ opacity: 0, y: 16 }}
                                    candidate.status === 'applied' ? 'Applied' :
                                    candidate.status === 'screening' ? 'Screening' :
                                    candidate.status === 'completed' ? 'Completed' :
+                                   candidate.status === 'hired' ? 'Hired' :
                                    candidate.status === 'rejected' ? 'Rejected' :
                                    candidate.status === 'interview_scheduled' ? 'Interview Scheduled' :
                                    'Staged'}
@@ -704,7 +920,7 @@ initial={{ opacity: 0, y: 16 }}
                                   candidate.matchScore >= 60 ? 'text-[#c9a84c]' :
                                   'text-[#6b7063]'
                                 }`}>{candidate.matchScore}</div>
-                                <div className="text-xs text-[#a8a49d]">Match</div>
+                                <div className="text-xs text-[#a8a49d]">Position Fit</div>
                               </div>
                               <div className="text-center">
                                 <div className="text-lg text-[#c9a84c] font-semibold">{candidate.trajectoryScore}</div>
@@ -726,6 +942,66 @@ initial={{ opacity: 0, y: 16 }}
                             <p className="text-sm text-[#6b7063] leading-relaxed italic">
                               "{neutralizeText(candidate.sourcingPitch)}"
                             </p>
+                          </div>
+                        )}
+
+                        {candidate.positionFitSummary && (
+                          <div className="bg-[#f0f9f4] border border-[#c8e6d8] rounded-xl p-4 shadow-sm">
+                            <p className="text-xs tracking-wider uppercase text-[#2d6a55] mb-2 font-semibold">Current Position Fit Reasoning</p>
+                            <p className="text-sm text-[#3d5a4a] leading-relaxed">
+                              {neutralizeText(candidate.positionFitSummary)}
+                            </p>
+                            {candidate.fitBreakdown?.must_have && (
+                              <div className="grid md:grid-cols-3 gap-3 mt-3 text-xs">
+                                <div>
+                                  <p className="text-[#2d6a55] font-semibold mb-1">Matched</p>
+                                  <p className="text-[#6b7063] leading-relaxed">{candidate.fitBreakdown.must_have.matched?.join(', ') || 'None yet'}</p>
+                                </div>
+                                <div>
+                                  <p className="text-[#8a5a14] font-semibold mb-1">Partial</p>
+                                  <p className="text-[#6b7063] leading-relaxed">{candidate.fitBreakdown.must_have.partial?.join(', ') || 'None'}</p>
+                                </div>
+                                <div>
+                                  <p className="text-[#b91c1c] font-semibold mb-1">Verify</p>
+                                  <p className="text-[#6b7063] leading-relaxed">{candidate.fitBreakdown.must_have.missing?.join(', ') || 'No major gaps'}</p>
+                                </div>
+                              </div>
+                            )}
+                            {(candidate.scoreExplanation || candidate.scoreContributors?.length) && (
+                              <div className="mt-4 pt-4 border-t border-[#c8e6d8]">
+                                <p className="text-xs tracking-wider uppercase text-[#2d6a55] mb-2 font-semibold">Match Score Calculation</p>
+                                {candidate.scoreExplanation && (
+                                  <p className="text-xs text-[#3d5a4a] leading-relaxed mb-3">
+                                    {neutralizeText(candidate.scoreExplanation)}
+                                  </p>
+                                )}
+                                {candidate.scoreContributors?.length ? (
+                                  <div className="grid md:grid-cols-2 gap-2">
+                                    {candidate.scoreContributors.map((item, contributorIndex) => (
+                                      <div key={`${item.factor}-${contributorIndex}`} className="bg-white border border-[#c8e6d8] rounded-lg p-3">
+                                        <div className="flex items-center justify-between gap-2 mb-1">
+                                          <p className="text-xs text-[#1c1c1a] font-semibold">{item.factor}</p>
+                                          <span className="text-xs text-[#2d6a55] font-semibold">{item.score}/100</span>
+                                        </div>
+                                        <p className="text-[11px] text-[#6b7063] leading-relaxed">
+                                          Weight {item.weight}% · contributes {item.impact} points. {neutralizeText(item.reason || '')}
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {candidate.sourceWarning && (
+                          <div className="bg-[#fff8ed] border border-[#f2d3a4] rounded-xl p-4 shadow-sm">
+                            <p className="text-xs tracking-wider uppercase text-[#8a5a14] mb-2 font-semibold">LinkedIn Source Verification</p>
+                            <p className="text-sm text-[#6b7063] leading-relaxed">{candidate.sourceWarning}</p>
+                            {candidate.sourceStatus && (
+                              <p className="text-xs text-[#a8a49d] mt-2">Extraction status: {candidate.sourceStatus}</p>
+                            )}
                           </div>
                         )}
 
@@ -770,6 +1046,18 @@ initial={{ opacity: 0, y: 16 }}
                                 </button>
                                 <button
                                   onClick={() => {
+                                    if (window.confirm(`Complete hiring for ${candidate.name}? This will move the candidate into the Hired category.`)) {
+                                      runAction(actionEmail, () => onStatusChange(actionEmail, 'hired', candidate.jobId));
+                                    }
+                                  }}
+                                  disabled={busyEmail === actionEmail}
+                                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-[#245747] text-white rounded-lg hover:bg-[#1f4a3d] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                                >
+                                  <Award className="w-3.5 h-3.5" />
+                                  Complete Hire
+                                </button>
+                                <button
+                                  onClick={() => {
                                     setScheduleTarget(candidate);
                                     setScheduleDate('');
                                     setScheduleTime('');
@@ -797,7 +1085,7 @@ initial={{ opacity: 0, y: 16 }}
                               </div>
                             ) : (
                               <>
-                                {candidate.status !== 'completed' && candidate.status !== 'rejected' && candidate.status !== 'interview_scheduled' && (
+                                {candidate.status !== 'completed' && candidate.status !== 'hired' && candidate.status !== 'rejected' && candidate.status !== 'interview_scheduled' && (
                                   <button
                                     onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'screening', candidate.jobId))}
                                     disabled={busyEmail === actionEmail}
@@ -807,7 +1095,7 @@ initial={{ opacity: 0, y: 16 }}
                                     Mark Screening
                                   </button>
                                 )}
-                                {candidate.status !== 'completed' && candidate.status !== 'rejected' && candidate.status !== 'interview_scheduled' && (
+                                {candidate.status !== 'completed' && candidate.status !== 'hired' && candidate.status !== 'rejected' && candidate.status !== 'interview_scheduled' && (
                                   <button
                                     onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'completed', candidate.jobId))}
                                     disabled={busyEmail === actionEmail}
@@ -817,7 +1105,7 @@ initial={{ opacity: 0, y: 16 }}
                                     Mark Complete
                                   </button>
                                 )}
-                                {candidate.status !== 'rejected' && candidate.status !== 'interview_scheduled' && (
+                                {candidate.status !== 'hired' && candidate.status !== 'rejected' && candidate.status !== 'interview_scheduled' && (
                                   <button
                                     onClick={() => {
                                       setScheduleTarget(candidate);
@@ -833,7 +1121,7 @@ initial={{ opacity: 0, y: 16 }}
                                     Schedule Interview
                                   </button>
                                 )}
-                                {candidate.status !== 'rejected' && (
+                                {candidate.status !== 'hired' && candidate.status !== 'rejected' && (
                                   <button
                                     onClick={() => {
                                       setRejectTarget(candidate);
@@ -845,6 +1133,20 @@ initial={{ opacity: 0, y: 16 }}
                                   >
                                     <XCircle className="w-3.5 h-3.5" />
                                     Reject
+                                  </button>
+                                )}
+                                {candidate.status !== 'hired' && candidate.status !== 'rejected' && (
+                                  <button
+                                    onClick={() => {
+                                      if (window.confirm(`Complete hiring for ${candidate.name}? This will finalize recruitment for this candidate.`)) {
+                                        runAction(actionEmail, () => onStatusChange(actionEmail, 'hired', candidate.jobId));
+                                      }
+                                    }}
+                                    disabled={busyEmail === actionEmail}
+                                    className="inline-flex items-center gap-2 px-3 py-2 bg-[#245747] text-white rounded-lg hover:bg-[#1f4a3d] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                                  >
+                                    <Award className="w-3.5 h-3.5" />
+                                    Complete Hire
                                   </button>
                                 )}
                               </>
@@ -1105,21 +1407,85 @@ initial={{ opacity: 0, y: 16 }}
                         </div>
 
                         {/* Screening Results */}
-                        {(candidate.status === 'completed' || candidate.status === 'screening') && candidate.screeningScore !== undefined && (
-                          <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-4 flex items-center justify-between shadow-sm">
-                            <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
-                                <CheckCircle2 className="w-4.5 h-4.5 text-[#2d6a55]" style={{ width: '18px', height: '18px' }} />
+                        {(candidate.status === 'completed' || candidate.status === 'screening' || candidate.status === 'hired') && candidate.screeningScore !== undefined && (
+                          <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-4 shadow-sm">
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
+                                  <CheckCircle2 className="w-4.5 h-4.5 text-[#2d6a55]" style={{ width: '18px', height: '18px' }} />
+                                </div>
+                                <div>
+                                  <p className="text-sm text-[#1c1c1a] font-semibold">Position-Focused Screening {candidate.status === 'screening' ? 'In Progress' : 'Complete'}</p>
+                                  <p className="text-xs text-[#6b7063]">{candidate.evaluation?.position_fit_verdict || 'Answers evaluated against the selected position requirements'}</p>
+                                </div>
                               </div>
-                              <div>
-                                <p className="text-sm text-[#1c1c1a] font-semibold">Screening {candidate.status === 'completed' ? 'Complete' : 'In Progress'}</p>
-                                <p className="text-xs text-[#6b7063]">Interactive warm-up sandbox Q&A scored by AI</p>
+                              <div className="text-right">
+                                <div className="text-2xl text-[#2d6a55] font-semibold">{candidate.screeningScore}</div>
+                                <div className="text-xs text-[#6b7063]">/ 100</div>
                               </div>
                             </div>
-                            <div className="text-right">
-                              <div className="text-2xl text-[#2d6a55] font-semibold">{candidate.screeningScore}</div>
-                              <div className="text-xs text-[#6b7063]">/ 100</div>
+                            {candidate.evaluation?.role_alignment_summary && (
+                              <p className="text-xs text-[#6b7063] leading-relaxed mt-3 border-t border-[#e4e1da] pt-3">
+                                {candidate.evaluation.role_alignment_summary}
+                              </p>
+                            )}
+                            {candidate.evaluation?.score_breakdown && (
+                              <div className="grid sm:grid-cols-5 gap-2 mt-3">
+                                {[
+                                  ['Role', candidate.evaluation.score_breakdown.role_requirement_alignment, 35],
+                                  ['Depth', candidate.evaluation.score_breakdown.technical_correctness_depth, 25],
+                                  ['Evidence', candidate.evaluation.score_breakdown.evidence_specificity, 20],
+                                  ['Impact', candidate.evaluation.score_breakdown.position_impact, 10],
+                                  ['Clarity', candidate.evaluation.score_breakdown.communication_clarity, 10]
+                                ].map(([label, value, max]) => (
+                                  <div key={label} className="bg-white border border-[#e4e1da] rounded-lg p-2">
+                                    <p className="text-[10px] text-[#a8a49d] uppercase tracking-wider font-semibold">{label}</p>
+                                    <p className="text-sm text-[#1c1c1a] font-semibold mt-0.5">{value || 0}/{max}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {candidate.evaluation?.critiques?.length ? (
+                              <div className="mt-4 pt-4 border-t border-[#e4e1da] space-y-3">
+                                <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Question-Specific AI Feedback</p>
+                                {candidate.evaluation.critiques.map((item: any, critiqueIndex: number) => (
+                                  <div key={`${candidate.email}-critique-${critiqueIndex}`} className="bg-white border border-[#e4e1da] rounded-lg p-3">
+                                    <div className="flex items-center justify-between gap-3 mb-2">
+                                      <p className="text-xs text-[#2d6a55] font-semibold">Question {critiqueIndex + 1}</p>
+                                      {item.per_answer_score !== undefined && (
+                                        <span className="text-xs text-[#1c1c1a] font-semibold">{item.per_answer_score}/100</span>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-[#1c1c1a] font-medium leading-relaxed">{item.question}</p>
+                                    {item.candidate_answer_excerpt && (
+                                      <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">
+                                        <span className="font-semibold text-[#1c1c1a]">Candidate answer:</span> {item.candidate_answer_excerpt}
+                                      </p>
+                                    )}
+                                    {item.requirement_focus && (
+                                      <p className="text-xs text-[#6b7063] mt-1">
+                                        <span className="font-semibold text-[#1c1c1a]">Role focus:</span> {item.requirement_focus}
+                                      </p>
+                                    )}
+                                    <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">{item.critique}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
+
+                        {/* Hiring Completion Info */}
+                        {candidate.status === 'hired' && (
+                          <div className="bg-[#e8f2ee] border border-[#c8e6d8] rounded-xl p-4 shadow-sm">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Award className="w-4 h-4 text-[#245747]" />
+                              <p className="text-xs text-[#245747] uppercase tracking-wider font-semibold">Candidate Hired</p>
                             </div>
+                            <p className="text-xs text-[#3d5a4a] leading-relaxed">
+                              Recruitment has been finalized for this candidate and they are now separated from the active and rejected pipelines.
+                            </p>
+                            {candidate.hiredAt && <p className="text-xs text-[#6b7063] mt-1">Completed at: {new Date(candidate.hiredAt).toLocaleString()}</p>}
                           </div>
                         )}
 

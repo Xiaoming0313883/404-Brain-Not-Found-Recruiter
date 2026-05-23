@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Job, ScrapedCandidate } from '../HiringManagerPortal';
-import { Plus, Briefcase, Calendar, X, Loader2, Edit3, Power, Bot, Send, Clock, Users } from 'lucide-react';
+import { Plus, Briefcase, Calendar, X, Loader2, Edit3, Power, Bot, Send, Clock, Users, Trash2 } from 'lucide-react';
 
 interface Props {
   jobs: Job[];
   candidates: ScrapedCandidate[];
   onAddJob: (job: Omit<Job, 'id' | 'createdAt'>) => Promise<void>;
   onUpdateJob: (jobId: number, updates: Partial<Omit<Job, 'id' | 'createdAt'>>) => Promise<void>;
+  onDeleteJob: (jobId: number) => Promise<void>;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -44,7 +45,7 @@ const statusLabels: Record<string, string> = {
   inactive: 'Inactive'
 };
 
-export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
+export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJob }: Props) {
   const [isCreating, setIsCreating] = useState(false);
   const [title, setTitle] = useState('');
   const [department, setDepartment] = useState('');
@@ -53,7 +54,9 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
   const [openTime, setOpenTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [requirements, setRequirements] = useState<string[]>([]);
+  const [requirementInput, setRequirementInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [deletingJobId, setDeletingJobId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [builderStep, setBuilderStep] = useState<'basic' | 'intake'>('basic');
   const [actionError, setActionError] = useState('');
@@ -62,7 +65,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
   const [isIntakeComplete, setIsIntakeComplete] = useState(false);
   const [isAgentThinking, setIsAgentThinking] = useState(false);
   const [chatMessages, setChatMessages] = useState<Array<{ role: 'agent' | 'manager'; content: string }>>([
-    { role: 'agent', content: 'Enter the basic position details, then I will ask adaptive follow-up questions to generate the job description and requirements.' }
+    { role: 'agent', content: 'Enter the basic position details, then I will ask adaptive follow-up questions and prefill editable draft values.' }
   ]);
 
   const startCreate = () => {
@@ -111,6 +114,8 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
     setOpenTime('');
     setEndTime('');
     setRequirements([]);
+    setRequirementInput('');
+    setDeletingJobId(null);
     setEditingId(null);
     setIsCreating(false);
     setBuilderStep('basic');
@@ -118,7 +123,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
     setIntakeContext({});
     setIsIntakeComplete(false);
     setIsAgentThinking(false);
-    setChatMessages([{ role: 'agent', content: 'Enter the basic position details, then I will ask adaptive follow-up questions to generate the job description and requirements.' }]);
+    setChatMessages([{ role: 'agent', content: 'Enter the basic position details, then I will ask adaptive follow-up questions and prefill editable draft values.' }]);
   };
 
   const handleEdit = (job: Job) => {
@@ -132,6 +137,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
     setOpenTime(toDateTimeLocalValue(job.openTime));
     setEndTime(toDateTimeLocalValue(job.endTime));
     setRequirements(job.requirements);
+    setRequirementInput('');
     setIntakeContext(job.sourcingCriteria || {});
     setIsIntakeComplete(Boolean(job.sourcingCriteria?.generated_description || job.description));
     setChatMessages((job.intakeChat as Array<{ role: 'agent' | 'manager'; content: string }>)?.length
@@ -168,15 +174,35 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
   };
 
   const buildGeneratedRequirements = () => {
-    return intakeContext.generated_requirements?.length
-      ? intakeContext.generated_requirements
-      : requirements.length
-        ? requirements
+    return requirements.length
+      ? requirements
+      : intakeContext.generated_requirements?.length
+        ? intakeContext.generated_requirements
         : [`Role-aligned experience for ${title}`, `Relevant ${department} domain knowledge`];
   };
 
   const buildGeneratedDescription = () => {
-    return intakeContext.generated_description || description || `${title} role in ${department}.`;
+    return description || intakeContext.generated_description || `${title} role in ${department}.`;
+  };
+
+  const addRequirement = () => {
+    const value = requirementInput.trim();
+    if (!value) return;
+    setRequirements(prev => prev.some(item => item.toLowerCase() === value.toLowerCase()) ? prev : [...prev, value]);
+    setRequirementInput('');
+  };
+
+  const removeRequirement = (index: number) => {
+    setRequirements(prev => prev.filter((_, itemIndex) => itemIndex !== index));
+  };
+
+  const resetAgentPrefill = () => {
+    if (intakeContext.generated_description) {
+      setDescription(intakeContext.generated_description);
+    }
+    if (intakeContext.generated_requirements?.length) {
+      setRequirements(intakeContext.generated_requirements);
+    }
   };
 
   const buildSourcingCriteria = () => ({
@@ -204,9 +230,15 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
       setIntakeContext(data.context || {});
       setIsIntakeComplete(Boolean(data.is_complete));
       if (data.is_complete) {
+        if (data.context?.generated_description) {
+          setDescription(data.context.generated_description);
+        }
+        if (data.context?.generated_requirements?.length) {
+          setRequirements(data.context.generated_requirements);
+        }
         setChatMessages([
           ...messages,
-          { role: 'agent', content: data.context?.agent_summary || 'I have enough information to generate this position.' }
+          { role: 'agent', content: data.context?.agent_summary || 'I prepared draft values below. Please edit them before saving the position.' }
         ]);
       } else {
         setChatMessages([...messages, { role: 'agent', content: data.question }]);
@@ -244,6 +276,28 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
       await onUpdateJob(job.id, { active: !job.active });
     } catch (err: any) {
       setActionError(err.message || 'Failed to update position status.');
+    }
+  };
+
+  const handleDeleteJob = async (job: Job) => {
+    const applicantCount = applicantsForJob(job.id).length;
+    const applicantText = applicantCount
+      ? ` This position has ${applicantCount} current ${applicantCount === 1 ? 'applicant' : 'applicants'}; their pipeline records will remain.`
+      : '';
+
+    if (!window.confirm(`Delete "${job.title}"?${applicantText}`)) return;
+
+    setActionError('');
+    setDeletingJobId(job.id);
+    try {
+      await onDeleteJob(job.id);
+      if (editingId === job.id) {
+        resetForm();
+      }
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to delete position.');
+    } finally {
+      setDeletingJobId(null);
     }
   };
 
@@ -330,6 +384,10 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
                 <option value="Product">Product</option>
                 <option value="Analytics">Analytics</option>
                 <option value="Infrastructure">Infrastructure</option>
+                <option value="Operations">Operations</option>
+                <option value="Food Services">Food Services</option>
+                <option value="Hospitality">Hospitality</option>
+                <option value="Retail">Retail</option>
                 <option value="Sales">Sales</option>
                 <option value="Marketing">Marketing</option>
               </select>
@@ -374,9 +432,9 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
                 <Bot className="w-4 h-4 text-[#2d6a55]" />
               </div>
               <div>
-                <p className="text-sm text-[#1c1c1a] font-semibold">Description and requirements are generated by the Job Builder Agent</p>
+                <p className="text-sm text-[#1c1c1a] font-semibold">The Job Builder Agent creates editable draft values</p>
                 <p className="text-xs text-[#6b7063] mt-1 leading-relaxed">
-                  The next step asks adaptive questions about outcomes, candidate background, technical depth, domain context, success signals, and concerns. Those answers become the official job description and requirements.
+                  The next step asks adaptive questions based on the position title and your answers. The agent only prefills the description and requirements; you can edit the final saved values before publishing.
                 </p>
               </div>
             </div>
@@ -453,9 +511,77 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
                 </button>
               </div>
             ) : (
-              <div className="bg-[#e8f2ee] border border-[#c8e6d8] rounded-xl p-4">
-                <p className="text-xs text-[#2d6a55] font-semibold uppercase tracking-wider mb-1">Stored Candidate Search Profile</p>
-                <p className="text-sm text-[#3d5a4a] leading-relaxed">{buildSourcingCriteria().agent_summary}</p>
+              <div className="space-y-4">
+                <div className="bg-[#e8f2ee] border border-[#c8e6d8] rounded-xl p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs text-[#2d6a55] font-semibold uppercase tracking-wider mb-1">Agent Prefill Ready</p>
+                      <p className="text-sm text-[#3d5a4a] leading-relaxed">{buildSourcingCriteria().agent_summary}</p>
+                    </div>
+                    <button
+                      onClick={resetAgentPrefill}
+                      className="text-xs text-[#2d6a55] font-semibold hover:underline whitespace-nowrap"
+                    >
+                      Reset Draft
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-[#e4e1da] rounded-xl p-4 space-y-4">
+                  <div>
+                    <label className="block mb-1.5 text-sm text-[#1c1c1a] font-medium">Editable Position Description *</label>
+                    <textarea
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      rows={5}
+                      placeholder="Edit the candidate-facing position description..."
+                      className={`${inputClass} resize-none`}
+                    />
+                    <p className="text-xs text-[#a8a49d] mt-1">This text is saved exactly as the hiring manager edits it.</p>
+                  </div>
+
+                  <div>
+                    <label className="block mb-1.5 text-sm text-[#1c1c1a] font-medium">Editable Requirement Tags *</label>
+                    <div className="flex gap-2 mb-3">
+                      <input
+                        value={requirementInput}
+                        onChange={(e) => setRequirementInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            addRequirement();
+                          }
+                        }}
+                        placeholder="Add a requirement tag..."
+                        className={`flex-1 ${inputClass}`}
+                      />
+                      <button
+                        onClick={addRequirement}
+                        disabled={!requirementInput.trim()}
+                        className="px-4 py-2.5 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f7f6f3] disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+                      >
+                        Add
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {requirements.map((requirement, index) => (
+                        <span key={`${requirement}-${index}`} className="inline-flex items-center gap-2 px-2.5 py-1 bg-[#f0ede8] text-[#6b7063] rounded-full text-xs">
+                          {requirement}
+                          <button
+                            onClick={() => removeRequirement(index)}
+                            className="text-[#a8a49d] hover:text-[#b91c1c]"
+                            title="Remove requirement"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                      {requirements.length === 0 && (
+                        <p className="text-xs text-[#a8a49d]">No requirements yet. Add at least one tag before publishing.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -470,13 +596,13 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
             <button
               onClick={handlePublish}
               hidden={Boolean(editingId)}
-              disabled={!title || !department || !openTime || !endTime || !isIntakeComplete || isProcessing}
+              disabled={!title || !department || !openTime || !endTime || !isIntakeComplete || !description.trim() || requirements.length === 0 || isProcessing}
               className="w-full py-3 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors"
             >
               {isProcessing ? (
                 <div className="flex items-center justify-center gap-2.5">
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Processing with Employer Requirement Agent...
+                  Saving hiring-manager edits...
                 </div>
               ) : (
                 'Publish Job Posting'
@@ -485,7 +611,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
             {editingId && (
               <button
                 onClick={handleSaveEdit}
-                disabled={!title || !department || !openTime || !endTime || !isIntakeComplete || isProcessing}
+                disabled={!title || !department || !openTime || !endTime || !isIntakeComplete || !description.trim() || requirements.length === 0 || isProcessing}
                 className="w-full py-3 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors"
               >
                 {isProcessing ? (
@@ -564,10 +690,19 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob }: Props) {
                   </button>
                   <button
                     onClick={() => handleToggleActive(job)}
+                    disabled={deletingJobId === job.id}
                     className={`inline-flex items-center justify-center w-8 h-8 border rounded-lg transition-colors ${job.active ? 'border-[#e4e1da] text-[#2d6a55] hover:bg-[#f7f6f3]' : 'border-[#e4e1da] text-[#a8a49d] hover:bg-[#f7f6f3]'}`}
                     title={job.active ? 'Deactivate position' : 'Activate position'}
                   >
                     <Power className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteJob(job)}
+                    disabled={deletingJobId === job.id}
+                    className="inline-flex items-center justify-center w-8 h-8 border border-[#f0c9c9] rounded-lg text-[#b91c1c] hover:bg-[#fdf2f2] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title="Delete position"
+                  >
+                    {deletingJobId === job.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                   </button>
                   <div className="flex items-center gap-1.5 text-xs text-[#a8a49d] ml-2">
                     <Calendar className="w-3.5 h-3.5" />

@@ -44,7 +44,11 @@ export interface ScrapedCandidate {
   jobId: number;
   matchScore: number;
   trajectoryScore: number;
-  status: 'staged' | 'invited' | 'applied' | 'screening' | 'completed' | 'rejected' | 'interview_scheduled';
+  positionFitSummary?: string;
+  fitBreakdown?: any;
+  scoreExplanation?: string;
+  scoreContributors?: Array<{ factor: string; score: number; weight: number; impact: number; reason: string }>;
+  status: 'staged' | 'invited' | 'applied' | 'screening' | 'completed' | 'hired' | 'rejected' | 'interview_scheduled';
   appliedAt?: string;
   recruitmentEmail?: string;
   sourcingPitch?: string;
@@ -57,6 +61,8 @@ export interface ScrapedCandidate {
   resumeSummary?: string;
   resumeUrl?: string;
   profilePictureUrl?: string;
+  sourceStatus?: string;
+  sourceWarning?: string;
   phone?: string;
   age?: string;
   address?: string;
@@ -69,6 +75,11 @@ export interface ScrapedCandidate {
   hrFeedback?: string;
   rejectionMessage?: string;
   rejectedAt?: string;
+  hiredAt?: string;
+  hasPassword?: boolean;
+  emailVerified?: boolean;
+  profileVerified?: boolean;
+  applicationCount?: number;
   interviewSlot?: {
     date: string;
     time: string;
@@ -154,8 +165,12 @@ export function HiringManagerPortal() {
           education: c.profile_data?.education || [],
           applicationId: c.application_id,
           jobId: c.position_id,
-          matchScore: c.match_results?.scores?.technical || 80,
+          matchScore: c.match_results?.scores?.overall_position_fit || c.match_results?.scores?.technical || 80,
           trajectoryScore: c.match_results?.scores?.trajectory_slope || 80,
+          positionFitSummary: c.match_results?.position_fit_summary || '',
+          fitBreakdown: c.match_results?.fit_breakdown,
+          scoreExplanation: c.match_results?.score_explanation || '',
+          scoreContributors: c.match_results?.score_contributors || [],
           status: c.status,
           appliedAt: c.applied_at,
           recruitmentEmail: c.outreach_email,
@@ -169,6 +184,8 @@ export function HiringManagerPortal() {
           resumeSummary: c.resume_summary,
           resumeUrl: c.resume_url,
           profilePictureUrl: c.profile_picture_url,
+          sourceStatus: c.profile_data?.scrape_status || '',
+          sourceWarning: c.profile_data?.scrape_warning || '',
           age: c.profile_data?.age || '',
           phone: c.profile_data?.phone || c.profile_data?.basic_info?.phone || '',
           address: c.profile_data?.address || '',
@@ -181,6 +198,11 @@ export function HiringManagerPortal() {
           hrFeedback: c.hr_feedback || '',
           rejectionMessage: c.rejection_message || '',
           rejectedAt: c.rejected_at,
+          hiredAt: c.hired_at,
+          hasPassword: Boolean(c.has_password),
+          emailVerified: c.email_verified ?? true,
+          profileVerified: Boolean(c.profile_verified),
+          applicationCount: c.application_count || 0,
           interviewSlot: c.interview_slot
         }));
         setCandidates(mapped);
@@ -229,6 +251,17 @@ export function HiringManagerPortal() {
     setJobs(prev => prev.map(job => job.id === jobId ? mapJobFromApi(data) : job));
   };
 
+  const deleteJob = async (jobId: number) => {
+    const res = await fetch(`${API_BASE_URL}/jobs/${jobId}`, {
+      method: 'DELETE'
+    });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null);
+      throw new Error(errorData?.detail || 'Failed to delete position.');
+    }
+    setJobs(prev => prev.filter(job => job.id !== jobId));
+  };
+
   const addCandidate = (_candidate: ScrapedCandidate) => {
     fetchCandidates();
   };
@@ -273,6 +306,36 @@ export function HiringManagerPortal() {
     });
     if (!res.ok) throw new Error('Failed to delete candidate.');
     await fetchCandidates();
+  };
+
+  const updateCandidateAccountByEmail = async (email: string, updates: { emailVerified?: boolean; profileVerified?: boolean }) => {
+    const res = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(email)}/account`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email_verified: updates.emailVerified,
+        profile_verified: updates.profileVerified
+      })
+    });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null);
+      throw new Error(errorData?.detail || 'Failed to update candidate account.');
+    }
+    await fetchCandidates();
+  };
+
+  const resetCandidatePasswordByEmail = async (email: string) => {
+    const res = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(email)}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(data?.detail || 'Failed to reset candidate password.');
+    }
+    await fetchCandidates();
+    return data?.temporary_password || '';
   };
 
   const scheduleInterviewByEmail = async (
@@ -393,7 +456,7 @@ export function HiringManagerPortal() {
       <div className="max-w-7xl mx-auto px-6 py-8">
         <Routes>
           <Route path="/" element={<Navigate to="/hiring-manager/jobs" replace />} />
-          <Route path="/jobs" element={<JobBuilder jobs={jobs} candidates={candidates} onAddJob={addJob} onUpdateJob={updateJob} />} />
+          <Route path="/jobs" element={<JobBuilder jobs={jobs} candidates={candidates} onAddJob={addJob} onUpdateJob={updateJob} onDeleteJob={deleteJob} />} />
           <Route
             path="/sourcing"
             element={
@@ -421,6 +484,8 @@ export function HiringManagerPortal() {
                 onReject={rejectCandidateByEmail}
                 onScheduleInterview={scheduleInterviewByEmail}
                 onUpdateOutreachNotes={updateCandidateOutreachNotesByEmail}
+                onUpdateAccount={updateCandidateAccountByEmail}
+                onResetPassword={resetCandidatePasswordByEmail}
               />
             }
           />

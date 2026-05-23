@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import * as Progress from '@radix-ui/react-progress';
-import { ArrowLeft, BarChart3, Briefcase, FileText, Loader2, LogOut, MessageSquare, PlayCircle, Users, Save } from 'lucide-react';
+import { ArrowLeft, BarChart3, Briefcase, CheckCircle2, FileText, Loader2, LogOut, MessageSquare, PlayCircle, Send, Users } from 'lucide-react';
 import { CandidateData } from '../CandidatePortal';
 
 interface Props {
@@ -12,6 +12,16 @@ interface Props {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1$/, '');
+const profileFieldConfig = [
+  { field: 'name', label: 'full name', question: 'What is your full name as it should appear on your application?' },
+  { field: 'age', label: 'age', question: 'What is your age?' },
+  { field: 'phone', label: 'phone number', question: 'What phone number should the hiring team use if they need to reach you?' },
+  { field: 'address', label: 'address', question: 'What is your current address?' },
+  { field: 'cameFrom', label: 'came from', question: 'Where are you applying from, such as your city, country, university, referral source, or previous company?' },
+  { field: 'workExperience', label: 'work experience', question: 'Please summarize your most relevant work experience.' },
+  { field: 'qualification', label: 'qualification', question: 'What is your highest qualification, degree, diploma, certificate, or education level?' },
+  { field: 'gradeResults', label: 'grade and results', question: 'What grade, CGPA, GPA, honors, or exam results should we keep on your profile?' }
+] as const;
 
 const formatDateTime = (value?: string) => {
   if (!value) return 'Not set';
@@ -26,6 +36,7 @@ const statusLabels: Record<CandidateData['status'], string> = {
   applied: 'Position Applied',
   screening: 'Interview In Progress',
   completed: 'Screening Completed',
+  hired: 'Hired',
   rejected: 'Not Selected',
   interview_scheduled: 'Interview Scheduled'
 };
@@ -35,15 +46,17 @@ const normalizeApplicationStatus = (status: string): CandidateData['status'] =>
     ? 'sourced'
     : status === 'completed'
       ? 'completed'
-      : status === 'screening'
-        ? 'screening'
-        : status === 'rejected'
-          ? 'rejected'
-          : status === 'interview_scheduled'
-            ? 'interview_scheduled'
-            : status === 'profile'
-              ? 'profile'
-              : 'applied';
+      : status === 'hired'
+        ? 'hired'
+        : status === 'screening'
+          ? 'screening'
+          : status === 'rejected'
+            ? 'rejected'
+            : status === 'interview_scheduled'
+              ? 'interview_scheduled'
+              : status === 'profile'
+                ? 'profile'
+                : 'applied';
 
 export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: Props) {
   const navigate = useNavigate();
@@ -52,6 +65,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
   const [isApplying, setIsApplying] = useState<number | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [profileChatInput, setProfileChatInput] = useState('');
   const [profileForm, setProfileForm] = useState({
     name: candidateData.name || '',
     age: candidateData.age || '',
@@ -66,6 +80,26 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
     awards: (candidateData.awards || []).join(', '),
     skills: (candidateData.skills || []).join(', ')
   });
+  const [profileChatMessages, setProfileChatMessages] = useState<Array<{ role: 'agent' | 'candidate'; content: string }>>(() => {
+    const firstMissing = profileFieldConfig.find(item => !String(({
+      name: candidateData.name || '',
+      age: candidateData.age || '',
+      phone: candidateData.phone || '',
+      address: candidateData.address || '',
+      cameFrom: candidateData.cameFrom || '',
+      workExperience: candidateData.workExperience || '',
+      qualification: candidateData.qualification || '',
+      gradeResults: candidateData.gradeResults || ''
+    } as Record<string, string>)[item.field] || '').trim());
+    return [
+      {
+        role: 'agent',
+        content: firstMissing
+          ? `I summarized your resume into the profile below. I only need one missing detail: ${firstMissing.question}`
+          : 'I summarized your resume into the profile below. Your required profile details are complete.'
+      }
+    ];
+  });
   const applications = candidateData.applications || [];
   const [selectedApplicationId, setSelectedApplicationId] = useState(
     candidateData.selectedApplicationId || applications[applications.length - 1]?.application_id || ''
@@ -78,6 +112,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
   const selectedStatus = normalizeApplicationStatus(selectedApplication?.status || candidateData.status);
   const progress = selectedApplication?.progress ?? (
     selectedStatus === 'completed' ? 100 :
+    selectedStatus === 'hired' ? 100 :
     selectedStatus === 'rejected' ? 100 :
     selectedStatus === 'interview_scheduled' ? 85 :
     selectedStatus === 'screening' ? 70 :
@@ -85,8 +120,8 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
   );
   const selectedEvaluation = selectedApplication?.evaluation || candidateData.evaluation;
   const selectedScore = selectedEvaluation?.screening_score ?? candidateData.score;
-  const canReview = selectedStatus === 'completed' || selectedStatus === 'interview_scheduled' || selectedStatus === 'rejected';
-  const canContinue = selectedStatus !== 'completed' && selectedStatus !== 'rejected' && selectedStatus !== 'interview_scheduled' && selectedStatus !== 'profile' && Boolean(selectedApplication);
+  const canReview = selectedStatus === 'completed' || selectedStatus === 'hired' || selectedStatus === 'interview_scheduled' || selectedStatus === 'rejected';
+  const canContinue = selectedStatus !== 'completed' && selectedStatus !== 'hired' && selectedStatus !== 'rejected' && selectedStatus !== 'interview_scheduled' && selectedStatus !== 'profile' && Boolean(selectedApplication);
   const appliedPositionIds = new Set(applications.map(application => application.position_id));
 
   useEffect(() => {
@@ -105,17 +140,19 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
   const mapCandidateFromApi = (data: any, positionTitle = ''): CandidateData => {
     const status = data.status === 'completed'
       ? 'completed'
-      : data.status === 'screening'
-        ? 'screening'
-        : data.status === 'rejected'
-          ? 'rejected'
-          : data.status === 'interview_scheduled'
-            ? 'interview_scheduled'
-            : data.status === 'invited'
-              ? 'sourced'
-              : data.status === 'profile'
-                ? 'profile'
-                : 'applied';
+      : data.status === 'hired'
+        ? 'hired'
+        : data.status === 'screening'
+          ? 'screening'
+          : data.status === 'rejected'
+            ? 'rejected'
+            : data.status === 'interview_scheduled'
+              ? 'interview_scheduled'
+              : data.status === 'invited'
+                ? 'sourced'
+                : data.status === 'profile'
+                  ? 'profile'
+                  : 'applied';
 
     const normalizedApplications = (data.applications || []).map((application: any) => {
       const applicationStatus = normalizeApplicationStatus(application.status);
@@ -124,6 +161,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
         status: applicationStatus,
         progress: application.progress ?? (
           applicationStatus === 'completed' ? 100 :
+          applicationStatus === 'hired' ? 100 :
           applicationStatus === 'rejected' ? 100 :
           applicationStatus === 'interview_scheduled' ? 85 :
           applicationStatus === 'screening' ? 70 : 40
@@ -147,7 +185,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
           position_id: data.position_id,
           status,
           applied_at: data.applied_at,
-          progress: status === 'completed' ? 100 : status === 'rejected' ? 100 : status === 'interview_scheduled' ? 85 : status === 'screening' ? 70 : 40,
+          progress: status === 'completed' ? 100 : status === 'hired' ? 100 : status === 'rejected' ? 100 : status === 'interview_scheduled' ? 85 : status === 'screening' ? 70 : 40,
           custom_questions: data.custom_questions,
           answers: data.answers,
           evaluation: data.evaluation,
@@ -155,6 +193,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
           hr_feedback: data.hr_feedback,
           rejection_message: data.rejection_message,
           rejected_at: data.rejected_at,
+          hired_at: data.hired_at,
           interview_slot: data.interview_slot
         }
       ],
@@ -162,6 +201,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
       status,
       progress: status === 'profile' ? 10 :
         status === 'completed' ? 100 :
+        status === 'hired' ? 100 :
         status === 'rejected' ? 100 :
         status === 'interview_scheduled' ? 85 :
         status === 'screening' ? 66 :
@@ -172,6 +212,8 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
       resumeUrl: data.resume_url || candidateData.resumeUrl,
       resumeSummary: data.resume_summary || candidateData.resumeSummary,
       profileExtractionWarning: data.profile_data?.extraction_warning || candidateData.profileExtractionWarning,
+      profileMissingFields: data.profile_missing_fields || candidateData.profileMissingFields || [],
+      profileCompletion: data.profile_completion ?? candidateData.profileCompletion,
       resumeData: data.resume_filename ? { filename: data.resume_filename } : candidateData.resumeData,
       profileVerified: data.profile_verified ?? candidateData.profileVerified,
       age: data.profile_data?.age || candidateData.age,
@@ -179,12 +221,15 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
       cameFrom: data.profile_data?.came_from || candidateData.cameFrom,
       location: data.profile_data?.location || candidateData.location,
       headline: data.profile_data?.headline || candidateData.headline,
+      about: data.profile_data?.about || candidateData.about,
       workExperience: data.profile_data?.work_experience || candidateData.workExperience,
       qualification: data.profile_data?.qualification || candidateData.qualification,
       gradeResults: data.profile_data?.grade_results || candidateData.gradeResults,
       awards: data.profile_data?.awards || candidateData.awards,
       phone: data.profile_data?.phone || candidateData.phone,
       skills: data.profile_data?.skills || candidateData.skills,
+      experiences: data.profile_data?.experiences || candidateData.experiences,
+      education: data.profile_data?.education || candidateData.education,
       recruitmentEmail: data.outreach_email,
       customQuestions: data.custom_questions,
       sandboxAnswers: data.answers,
@@ -193,6 +238,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
       hrFeedback: activeApp?.hr_feedback || data.hr_feedback || '',
       rejectionMessage: activeApp?.rejection_message || data.rejection_message || '',
       rejectedAt: activeApp?.rejected_at || data.rejected_at,
+      hiredAt: activeApp?.hired_at || data.hired_at,
       interviewSlot: activeApp?.interview_slot || data.interview_slot
     };
   };
@@ -234,74 +280,95 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
     }
   };
 
-  const handleProfileFieldChange = (field: keyof typeof profileForm, value: string) => {
-    setProfileForm(current => ({ ...current, [field]: value }));
-  };
+  const getMissingFields = (form = profileForm) =>
+    profileFieldConfig.filter(item => !String(form[item.field] || '').trim());
 
-  const profileReady = Boolean(
-    profileForm.name.trim() &&
-    profileForm.age.trim() &&
-    profileForm.address.trim() &&
-    profileForm.cameFrom.trim() &&
-    profileForm.phone.trim() &&
-    profileForm.workExperience.trim() &&
-    profileForm.qualification.trim() &&
-    profileForm.gradeResults.trim()
-  );
+  const missingProfileFields = getMissingFields();
+  const nextMissingField = missingProfileFields[0];
+  const profileReady = missingProfileFields.length === 0;
+  const profileCompletion = Math.max(0, Math.round(((profileFieldConfig.length - missingProfileFields.length) / profileFieldConfig.length) * 100));
 
-  const handleSaveProfile = async () => {
-    if (!profileReady) {
-      setErrorMessage('Please complete name, age, address, came from, phone number, working experience, qualification, and grade/results before saving.');
-      return;
-    }
+  const buildProfilePayload = (form = profileForm) => ({
+    name: form.name.trim(),
+    age: form.age.trim(),
+    phone: form.phone.trim(),
+    address: form.address.trim(),
+    came_from: form.cameFrom.trim(),
+    location: form.location.trim(),
+    headline: form.headline.trim(),
+    work_experience: form.workExperience.trim(),
+    qualification: form.qualification.trim(),
+    grade_results: form.gradeResults.trim(),
+    awards: form.awards.split(',').map(award => award.trim()).filter(Boolean),
+    skills: form.skills.split(',').map(skill => skill.trim()).filter(Boolean)
+  });
+
+  const saveProfileDetails = async (form = profileForm) => {
     setIsSavingProfile(true);
     setErrorMessage('');
     try {
       const response = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(candidateData.email)}/profile`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: profileForm.name.trim(),
-          age: profileForm.age.trim(),
-          phone: profileForm.phone.trim(),
-          address: profileForm.address.trim(),
-          came_from: profileForm.cameFrom.trim(),
-          location: profileForm.location.trim(),
-          headline: profileForm.headline.trim(),
-          work_experience: profileForm.workExperience.trim(),
-          qualification: profileForm.qualification.trim(),
-          grade_results: profileForm.gradeResults.trim(),
-          awards: profileForm.awards.split(',').map(award => award.trim()).filter(Boolean),
-          skills: profileForm.skills.split(',').map(skill => skill.trim()).filter(Boolean)
-        })
+        body: JSON.stringify(buildProfilePayload(form))
       });
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || 'Failed to save profile details.');
       }
       const data = await response.json();
+      const updatedAwards = data.profile_data?.awards || form.awards.split(',').map(award => award.trim()).filter(Boolean);
+      const updatedSkills = data.profile_data?.skills || form.skills.split(',').map(skill => skill.trim()).filter(Boolean);
       onUpdateCandidate({
         ...candidateData,
         name: data.name,
-        profileVerified: true,
+        profileVerified: data.profile_verified,
+        profileMissingFields: data.profile_missing_fields || [],
+        profileCompletion: data.profile_completion ?? profileCompletion,
         profileExtractionWarning: data.profile_data?.extraction_warning || candidateData.profileExtractionWarning,
-        age: data.profile_data?.age || profileForm.age,
-        address: data.profile_data?.address || profileForm.address,
-        cameFrom: data.profile_data?.came_from || profileForm.cameFrom,
-        location: data.profile_data?.location || profileForm.location,
-        headline: data.profile_data?.headline || profileForm.headline,
-        workExperience: data.profile_data?.work_experience || profileForm.workExperience,
-        qualification: data.profile_data?.qualification || profileForm.qualification,
-        gradeResults: data.profile_data?.grade_results || profileForm.gradeResults,
-        awards: data.profile_data?.awards || profileForm.awards.split(',').map(award => award.trim()).filter(Boolean),
-        phone: data.profile_data?.phone || profileForm.phone,
-        skills: data.profile_data?.skills || profileForm.skills.split(',').map(skill => skill.trim()).filter(Boolean)
+        age: data.profile_data?.age || form.age,
+        address: data.profile_data?.address || form.address,
+        cameFrom: data.profile_data?.came_from || form.cameFrom,
+        location: data.profile_data?.location || form.location,
+        headline: data.profile_data?.headline || form.headline,
+        about: data.profile_data?.about || candidateData.about,
+        workExperience: data.profile_data?.work_experience || form.workExperience,
+        qualification: data.profile_data?.qualification || form.qualification,
+        gradeResults: data.profile_data?.grade_results || form.gradeResults,
+        awards: updatedAwards,
+        phone: data.profile_data?.phone || form.phone,
+        skills: updatedSkills,
+        experiences: data.profile_data?.experiences || candidateData.experiences,
+        education: data.profile_data?.education || candidateData.education
       });
+      return data;
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to save profile details.');
+      return null;
     } finally {
       setIsSavingProfile(false);
     }
+  };
+
+  const handleProfileChatSubmit = async () => {
+    const answer = profileChatInput.trim();
+    if (!answer || !nextMissingField || isSavingProfile) return;
+
+    const nextForm = { ...profileForm, [nextMissingField.field]: answer };
+    const remaining = getMissingFields(nextForm);
+    setProfileForm(nextForm);
+    setProfileChatInput('');
+    setProfileChatMessages(current => [
+      ...current,
+      { role: 'candidate', content: answer },
+      {
+        role: 'agent',
+        content: remaining.length
+          ? `Thanks. Next missing detail: ${remaining[0].question}`
+          : 'Thanks. Your required information details are now complete and saved.'
+      }
+    ]);
+    await saveProfileDetails(nextForm);
   };
 
   return (
@@ -364,6 +431,23 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
           </div>
         )}
 
+        {selectedStatus === 'hired' && (
+          <div className="mb-6 rounded-2xl border border-[#c8e6d8] bg-[#f0f9f4] p-6 shadow-sm">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 bg-[#e8f2ee] rounded-xl flex items-center justify-center flex-shrink-0">
+                <CheckCircle2 className="w-5 h-5 text-[#245747]" />
+              </div>
+              <div className="flex-1">
+                <p className="text-xs tracking-wider uppercase text-[#245747] mb-1 font-semibold">Application Complete</p>
+                <h2 className="text-[#1c1c1a] mb-2 font-semibold text-lg">Congratulations, you have been hired</h2>
+                <p className="text-sm text-[#52574e] leading-relaxed">
+                  The hiring team has finalized recruitment for this position. Please watch your email for onboarding details and next steps.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {selectedStatus === 'interview_scheduled' && candidateData.interviewSlot && (
           <div className="mb-6 rounded-2xl border border-[#c5cbf7] bg-[#f5f7ff] p-6 shadow-sm">
             <div className="flex items-start gap-4">
@@ -410,7 +494,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
             <FileText className="w-4 h-4 text-[#2d6a55]" />
             <div>
               <h2 className="text-[#1c1c1a] font-semibold">Information Details</h2>
-              <p className="text-xs text-[#6b7063]">Review resume-extracted details and complete any missing basic information.</p>
+              <p className="text-xs text-[#6b7063]">Resume Agent summarized these details from your uploaded resume.</p>
             </div>
           </div>
           {candidateData.profileExtractionWarning && (
@@ -418,118 +502,169 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
               {candidateData.profileExtractionWarning}
             </div>
           )}
-          <div className="grid sm:grid-cols-2 gap-4 text-sm">
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-[#e4e1da] bg-[#f7f6f3] px-4 py-3 mb-4">
             <div>
-              <label className="block text-xs text-[#a8a49d] mb-1">Full Name *</label>
-              <input
-                value={profileForm.name}
-                onChange={(event) => handleProfileFieldChange('name', event.target.value)}
-                className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
-              />
+              <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Profile Completion</p>
+              <p className={`text-sm font-semibold ${profileReady ? 'text-[#2d6a55]' : 'text-[#c25a2a]'}`}>
+                {profileReady ? 'Ready to apply' : `${missingProfileFields.length} missing ${missingProfileFields.length === 1 ? 'detail' : 'details'}`}
+              </p>
             </div>
-            <div>
-              <label className="block text-xs text-[#a8a49d] mb-1">Age *</label>
-              <input
-                value={profileForm.age}
-                onChange={(event) => handleProfileFieldChange('age', event.target.value)}
-                className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-[#a8a49d] mb-1">Phone Number *</label>
-              <input
-                value={profileForm.phone}
-                onChange={(event) => handleProfileFieldChange('phone', event.target.value)}
-                className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-[#a8a49d] mb-1">Location</label>
-              <input
-                value={profileForm.location}
-                onChange={(event) => handleProfileFieldChange('location', event.target.value)}
-                className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
-              />
+            <div className="text-right">
+              <p className="text-2xl text-[#1c1c1a] font-semibold">{profileCompletion}%</p>
+              <p className="text-xs text-[#6b7063]">{candidateData.profileVerified ? 'Verified' : 'Not verified yet'}</p>
             </div>
           </div>
-          <div className="mt-4">
-            <label className="block text-xs text-[#a8a49d] mb-1">Came From *</label>
-            <input
-              value={profileForm.cameFrom}
-              onChange={(event) => handleProfileFieldChange('cameFrom', event.target.value)}
-              placeholder="Country, city, university, referral source, or previous company"
-              className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
-            />
-          </div>
-          <div className="mt-4">
-            <label className="block text-xs text-[#a8a49d] mb-1">Address *</label>
-            <textarea
-              value={profileForm.address}
-              onChange={(event) => handleProfileFieldChange('address', event.target.value)}
-              className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55] resize-none"
-              rows={2}
-            />
-          </div>
-          <div className="mt-4">
-            <label className="block text-xs text-[#a8a49d] mb-1">Work Experience *</label>
-            <textarea
-              value={profileForm.workExperience}
-              onChange={(event) => handleProfileFieldChange('workExperience', event.target.value)}
-              className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55] resize-none"
-              rows={3}
-            />
-          </div>
-          <div className="grid sm:grid-cols-2 gap-4 mt-4">
-            <div>
-              <label className="block text-xs text-[#a8a49d] mb-1">Qualification *</label>
-              <input
-                value={profileForm.qualification}
-                onChange={(event) => handleProfileFieldChange('qualification', event.target.value)}
-                placeholder="Degree, diploma, certificate, or highest education"
-                className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
-              />
+
+          <div className="space-y-4">
+            <div className="rounded-xl border border-[#e4e1da] p-4">
+              <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Resume Summary</p>
+              <p className="text-sm text-[#6b7063] leading-relaxed">
+                {candidateData.about || candidateData.resumeSummary || 'The Resume Agent did not find a readable summary. Review your uploaded resume PDF if needed.'}
+              </p>
             </div>
-            <div>
-              <label className="block text-xs text-[#a8a49d] mb-1">Grade and Results *</label>
-              <input
-                value={profileForm.gradeResults}
-                onChange={(event) => handleProfileFieldChange('gradeResults', event.target.value)}
-                placeholder="CGPA, GPA, class, exam result, or honors"
-                className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
-              />
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              {[
+                ['Full Name', profileForm.name],
+                ['Email', candidateData.email],
+                ['Phone', profileForm.phone],
+                ['Age', profileForm.age],
+                ['Location', profileForm.location],
+                ['Came From', profileForm.cameFrom],
+                ['Address', profileForm.address],
+                ['Headline', profileForm.headline]
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl border border-[#e4e1da] p-4">
+                  <p className="text-xs text-[#a8a49d] mb-1 font-medium">{label}</p>
+                  <p className={`text-sm font-medium leading-relaxed ${value ? 'text-[#1c1c1a]' : 'text-[#c25a2a]'}`}>
+                    {value || 'Missing'}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-xl border border-[#e4e1da] p-4">
+              <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Work Experience</p>
+              <p className={`text-sm leading-relaxed ${profileForm.workExperience ? 'text-[#6b7063]' : 'text-[#c25a2a]'}`}>
+                {profileForm.workExperience || 'Missing'}
+              </p>
+              {candidateData.experiences?.length ? (
+                <div className="mt-3 space-y-2">
+                  {candidateData.experiences.map((experience, index) => (
+                    <div key={`${experience.title}-${index}`} className="rounded-lg bg-[#f7f6f3] border border-[#e4e1da] p-3">
+                      <p className="text-sm text-[#1c1c1a] font-semibold">{experience.title || 'Experience'}</p>
+                      <p className="text-xs text-[#6b7063] mt-0.5">{[experience.company, experience.duration].filter(Boolean).join(' - ') || 'Company details not found'}</p>
+                      {experience.description && <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">{experience.description}</p>}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="rounded-xl border border-[#e4e1da] p-4">
+                <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Qualification</p>
+                <p className={`text-sm leading-relaxed ${profileForm.qualification ? 'text-[#6b7063]' : 'text-[#c25a2a]'}`}>
+                  {profileForm.qualification || 'Missing'}
+                </p>
+                {candidateData.education?.length ? (
+                  <div className="mt-3 space-y-2">
+                    {candidateData.education.map((education, index) => (
+                      <div key={`${education.degree}-${index}`} className="rounded-lg bg-[#f7f6f3] border border-[#e4e1da] p-3">
+                        <p className="text-xs text-[#1c1c1a] font-semibold">{education.degree || 'Education'}</p>
+                        <p className="text-xs text-[#6b7063] mt-0.5">{[education.school, education.duration].filter(Boolean).join(' - ')}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div className="rounded-xl border border-[#e4e1da] p-4">
+                <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Grade and Results</p>
+                <p className={`text-sm leading-relaxed ${profileForm.gradeResults ? 'text-[#6b7063]' : 'text-[#c25a2a]'}`}>
+                  {profileForm.gradeResults || 'Missing'}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="rounded-xl border border-[#e4e1da] p-4">
+                <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Skills</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {(profileForm.skills ? profileForm.skills.split(',').map(skill => skill.trim()).filter(Boolean) : []).length ? (
+                    profileForm.skills.split(',').map(skill => skill.trim()).filter(Boolean).map(skill => (
+                      <span key={skill} className="px-2 py-0.5 bg-[#f0ede8] rounded-full text-xs text-[#6b7063]">{skill}</span>
+                    ))
+                  ) : (
+                    <p className="text-sm text-[#6b7063]">No skills detected.</p>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-xl border border-[#e4e1da] p-4">
+                <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Awards</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {(profileForm.awards ? profileForm.awards.split(',').map(award => award.trim()).filter(Boolean) : []).length ? (
+                    profileForm.awards.split(',').map(award => award.trim()).filter(Boolean).map(award => (
+                      <span key={award} className="px-2 py-0.5 bg-[#fdf8ee] rounded-full text-xs text-[#8a5a14]">{award}</span>
+                    ))
+                  ) : (
+                    <p className="text-sm text-[#6b7063]">No awards detected.</p>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
-          <div className="mt-4">
-            <label className="block text-xs text-[#a8a49d] mb-1">Awards</label>
-            <input
-              value={profileForm.awards}
-              onChange={(event) => handleProfileFieldChange('awards', event.target.value)}
-              placeholder="Awards, scholarships, competitions, honors"
-              className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
-            />
-          </div>
-          <div className="mt-4">
-            <label className="block text-xs text-[#a8a49d] mb-1">Skills</label>
-            <input
-              value={profileForm.skills}
-              onChange={(event) => handleProfileFieldChange('skills', event.target.value)}
-              placeholder="React, Python, SQL"
-              className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
-            />
-          </div>
-          <div className="mt-4 flex items-center justify-between gap-3 pt-4 border-t border-[#e4e1da]">
-            <p className={`text-xs font-semibold ${candidateData.profileVerified ? 'text-[#2d6a55]' : 'text-[#c25a2a]'}`}>
-              {candidateData.profileVerified ? 'Profile verified' : 'Verification required before applying'}
-            </p>
-            <button
-              onClick={handleSaveProfile}
-              disabled={!profileReady || isSavingProfile}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed text-sm font-medium"
-            >
-              {isSavingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Save Details
-            </button>
-          </div>
+
+          {!profileReady && (
+            <div className="mt-5 rounded-xl border border-[#c8e6d8] bg-[#f8fcfa] p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <MessageSquare className="w-4 h-4 text-[#2d6a55]" />
+                <p className="text-sm text-[#1c1c1a] font-semibold">Missing Information Assistant</p>
+              </div>
+              <div className="bg-white border border-[#e4e1da] rounded-xl p-3 max-h-56 overflow-auto space-y-2 mb-3">
+                {profileChatMessages.map((message, index) => (
+                  <div key={index} className={`flex ${message.role === 'candidate' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
+                      message.role === 'candidate' ? 'bg-[#2d6a55] text-white' : 'bg-[#f0ede8] text-[#1c1c1a]'
+                    }`}>
+                      {message.content}
+                    </div>
+                  </div>
+                ))}
+                {isSavingProfile && (
+                  <div className="flex justify-start">
+                    <div className="rounded-xl px-3 py-2 text-xs bg-[#f0ede8] text-[#6b7063] inline-flex items-center gap-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Saving answer...
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  value={profileChatInput}
+                  onChange={(event) => setProfileChatInput(event.target.value)}
+                  onKeyDown={(event) => event.key === 'Enter' && handleProfileChatSubmit()}
+                  placeholder={nextMissingField?.label ? `Answer ${nextMissingField.label}...` : 'All required details are complete'}
+                  className="flex-1 px-3 py-2 border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+                />
+                <button
+                  onClick={handleProfileChatSubmit}
+                  disabled={!profileChatInput.trim() || isSavingProfile}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed text-sm font-medium"
+                >
+                  {isSavingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                  Send
+                </button>
+              </div>
+            </div>
+          )}
+
+          {profileReady && (
+            <div className="mt-5 flex items-center gap-2 rounded-xl border border-[#c8e6d8] bg-[#e8f2ee] px-4 py-3 text-sm text-[#2d6a55] font-semibold">
+              <CheckCircle2 className="w-4 h-4" />
+              Your required information details are complete.
+            </div>
+          )}
         </div>
 
         {errorMessage && (
@@ -608,6 +743,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
                         status,
                         progress: application.progress ?? (
                           status === 'completed' ? 100 :
+                          status === 'hired' ? 100 :
                           status === 'rejected' ? 100 :
                           status === 'interview_scheduled' ? 85 :
                           status === 'screening' ? 70 : 40
@@ -620,6 +756,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
                         hrFeedback: application.hr_feedback || '',
                         rejectionMessage: application.rejection_message || '',
                         rejectedAt: application.rejected_at,
+                        hiredAt: application.hired_at,
                         interviewSlot: application.interview_slot
                       });
                     }}

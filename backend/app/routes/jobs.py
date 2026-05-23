@@ -76,16 +76,17 @@ def create_job(payload: JobCreate):
     provided_description = payload.description or intake_context.get("generated_description") or ""
     provided_requirements = payload.requirements or intake_context.get("generated_requirements") or []
 
-    # Trigger the Employer Requirement Agent to generate the role spec and search profile.
+    # The agent only enriches search metadata. The hiring manager's edited
+    # description and requirements remain the final source of truth.
     try:
         req_analysis = run_requirement_agent(
             payload.title,
             f"{provided_description}\n\nHiring Manager Intake: {intake_context}"
         )
-        generated_description = req_analysis.get("job_description") or provided_description
-        generated_requirements = req_analysis.get("requirements") or provided_requirements
+        generated_description = provided_description or req_analysis.get("job_description") or f"{payload.title} role in {payload.department}."
+        generated_requirements = provided_requirements or req_analysis.get("requirements") or [f"Relevant experience for {payload.title}"]
         boolean_queries = req_analysis.get("boolean_queries", "")
-        pillars = req_analysis.get("pillars", generated_requirements[:3])
+        pillars = req_analysis.get("pillars") or generated_requirements[:3]
         behavioral = req_analysis.get("behavioral", [])
     except Exception as e:
         print(f"Error in requirement profiling: {e}")
@@ -141,13 +142,25 @@ def update_job(job_id: int, payload: JobUpdate):
                 job["title"],
                 f"{provided_description}\n\nHiring Manager Intake: {intake_context}"
             )
-            job["description"] = req_analysis.get("job_description") or provided_description
-            job["requirements"] = req_analysis.get("requirements") or provided_requirements
             job["boolean_queries"] = req_analysis.get("boolean_queries", job.get("boolean_queries", ""))
-            job["pillars"] = req_analysis.get("pillars", job.get("requirements", [])[:3])
+            job["pillars"] = req_analysis.get("pillars") or provided_requirements[:3]
             job["behavioral"] = req_analysis.get("behavioral", job.get("behavioral", []))
         except Exception as e:
             print(f"Error refreshing requirement profile: {e}")
+            job["pillars"] = provided_requirements[:3]
 
     save_db(db)
     return serialize_position(job)
+
+@router.delete("/{job_id}")
+def delete_job(job_id: int):
+    db = load_db()
+    positions = db.setdefault("positions", {})
+    job_key = str(job_id)
+    job = positions.get(job_key)
+    if not job:
+        raise HTTPException(status_code=404, detail="Position not found.")
+
+    deleted = positions.pop(job_key)
+    save_db(db)
+    return {"deleted": True, "position": serialize_position(deleted)}

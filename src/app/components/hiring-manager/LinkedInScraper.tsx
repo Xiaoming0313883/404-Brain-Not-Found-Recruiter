@@ -31,8 +31,12 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
     experiences: data.profile_data?.experiences || [],
     education: data.profile_data?.education || [],
     jobId: data.position_id,
-    matchScore: data.match_results?.scores?.technical || 80,
+    matchScore: data.match_results?.scores?.overall_position_fit || data.match_results?.scores?.technical || 80,
     trajectoryScore: data.match_results?.scores?.trajectory_slope || 80,
+    positionFitSummary: data.match_results?.position_fit_summary || '',
+    fitBreakdown: data.match_results?.fit_breakdown,
+    sourceStatus: data.profile_data?.scrape_status || '',
+    sourceWarning: data.profile_data?.scrape_warning || '',
     status: data.status,
     recruitmentEmail: data.outreach_email,
     sourcingPitch: data.sourcing_pitch,
@@ -130,8 +134,10 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
       
       setProcessingLogs(prev => [
         ...prev,
-        'Profile extraction completed successfully.',
-        `Match Score Calculated: ${data.match_results?.scores?.technical || 80}%`,
+        data.profile_data?.scrape_status === 'public_metadata'
+          ? 'Public LinkedIn metadata captured. Full profile still needs verification.'
+          : 'LinkedIn did not expose public profile details. Captured URL-derived identity only.',
+        `Position Fit Score Calculated: ${data.match_results?.scores?.overall_position_fit || data.match_results?.scores?.technical || 80}%`,
         `Trajectory Slope Calculated: ${data.match_results?.scores?.trajectory_slope || 80}%`
       ]);
 
@@ -141,40 +147,8 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
       setEmailDraft(mappedCandidate.recruitmentEmail || '');
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(err.message || 'API connection failed. Simulating local fallback profiling.');
-      
-      // Simulation fallback for smooth offline prototyping
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      setProcessingLogs(prev => [...prev, 'Fallback simulator initiated...', 'Profile analysis complete.']);
-      const mockCandidate: Omit<ScrapedCandidate, 'id'> = {
-        name: 'Alex Rodriguez',
-        email: 'alex.rodriguez@email.com',
-        managementEmail: 'alex.rodriguez@email.com',
-        headline: 'Full-Stack Engineer with 6 years building scalable web applications',
-        location: 'Austin, TX',
-        about: 'Passionate software engineer specializing in React, Node.js, and cloud infrastructure.',
-        experiences: [
-          { title: 'Senior Software Engineer', company: '[Series B Startup]', duration: '2022-Present' },
-          { title: 'Software Engineer', company: '[Mid-Size Tech Company]', duration: '2019-2022' }
-        ],
-        education: [
-          { school: '[State University]', degree: 'BS Computer Science' }
-        ],
-        jobId: Number(selectedJobId),
-        matchScore: 85,
-        trajectoryScore: 92,
-        status: 'staged',
-        recruitmentEmail: `Dear Alex,\n\nYour career progression and technical expertise caught our attention on LinkedIn. Your experience building scalable systems and demonstrated growth from junior to senior engineer in just 4 years shows exceptional learning velocity.\n\nWe'd love to discuss our job opportunity with you.\n\nBest regards,\nThe Hiring Team`,
-        advocatePros: [
-          'Rapid career progression — junior to senior in 4 years',
-          'Strong full-stack capabilities matching our tech stack'
-        ],
-        recruiterCons: [
-          'Limited experience with distributed systems at scale'
-        ]
-      };
-      setStagedCandidate(mockCandidate);
-      setEmailDraft(mockCandidate.recruitmentEmail || '');
+      setErrorMessage(err.message || 'LinkedIn profile extraction failed. No candidate was staged because unverified fallback data would be misleading.');
+      setProcessingLogs(prev => [...prev, 'Profile extraction stopped. No simulated candidate was created.']);
     } finally {
       setIsProcessing(false);
     }
@@ -213,8 +187,12 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
         experiences: data.candidate.profile_data?.experiences || [],
         education: data.candidate.profile_data?.education || [],
         jobId: data.candidate.position_id,
-        matchScore: data.candidate.match_results?.scores?.technical || 80,
+        matchScore: data.candidate.match_results?.scores?.overall_position_fit || data.candidate.match_results?.scores?.technical || 80,
         trajectoryScore: data.candidate.match_results?.scores?.trajectory_slope || 80,
+        positionFitSummary: data.candidate.match_results?.position_fit_summary || '',
+        fitBreakdown: data.candidate.match_results?.fit_breakdown,
+        sourceStatus: data.candidate.profile_data?.scrape_status || '',
+        sourceWarning: data.candidate.profile_data?.scrape_warning || '',
         status: 'invited',
         recruitmentEmail: data.candidate.outreach_email,
         sourcingPitch: data.candidate.sourcing_pitch,
@@ -283,7 +261,7 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
           <p className="text-sm text-[#6b7063]">
             {mode === 'auto'
               ? 'Prototype agent search finds suitable candidates for the selected position and stages the best match.'
-              : 'Paste a public LinkedIn profile URL to scrape, analyze, and generate editable outreach.'}
+              : 'Paste a public LinkedIn profile URL. LinkedIn may block full extraction, so unavailable fields are marked for manual verification.'}
           </p>
         </div>
 
@@ -333,7 +311,7 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
             </button>
           </div>
           <p className="mt-2 text-xs text-[#a8a49d]">
-            Demo: https://www.linkedin.com/in/alex-rodriguez-dev
+            Only public metadata can be read without a LinkedIn-authenticated scraper session.
           </p>
         </div>
         )}
@@ -411,6 +389,18 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
               <div>
                 <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">About</p>
                 <p className="text-sm text-[#6b7063] leading-relaxed">{stagedCandidate.about}</p>
+              </div>
+            )}
+
+            {(stagedCandidate.sourceWarning || stagedCandidate.sourceStatus) && (
+              <div className="bg-[#fff8ed] border border-[#f2d3a4] rounded-xl p-4">
+                <p className="text-xs tracking-wider uppercase text-[#8a5a14] mb-1 font-semibold">Source Verification</p>
+                <p className="text-sm text-[#6b7063] leading-relaxed">
+                  {stagedCandidate.sourceWarning || 'This sourced profile should be manually verified before outreach.'}
+                </p>
+                {stagedCandidate.sourceStatus && (
+                  <p className="text-xs text-[#a8a49d] mt-2">Extraction status: {stagedCandidate.sourceStatus}</p>
+                )}
               </div>
             )}
 

@@ -12,13 +12,15 @@ def get_openai_client() -> Optional[OpenAI]:
             api_key=settings.OPENAI_API_KEY,
             base_url=settings.OPENAI_BASE_URL,
             max_retries=0,
-            timeout=20.0
+            timeout=settings.LLM_TIMEOUT
         )
     except Exception:
         return None
 
 def parse_llm_json(text: str) -> Dict[str, Any]:
     text = text.strip()
+    # Strip Qwen3 / thinking-model <think>...</think> blocks before parsing
+    text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE).strip()
     match = re.search(r"```json\s*([\s\S]*?)\s*```", text)
     if match:
         json_str = match.group(1)
