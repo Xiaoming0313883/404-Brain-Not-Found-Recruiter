@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FileText, Loader2, Save, Upload, User } from 'lucide-react';
+import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
 import { PdfResumeViewer } from '../PdfResumeViewer';
 import { CandidateNav } from './CandidateNav';
@@ -12,6 +13,8 @@ interface Props {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1$/, '');
+const MAX_RESUME_BYTES = 10 * 1024 * 1024;
+const MAX_PROFILE_IMAGE_BYTES = 5 * 1024 * 1024;
 const requiredProfileFields = [
   ['name', 'Full name'],
   ['age', 'Age'],
@@ -45,6 +48,10 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
   const [message, setMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const missingFields = requiredProfileFields.filter(([field]) => !String((form as any)[field] || '').trim());
+
+  useEffect(() => {
+    if (errorMessage) toast.error(errorMessage);
+  }, [errorMessage]);
 
   const openPdfInBrowser = async (url: string) => {
     try {
@@ -113,6 +120,7 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
       if (!response.ok) throw new Error(data.detail || 'Failed to save profile.');
       mergeCandidate(data);
       setMessage('Information details saved.');
+      toast.success('Information details saved.');
     } catch (error: any) {
       setErrorMessage(error.message || 'Failed to save profile.');
     } finally {
@@ -123,6 +131,22 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
   const uploadFile = (kind: 'resume' | 'picture') => {
     const file = kind === 'resume' ? resume : picture;
     if (!file) return;
+    if (kind === 'resume' && !file.name.toLowerCase().endsWith('.pdf')) {
+      setErrorMessage('Please upload a PDF resume.');
+      return;
+    }
+    if (kind === 'resume' && file.size > MAX_RESUME_BYTES) {
+      setErrorMessage('Resume must be 10MB or smaller.');
+      return;
+    }
+    if (kind === 'picture' && !file.type.startsWith('image/')) {
+      setErrorMessage('Profile picture must be JPG, PNG, or WebP.');
+      return;
+    }
+    if (kind === 'picture' && file.size > MAX_PROFILE_IMAGE_BYTES) {
+      setErrorMessage('Profile picture must be 5MB or smaller.');
+      return;
+    }
     setIsSaving(true);
     setUploadProgress(0);
     setErrorMessage('');
@@ -141,6 +165,7 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
         if (xhr.status >= 200 && xhr.status < 300) {
           mergeCandidate(data);
           setMessage(kind === 'resume' ? 'Resume updated successfully.' : 'Profile picture updated.');
+          toast.success(kind === 'resume' ? 'Resume updated successfully.' : 'Profile picture updated.');
           if (kind === 'resume') setResume(null);
           if (kind === 'picture') setPicture(null);
         } else {

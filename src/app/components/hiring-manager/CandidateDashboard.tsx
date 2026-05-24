@@ -28,6 +28,7 @@ import * as Switch from '@radix-ui/react-switch';
 import * as Accordion from '@radix-ui/react-accordion';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ZAxis } from 'recharts';
 import { motion } from 'motion/react';
+import { toast } from 'sonner';
 import { PdfResumeViewer } from '../PdfResumeViewer';
 
 interface Props {
@@ -38,10 +39,10 @@ interface Props {
   isLoading?: boolean;
   onRefresh: () => Promise<void> | void;
   onStatusChange: (email: string, status: ScrapedCandidate['status'], positionId?: number) => Promise<void>;
-  onInvite: (email: string, outreachEmail?: string, hrFeedback?: string) => Promise<void>;
+  onInvite: (email: string, outreachEmail?: string, hrFeedback?: string) => Promise<any>;
   onDelete: (email: string) => Promise<void>;
   onReject: (email: string, positionId?: number, hrFeedback?: string, rejectionMessage?: string) => Promise<void>;
-  onScheduleInterview: (email: string, positionId: number | undefined, date: string, time: string, location: string, notes?: string) => Promise<void>;
+  onScheduleInterview: (email: string, positionId: number | undefined, date: string, time: string, location: string, notes?: string) => Promise<any>;
   onUpdateOutreachNotes: (email: string, positionId?: number, outreachEmail?: string, hrFeedback?: string) => Promise<void>;
   onRevertStatus?: (email: string, positionId?: number) => Promise<void>;
   view?: 'overview' | 'candidates';
@@ -77,6 +78,14 @@ const getVisiblePages = (currentPage: number, totalPages: number) => {
   return Array.from(pages)
     .filter(page => page >= 1 && page <= totalPages)
     .sort((a, b) => a - b);
+};
+
+const alignScoreMentions = (text: string, score: any) => {
+  if (score === undefined || score === null || text === undefined || text === null) return text;
+  return String(text)
+    .replace(/(answer\s+scored\s+)(\d+(?:\.\d+)?)(\/100)/i, `$1${score}$3`)
+    .replace(/(score\s+is\s+)(\d+(?:\.\d+)?)(\/100)/i, `$1${score}$3`)
+    .replace(/(scored\s+)(\d+(?:\.\d+)?)(\s*out\s+of\s+100)/i, `$1${score}$3`);
 };
 
 export function CandidateDashboard({
@@ -128,7 +137,7 @@ export function CandidateDashboard({
         jobId: candidate.jobId
       });
     }
-    await onInviteProp(email, outreachEmail, hrFeedback);
+    return onInviteProp(email, outreachEmail, hrFeedback);
   };
 
   const onReject = async (email: string, positionId?: number, hrFeedback?: string, rejectionMessage?: string) => {
@@ -156,7 +165,7 @@ export function CandidateDashboard({
         jobId: positionId
       });
     }
-    await onScheduleInterviewProp(email, positionId, date, time, location, notes);
+    return onScheduleInterviewProp(email, positionId, date, time, location, notes);
   };
 
   const openPdfInBrowser = async (url: string) => {
@@ -331,9 +340,10 @@ export function CandidateDashboard({
     setBusyEmail(email);
     setActionError('');
     try {
-      await action();
+      return await action();
     } catch (error: any) {
       setActionError(error.message || 'Candidate action failed.');
+      toast.error(error.message || 'Candidate action failed.');
     } finally {
       window.setTimeout(() => {
         actionLocksRef.current.delete(email);
@@ -1035,8 +1045,15 @@ initial={{ opacity: 0, y: 16 }}
                             {candidate.status === 'staged' && (
                               <button
                                 onClick={async () => {
-                                  await runAction(actionEmail, () => onInvite(actionEmail, draftOutreach, draftFeedback));
-                                  setInviteSuccessMessage(`Invitation and outreach email successfully sent to ${candidate.name}!`);
+                                  const result: any = await runAction(actionEmail, () => onInvite(actionEmail, draftOutreach, draftFeedback));
+                                  if (!result) return;
+                                  const message = result?.outreach_sent
+                                    ? `Invitation email sent to ${candidate.name}.`
+                                    : result?.smtp_configured === false
+                                      ? `Invitation saved for ${candidate.name}. SMTP is not configured, so no email was sent.`
+                                      : `Invitation saved for ${candidate.name}. Email delivery was not confirmed.`;
+                                  setInviteSuccessMessage(message);
+                                  toast.success(message);
                                   setTimeout(() => setInviteSuccessMessage(''), 4500);
                                 }}
                                 disabled={busyEmail === actionEmail}
@@ -1540,9 +1557,9 @@ initial={{ opacity: 0, y: 16 }}
                                       )}
                                     </div>
                                     <p className="text-xs text-[#1c1c1a] font-medium leading-relaxed">{item.question}</p>
-                                    {(item.candidate_answer || item.candidate_answer_excerpt) && (
+                                    {(item.candidate_answer || item.candidate_answer_excerpt || candidate.answers?.[critiqueIndex]) && (
                                       <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">
-                                        <span className="font-semibold text-[#1c1c1a]">Candidate answer:</span> {item.candidate_answer || item.candidate_answer_excerpt}
+                                        <span className="font-semibold text-[#1c1c1a]">Candidate answer:</span> {item.candidate_answer || candidate.answers?.[critiqueIndex] || item.candidate_answer_excerpt}
                                       </p>
                                     )}
                                     {item.requirement_focus && (
@@ -1550,7 +1567,7 @@ initial={{ opacity: 0, y: 16 }}
                                         <span className="font-semibold text-[#1c1c1a]">Role focus:</span> {item.requirement_focus}
                                       </p>
                                     )}
-                                    <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">{item.critique}</p>
+                                    <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">{alignScoreMentions(item.critique, item.per_answer_score)}</p>
                                     {item.strengths?.length ? (
                                       <div className="mt-3">
                                         <p className="text-[10px] text-[#2d6a55] uppercase tracking-wider font-semibold mb-1.5">Evidence supporting the score</p>
@@ -1832,9 +1849,16 @@ initial={{ opacity: 0, y: 16 }}
               </button>
               <button
                 disabled={!scheduleDate || !scheduleTime}
-                onClick={() => {
+                onClick={async () => {
                   const email = scheduleTarget.managementEmail || scheduleTarget.email;
-                  runAction(email, () => onScheduleInterview(email, scheduleTarget.jobId, scheduleDate, scheduleTime, scheduleLocation, scheduleNotes));
+                  const result: any = await runAction(email, () => onScheduleInterview(email, scheduleTarget.jobId, scheduleDate, scheduleTime, scheduleLocation, scheduleNotes));
+                  if (result) {
+                    toast.success(result.interview_email_sent
+                      ? `Interview scheduled and email sent to ${scheduleTarget.name}.`
+                      : result.smtp_configured === false
+                        ? `Interview scheduled for ${scheduleTarget.name}. SMTP is not configured, so no email was sent.`
+                        : `Interview scheduled for ${scheduleTarget.name}. Email delivery was not confirmed.`);
+                  }
                   setScheduleTarget(null);
                 }}
                 className="flex-1 px-4 py-2.5 bg-[#3730a3] text-white rounded-lg hover:bg-[#312e81] disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"

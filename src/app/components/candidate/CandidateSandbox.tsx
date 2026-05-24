@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { CandidateData } from '../CandidatePortal';
 import * as Progress from '@radix-ui/react-progress';
 import { CheckCircle2, AlertCircle, Loader2, Mic, MicOff } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface Props {
   candidateData: CandidateData;
@@ -70,7 +71,10 @@ export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Pr
     setErrorMessage('');
     const errors = answers.map(answer => answer.trim().length < 10);
     setValidationErrors(errors);
-    if (errors.some(error => error)) return;
+    if (errors.some(error => error)) {
+      toast.warning('Please answer every question before submitting.');
+      return;
+    }
 
     setIsSubmitting(true);
 
@@ -100,6 +104,7 @@ export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Pr
       console.error(err);
       const message = err.message || 'Unable to evaluate your answers. Please try again when the API is available.';
       setErrorMessage(message);
+      toast.error(message);
       onAgentError?.(answers, message);
     } finally {
       setIsSubmitting(false);
@@ -116,7 +121,9 @@ export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Pr
   const handleVoiceAnswer = (index: number) => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      setErrorMessage('Voice recognition is not supported in this browser. Please use Chrome or Edge, or type your answer.');
+      const message = 'Voice recognition is not supported in this browser. Please use Chrome or Edge, or type your answer.';
+      setErrorMessage(message);
+      toast.error(message);
       return;
     }
 
@@ -136,7 +143,9 @@ export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Pr
       }
     };
     recognition.onerror = () => {
-      setErrorMessage('Voice recognition could not capture audio. Check microphone permission and try again.');
+      const message = 'Voice recognition could not capture audio. Check microphone permission and try again.';
+      setErrorMessage(message);
+      toast.error(message);
     };
     recognition.onend = () => setListeningIndex(null);
     recognition.start();

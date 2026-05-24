@@ -59,6 +59,7 @@ export interface ScrapedCandidate {
   recruiterCons?: string[];
   screeningScore?: number;
   evaluation?: any;
+  answers?: string[];
   resumeFilename?: string;
   resumeText?: string;
   resumeSummary?: string;
@@ -190,6 +191,7 @@ export function HiringManagerPortal() {
           recruiterCons: c.match_results?.debate?.critical_recruiter_cons || [],
           screeningScore: c.evaluation?.screening_score,
           evaluation: c.evaluation,
+          answers: c.answers || c.draft_answers || [],
           resumeFilename: c.resume_filename,
           resumeText: c.resume_text,
           resumeSummary: c.resume_summary,
@@ -293,8 +295,13 @@ export function HiringManagerPortal() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, position_id: positionId })
     });
-    if (!res.ok) throw new Error('Failed to update candidate status.');
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null);
+      throw new Error(errorData?.detail || 'Failed to update candidate status.');
+    }
+    const data = await res.json().catch(() => null);
     await fetchCandidates();
+    return data;
   };
 
   const revertCandidateStatusByEmail = async (email: string, positionId?: number) => {
@@ -316,8 +323,13 @@ export function HiringManagerPortal() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, outreach_email: outreachEmail, hr_feedback: hrFeedback })
     });
-    if (!res.ok) throw new Error('Failed to send candidate invitation.');
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null);
+      throw new Error(errorData?.detail || 'Failed to send candidate invitation.');
+    }
+    const data = await res.json();
     await fetchCandidates();
+    return data;
   };
 
   const rejectCandidateByEmail = async (email: string, positionId?: number, hrFeedback?: string, rejectionMessage?: string) => {
@@ -326,8 +338,13 @@ export function HiringManagerPortal() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ position_id: positionId, hr_feedback: hrFeedback || '', rejection_message: rejectionMessage })
     });
-    if (!res.ok) throw new Error('Failed to reject candidate.');
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null);
+      throw new Error(errorData?.detail || 'Failed to reject candidate.');
+    }
+    const data = await res.json().catch(() => null);
     await fetchCandidates();
+    return data;
   };
 
   const deleteCandidateByEmail = async (email: string) => {
@@ -387,8 +404,10 @@ export function HiringManagerPortal() {
         interview_notes: interviewNotes || ''
       })
     });
-    if (!res.ok) throw new Error('Failed to schedule interview.');
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.detail || 'Failed to schedule interview.');
     await fetchCandidates();
+    return data;
   };
 
   const updateCandidateOutreachNotesByEmail = async (email: string, positionId?: number, outreachEmail?: string, hrFeedback?: string) => {

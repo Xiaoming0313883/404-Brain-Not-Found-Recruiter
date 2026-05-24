@@ -1,6 +1,7 @@
+import { Link } from 'react-router';
 import { CandidateData } from '../CandidatePortal';
 import * as Progress from '@radix-ui/react-progress';
-import { BookOpen, Calendar, CheckCircle2, TrendingUp, Target } from 'lucide-react';
+import { ArrowLeft, BookOpen, Calendar, CheckCircle2, TrendingUp, Target } from 'lucide-react';
 import { CandidateNav } from './CandidateNav';
 
 interface Props {
@@ -8,13 +9,34 @@ interface Props {
   onSignOut?: () => void;
 }
 
+const alignScoreMentions = (text: string, score: any) => {
+  if (score === undefined || score === null || text === undefined || text === null) return text;
+  return String(text)
+    .replace(/(answer\s+scored\s+)(\d+(?:\.\d+)?)(\/100)/i, `$1${score}$3`)
+    .replace(/(score\s+is\s+)(\d+(?:\.\d+)?)(\/100)/i, `$1${score}$3`)
+    .replace(/(scored\s+)(\d+(?:\.\d+)?)(\s*out\s+of\s+100)/i, `$1${score}$3`);
+};
+
 export function CandidateFeedback({ candidateData, onSignOut }: Props) {
-  const score = candidateData.score || 0;
+  const applications = candidateData.applications || [];
+  const selectedApplication = applications.find(application => application.application_id === candidateData.selectedApplicationId)
+    || applications.find(application => application.position_id === candidateData.jobId)
+    || applications[applications.length - 1];
+  const activeStatus = selectedApplication?.status || candidateData.status;
+  const evaluation = selectedApplication?.evaluation || candidateData.evaluation;
+  const score = evaluation?.screening_score ?? candidateData.score ?? 0;
   const isHighScore = score >= 70;
-  const scoreBreakdown = candidateData.evaluation?.score_breakdown;
+  const scoreBreakdown = evaluation?.score_breakdown;
+  const hrFeedback = selectedApplication?.hr_feedback || candidateData.hrFeedback || '';
+  const rejectionMessage = selectedApplication?.rejection_message || candidateData.rejectionMessage || '';
+  const interviewSlot = selectedApplication?.interview_slot || candidateData.interviewSlot;
+  const hasResults = Boolean(
+    selectedApplication &&
+    (evaluation || hrFeedback || rejectionMessage || interviewSlot || ['screening', 'completed', 'hired', 'rejected', 'interview_scheduled'].includes(activeStatus))
+  );
 
   // Retrieve dynamically generated AI upskilling roadmap from evaluation details
-  const rawRoadmap = candidateData.evaluation?.upskilling_roadmap || {};
+  const rawRoadmap = evaluation?.upskilling_roadmap || {};
   const roadmap = [
     {
       week: 1,
@@ -45,7 +67,53 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
     }
   ];
 
-  const critiques = candidateData.evaluation?.critiques || [];
+  const rawCritiques = evaluation?.critiques || [];
+  const critiqueCounts = rawCritiques.reduce((counts: Record<string, number>, item: any) => {
+    const key = String(item?.critique || '').trim().toLowerCase();
+    if (key) counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+  const critiques = rawCritiques.map((item: any, index: number) => {
+    const answer = item.candidate_answer || selectedApplication?.answers?.[index] || candidateData.sandboxAnswers?.[index] || item.candidate_answer_excerpt || '';
+    const duplicated = critiqueCounts[String(item?.critique || '').trim().toLowerCase()] > 1;
+    if (!duplicated || !answer) {
+      return {
+        ...item,
+        critique: alignScoreMentions(item.critique, item.per_answer_score)
+      };
+    }
+    return {
+      ...item,
+      candidate_answer: item.candidate_answer || answer,
+      candidate_answer_excerpt: item.candidate_answer_excerpt || answer,
+      critique: `${alignScoreMentions(item.critique, item.per_answer_score)} For this specific answer, the evaluator reviewed the candidate's full answer: "${String(answer)}"`
+    };
+  });
+
+  if (!hasResults) {
+    return (
+      <div className="min-h-screen py-12 px-6 bg-[#f7f6f3]">
+        <div className="max-w-3xl mx-auto">
+          <CandidateNav onSignOut={onSignOut} />
+          <div className="bg-white border border-[#e4e1da] rounded-2xl p-8 text-center shadow-sm">
+            <p className="text-xs tracking-[0.2em] uppercase text-[#2d6a55] mb-4 font-semibold">Results</p>
+            <h1 className="text-[#1c1c1a] mb-2 font-semibold text-2xl">No results yet</h1>
+            <p className="text-sm text-[#6b7063] max-w-md mx-auto leading-relaxed">
+              Choose an application with completed screening, feedback, or an interview decision to review results here.
+            </p>
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              <Link to="/candidate/applications" className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] transition-colors text-sm font-medium">
+                View Applications
+              </Link>
+              <Link to="/candidate/jobs" className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f7f6f3] transition-colors text-sm font-medium">
+                Browse Jobs
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen py-12 px-6 bg-[#f7f6f3]">
@@ -90,7 +158,7 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
             </h2>
           </div>
           <p className="text-sm text-[#6b7063] max-w-md mx-auto leading-relaxed">
-            {candidateData.evaluation?.role_alignment_summary || (
+            {evaluation?.role_alignment_summary || rejectionMessage || (
               isHighScore
                 ? 'Your responses demonstrate strong current-position alignment and practical problem-solving ability. The hiring team will be reviewing your profile shortly.'
                 : "Your responses show some relevant thinking for this position. We've prepared a personalized development roadmap to support your growth."
@@ -106,7 +174,7 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
               </div>
               <div>
                 <h3 className="text-[#1c1c1a] font-semibold text-base">Position-Focused Score Breakdown</h3>
-                <p className="text-xs text-[#6b7063]">{candidateData.evaluation?.position_fit_verdict || 'Marked against the current position requirements'}</p>
+                <p className="text-xs text-[#6b7063]">{evaluation?.position_fit_verdict || 'Marked against the current position requirements'}</p>
               </div>
             </div>
             <div className="grid sm:grid-cols-5 gap-2">
@@ -150,9 +218,9 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
                     <p className="text-xs text-[#6b7063]">Role focus: {item.requirement_focus}</p>
                   )}
                   <p className="text-xs text-[#1c1c1a] italic leading-relaxed font-medium">"{item.question}"</p>
-                  {item.candidate_answer_excerpt && (
+                  {(item.candidate_answer || item.candidate_answer_excerpt) && (
                     <p className="text-xs text-[#52574e] leading-relaxed">
-                      <span className="font-semibold text-[#1c1c1a]">Your answer:</span> {item.candidate_answer_excerpt}
+                      <span className="font-semibold text-[#1c1c1a]">Your answer:</span> {item.candidate_answer || item.candidate_answer_excerpt}
                     </p>
                   )}
                   <p className="text-xs text-[#52574e] leading-relaxed">{item.critique}</p>
@@ -239,7 +307,7 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
         )}
 
         {/* HR Manager Feedback */}
-        {candidateData.hrFeedback && (
+        {hrFeedback && (
           <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 mb-5 shadow-sm">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-8 h-8 bg-[#e8f2ee] rounded-lg flex items-center justify-center">
@@ -251,7 +319,7 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
               </div>
             </div>
             <div className="bg-[#f8faf8] rounded-xl p-4 border border-[#e4e1da]/50 text-xs text-[#52574e] leading-relaxed">
-              {candidateData.hrFeedback}
+              {hrFeedback}
             </div>
           </div>
         )}
@@ -320,7 +388,7 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
         </div>
 
         <p className="text-center text-xs text-[#a8a49d]">
-          A copy of this feedback has been sent to {candidateData.email}
+          This feedback is saved to {candidateData.email}
         </p>
 
       </div>

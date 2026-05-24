@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Job, ScrapedCandidate } from '../HiringManagerPortal';
 import { Link2, Play, Send, CheckCircle2, AlertCircle, Loader2, ChevronDown } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface Props {
   jobs: Job[];
@@ -95,9 +96,11 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
       setExpandedIndices({ 0: true });
 
       setProcessingLogs(prev => [...prev, `Auto-source found ${data.length} candidate profiles.`]);
+      toast.success(`Auto-source staged ${data.length} candidate profiles. Invitations were not sent.`);
       data.forEach((candidate: any, index: number) => onAddCandidate({ ...mapCandidate(candidate), id: candidates.length + index + 1 } as ScrapedCandidate));
     } catch (err: any) {
       setErrorMessage(err.message || 'Automatic sourcing failed.');
+      toast.error(err.message || 'Automatic sourcing failed.');
     } finally {
       setIsProcessing(false);
     }
@@ -160,9 +163,11 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
       setStagedCandidates([mappedCandidate]);
       setEmailDrafts({ [mappedCandidate.email]: mappedCandidate.recruitmentEmail || '' });
       setExpandedIndices({ 0: true });
+      toast.success('Candidate staged. Review the draft before sending an invitation.');
     } catch (err: any) {
       console.error(err);
       setErrorMessage(err.message || 'LinkedIn profile extraction failed. No candidate was staged because unverified fallback data would be misleading.');
+      toast.error(err.message || 'LinkedIn profile extraction failed.');
       setProcessingLogs(prev => [...prev, 'Profile extraction stopped. No simulated candidate was created.']);
     } finally {
       setIsProcessing(false);
@@ -217,21 +222,18 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
       };
 
       onAddCandidate(fullCandidate);
+      toast.success(data.outreach_sent
+        ? `Invitation email sent to ${fullCandidate.name}.`
+        : data.smtp_configured === false
+          ? `Invitation saved for ${fullCandidate.name}. SMTP is not configured, so no email was sent.`
+          : `Invitation saved for ${fullCandidate.name}. Email delivery was not confirmed.`);
       setLinkedinUrl('');
       setStagedCandidates(prev => prev.filter(c => c.email !== candidate.email));
       setProcessingLogs([]);
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(err.message || 'Connection failed. Dispatching invitation locally.');
-      // Local fallback
-      onAddCandidate({
-        ...candidate,
-        id: candidates.length + 1,
-        status: 'invited'
-      } as ScrapedCandidate);
-      setLinkedinUrl('');
-      setStagedCandidates(prev => prev.filter(c => c.email !== candidate.email));
-      setProcessingLogs([]);
+      setErrorMessage(err.message || 'Connection failed. Invitation was not sent.');
+      toast.error(err.message || 'Connection failed. Invitation was not sent.');
     } finally {
       setIsProcessing(false);
     }

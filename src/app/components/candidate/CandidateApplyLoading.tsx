@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import * as Progress from '@radix-ui/react-progress';
 import { Bot, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
 
 interface Props {
@@ -78,9 +79,12 @@ export function CandidateApplyLoading({ candidateData, onUpdateCandidate }: Prop
         });
         setProgress(100);
         setMessage('Interview workspace ready.');
+        toast.success('Application registered. Interview workspace ready.');
         window.setTimeout(() => navigate('/candidate/sandbox'), 400);
       } catch (error: any) {
-        setErrorMessage(error.message || 'Application setup failed.');
+        const message = error.message || 'Application setup failed.';
+        setErrorMessage(message);
+        toast.error(message);
         setMessage('Application setup stopped.');
       }
     };

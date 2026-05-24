@@ -4,6 +4,30 @@ from email.mime.multipart import MIMEMultipart
 from typing import Dict, Any
 from ..config import settings
 
+PLACEHOLDER_VALUES = {
+    "your_email@gmail.com",
+    "recruiter-bot@company.com",
+    "your_app_specific_password",
+    "your-app-specific-password",
+    "your_app_specific_password",
+    "your-app-specific-password",
+    ""
+}
+
+def resolve_smtp_settings(smtp_settings: Dict[str, Any] = None) -> Dict[str, Any]:
+    return {
+        "host": (smtp_settings or {}).get("SMTP_HOST") or settings.SMTP_HOST,
+        "port": (smtp_settings or {}).get("SMTP_PORT") or settings.SMTP_PORT,
+        "user": (smtp_settings or {}).get("SMTP_USER") or settings.SMTP_USER,
+        "password": (smtp_settings or {}).get("SMTP_PASSWORD") or settings.SMTP_PASSWORD,
+    }
+
+def is_smtp_configured(smtp_settings: Dict[str, Any] = None) -> bool:
+    resolved = resolve_smtp_settings(smtp_settings)
+    user = str(resolved.get("user") or "").strip()
+    password = str(resolved.get("password") or "").strip()
+    return bool(user and password and user not in PLACEHOLDER_VALUES and password not in PLACEHOLDER_VALUES)
+
 def send_recruitment_email(
     to_email: str,
     subject: str,
@@ -11,14 +35,13 @@ def send_recruitment_email(
     smtp_settings: Dict[str, Any] = None
 ) -> bool:
     """Dispatches a structured email to the target candidate using SMTP."""
-    # Resolve SMTP configurations (use customized settings if passed, else fallback to .env config)
-    host = (smtp_settings or {}).get("SMTP_HOST") or settings.SMTP_HOST
-    port = (smtp_settings or {}).get("SMTP_PORT") or settings.SMTP_PORT
-    user = (smtp_settings or {}).get("SMTP_USER") or settings.SMTP_USER
-    password = (smtp_settings or {}).get("SMTP_PASSWORD") or settings.SMTP_PASSWORD
+    resolved = resolve_smtp_settings(smtp_settings)
+    host = resolved["host"]
+    port = resolved["port"]
+    user = resolved["user"]
+    password = resolved["password"]
 
-    placeholder_values = {"your_email@gmail.com", "recruiter-bot@company.com", "your_app_specific_password", "your-app-specific-password"}
-    if not user or not password or user in placeholder_values or password in placeholder_values:
+    if not is_smtp_configured(smtp_settings):
         print("SMTP Credentials not configured. Skipping email dispatch.")
         return False
 
@@ -62,12 +85,13 @@ def send_candidate_verification_email(to_email: str, code: str) -> bool:
 
 def verify_smtp_connection(smtp_settings: Dict[str, Any]) -> bool:
     """Verifies that an SMTP connection can be established and authenticated."""
-    host = smtp_settings.get("SMTP_HOST") or settings.SMTP_HOST
-    port = smtp_settings.get("SMTP_PORT") or settings.SMTP_PORT
-    user = smtp_settings.get("SMTP_USER") or settings.SMTP_USER
-    password = smtp_settings.get("SMTP_PASSWORD") or settings.SMTP_PASSWORD
+    resolved = resolve_smtp_settings(smtp_settings)
+    host = resolved["host"]
+    port = resolved["port"]
+    user = resolved["user"]
+    password = resolved["password"]
 
-    if not user or not password:
+    if not is_smtp_configured(smtp_settings):
         return False
 
     try:

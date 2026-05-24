@@ -91,6 +91,7 @@ Use this scoring rubric:
 - Communication clarity (10%): answer is organized and understandable.
 
 Penalize answers that are vague, copied from generic interview prep, do not mention role-relevant requirements, or lack examples. Do not invent experience that is not present in the answer.
+If an answer is a non-answer such as "I don't know", "not sure", "no idea", "N/A", or any refusal/empty response with no job evidence, score that answer 0/100. Do not give credit for clarity, honesty, or brevity when no role evidence is provided.
 Return an integer grade (0-100), a score breakdown, hiring recommendation, and rich structured qualitative feedback for EACH answer.
 
 Output JSON Format:
@@ -109,7 +110,8 @@ Output JSON Format:
   "critiques": [
     {
       "question": "The full question text",
-      "candidate_answer_excerpt": "Short excerpt or faithful summary from the candidate's actual answer",
+      "candidate_answer": "The candidate's full answer text, unchanged and not summarized",
+      "candidate_answer_excerpt": "The candidate's full answer text, unchanged and not summarized",
       "per_answer_score": 82,
       "requirement_focus": "The role requirement or gap this answer was judged against.",
       "critique": "A detailed 4-6 sentence hiring-manager opinion. Explain what the answer proves, what it does not prove, why the score is justified, and how confident the evaluator should be.",
@@ -149,10 +151,58 @@ Return ONLY valid JSON. No markdown code fences.
     return build_position_specific_evaluation(questions, answers, job_requirements)
 
 def _answer_excerpt(answer: str, limit: int = 180) -> str:
-    cleaned = " ".join(str(answer or "").split())
-    if len(cleaned) <= limit:
-        return cleaned
-    return f"{cleaned[:limit].rstrip()}..."
+    return " ".join(str(answer or "").split())
+
+NON_ANSWER_DIMENSION_SCORES = {
+    "role_requirement_alignment": 0,
+    "technical_correctness_depth": 0,
+    "evidence_specificity": 0,
+    "position_impact": 0,
+    "communication_clarity": 0
+}
+
+def _normalized_answer_text(answer: str) -> str:
+    text = str(answer or "").lower().replace("'", "").replace("’", "")
+    return re.sub(r"[^a-z0-9\s]", " ", text).strip()
+
+def _is_non_answer(answer: str) -> bool:
+    normalized = re.sub(r"\s+", " ", _normalized_answer_text(answer))
+    if not normalized:
+        return True
+    tokens = normalized.split()
+    exact_non_answers = {
+        "i dont know",
+        "idk",
+        "dont know",
+        "do not know",
+        "i do not know",
+        "no idea",
+        "not sure",
+        "im not sure",
+        "i am not sure",
+        "unsure",
+        "unknown",
+        "n a",
+        "na",
+        "none",
+        "nil",
+        "no answer",
+        "cannot answer",
+        "cant answer",
+        "i cant answer",
+        "i cannot answer"
+    }
+    if normalized in exact_non_answers:
+        return True
+    non_answer_phrases = (
+        "dont know",
+        "do not know",
+        "no idea",
+        "not sure",
+        "cannot answer",
+        "cant answer"
+    )
+    return len(tokens) <= 6 and any(phrase in normalized for phrase in non_answer_phrases)
 
 ROLE_SYNONYM_GROUPS = [
     {"baker", "bakery", "baked", "bread", "pastry", "cake", "oven", "batch", "ingredient", "recipe", "kitchen", "hygiene", "food", "freshness"},
@@ -177,6 +227,9 @@ def _soft_term_match(term: str, answer_tokens: set[str], answer_text: str, quest
     return bool(normalized_term and normalized_term in answer_text)
 
 def _answer_dimension_scores(answer: str, question: str, role_terms: List[str]) -> Dict[str, int]:
+    if _is_non_answer(answer):
+        return dict(NON_ANSWER_DIMENSION_SCORES)
+
     answer_tokens = set(_tokenize(answer))
     question_tokens = set(_tokenize(question))
     role_token_sets = [set(_tokenize(term)) for term in role_terms if _tokenize(term)]
@@ -250,6 +303,32 @@ def build_position_specific_evaluation(questions: List[str], answers: List[str],
             if term not in matched_terms
         ][:4]
         requirement_focus = matched_terms[0] if matched_terms else (role_terms[0] if role_terms else title)
+        if _is_non_answer(a):
+            critiques.append({
+                "question": q,
+                "candidate_answer_excerpt": _answer_excerpt(a),
+                "candidate_answer": a,
+                "per_answer_score": 0,
+                "requirement_focus": requirement_focus,
+                "critique": (
+                    f"The answer scored 0/100 for {title}. The candidate's full answer was: \"{_answer_excerpt(a)}\". "
+                    "This is a non-answer and does not provide evidence of role requirement alignment, technical depth, project experience, impact, or communication of a solution. "
+                    "It should not be treated as partial credit simply because it is clear or honest. "
+                    "For a hiring manager, this answer is a verification risk and should be followed up only if the rest of the application provides strong evidence."
+                ),
+                "strengths": [],
+                "weaknesses": [
+                    "No role-relevant evidence was provided.",
+                    "No technical reasoning, project example, trade-off, metric, or outcome was supplied."
+                ],
+                "suggested_improvement": (
+                    f"Replace this with a concrete example related to {requirement_focus}: explain the situation, your action, the trade-offs, and the result."
+                ),
+                "hiring_manager_note": (
+                    "Treat this answer as zero evidence for the prompt. If the candidate continues, ask a direct follow-up for a specific project and do not infer capability from this response."
+                )
+            })
+            continue
 
         critiques.append({
             "question": q,
@@ -260,7 +339,7 @@ def build_position_specific_evaluation(questions: List[str], answers: List[str],
             "critique": (
                 f"The answer scored {per_answer_score}/100 for {title}. "
                 f"My opinion is that it {'provides useful role evidence around ' + ', '.join(matched_terms[:2]) if matched_terms else 'does not yet provide enough direct evidence for the current position requirements'}. "
-                f"The candidate's answer was reviewed against the actual prompt and the excerpt: \"{_answer_excerpt(a, 140)}\". "
+                f"The candidate's full answer was reviewed against the actual prompt: \"{_answer_excerpt(a)}\". "
                 f"The strongest part of the response is its connection to {', '.join(matched_terms[:2]) if matched_terms else 'the question at a basic level'}, while the main concern is {', '.join(missing_terms[:2]) if missing_terms else 'whether the example transfers cleanly to the role context'}. "
                 f"For a hiring manager, this should be treated as {'supporting evidence' if per_answer_score >= 70 else 'a verification risk'} rather than a final decision by itself."
             ),
@@ -309,6 +388,25 @@ def build_position_specific_evaluation(questions: List[str], answers: List[str],
         "critiques": critiques
     }
 
+def _coerce_score(value: Any, fallback: int = 0) -> int:
+    try:
+        return max(0, min(100, int(round(float(value)))))
+    except (TypeError, ValueError):
+        return fallback
+
+def _align_score_mentions(critique_text: str, score: int) -> str:
+    if not critique_text:
+        return critique_text
+    patterns = [
+        r"(answer\s+scored\s+)(\d+(?:\.\d+)?)(/100)",
+        r"(score\s+is\s+)(\d+(?:\.\d+)?)(/100)",
+        r"(scored\s+)(\d+(?:\.\d+)?)(\s*out\s+of\s+100)",
+    ]
+    aligned = critique_text
+    for pattern in patterns:
+        aligned = re.sub(pattern, rf"\g<1>{score}\g<3>", aligned, flags=re.IGNORECASE)
+    return aligned
+
 def normalize_interview_evaluation(parsed: Dict[str, Any], questions: List[str], answers: List[str], job_requirements: Dict[str, Any]) -> Dict[str, Any]:
     fallback = build_position_specific_evaluation(questions, answers, job_requirements)
     if not isinstance(parsed, dict):
@@ -317,21 +415,45 @@ def normalize_interview_evaluation(parsed: Dict[str, Any], questions: List[str],
     fallback_critiques = fallback.get("critiques", [])
     parsed_critiques = parsed.get("critiques") if isinstance(parsed.get("critiques"), list) else []
     normalized_critiques = []
+    seen_critique_texts: set[str] = set()
 
     for idx, question in enumerate(questions):
         answer = answers[idx] if idx < len(answers) else ""
         item = parsed_critiques[idx] if idx < len(parsed_critiques) and isinstance(parsed_critiques[idx], dict) else {}
         fallback_item = fallback_critiques[idx] if idx < len(fallback_critiques) else {}
-        excerpt = item.get("candidate_answer_excerpt") or _answer_excerpt(answer)
+        full_answer = _answer_excerpt(answer)
+        excerpt = full_answer
         critique_text = item.get("critique") or fallback_item.get("critique", "")
-        if excerpt and excerpt[:40].lower() not in critique_text.lower():
+        score_source = item
+        normalized_text_key = re.sub(r"\s+", " ", critique_text.strip().lower())
+        looks_generic = (
+            not critique_text
+            or normalized_text_key in seen_critique_texts
+            or "answer was received and appears usable" in normalized_text_key
+            or (excerpt and excerpt[:40].lower() not in normalized_text_key)
+        )
+        if looks_generic:
+            critique_text = fallback_item.get("critique", critique_text)
+            score_source = fallback_item
+            normalized_text_key = re.sub(r"\s+", " ", critique_text.strip().lower())
+        per_answer_score = _coerce_score(
+            score_source.get("per_answer_score"),
+            _coerce_score(fallback_item.get("per_answer_score"), 0)
+        )
+        if _is_non_answer(answer):
+            per_answer_score = 0
+            critique_text = fallback_item.get("critique", critique_text)
+        critique_text = _align_score_mentions(critique_text, per_answer_score)
+        if excerpt and excerpt[:40].lower() not in normalized_text_key:
             critique_text = f"{critique_text} Candidate evidence reviewed: \"{excerpt}\"".strip()
+            normalized_text_key = re.sub(r"\s+", " ", critique_text.strip().lower())
+        seen_critique_texts.add(normalized_text_key)
 
         normalized_critiques.append({
             "question": item.get("question") or question,
             "candidate_answer_excerpt": excerpt,
-            "candidate_answer": item.get("candidate_answer") or answer,
-            "per_answer_score": item.get("per_answer_score", fallback_item.get("per_answer_score", 0)),
+            "candidate_answer": full_answer or answer,
+            "per_answer_score": per_answer_score,
             "requirement_focus": item.get("requirement_focus") or fallback_item.get("requirement_focus", ""),
             "critique": critique_text,
             "strengths": item.get("strengths") if isinstance(item.get("strengths"), list) and item.get("strengths") else fallback_item.get("strengths", []),
@@ -340,11 +462,10 @@ def normalize_interview_evaluation(parsed: Dict[str, Any], questions: List[str],
             "hiring_manager_note": item.get("hiring_manager_note") or fallback_item.get("hiring_manager_note", "")
         })
 
-    score_breakdown = parsed.get("score_breakdown") if isinstance(parsed.get("score_breakdown"), dict) else fallback.get("score_breakdown", {})
-    score = parsed.get("screening_score", fallback.get("screening_score", 0))
-    try:
-        score = max(0, min(100, int(round(float(score)))))
-    except (TypeError, ValueError):
+    score_breakdown = fallback.get("score_breakdown", {})
+    if normalized_critiques:
+        score = round(sum(_coerce_score(item.get("per_answer_score"), 0) for item in normalized_critiques) / len(normalized_critiques))
+    else:
         score = fallback.get("screening_score", 0)
 
     return {

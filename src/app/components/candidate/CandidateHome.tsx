@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import * as Progress from '@radix-ui/react-progress';
 import { BarChart3, Bell, Briefcase, CheckCircle2, FileText, Loader2, MessageSquare, PlayCircle, Send, User, Users, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
 import { CandidateNav } from './CandidateNav';
 
@@ -35,6 +36,8 @@ const formatDateTime = (value?: string) => {
 const statusLabels: Record<CandidateData['status'], string> = {
   profile: 'Profile Ready',
   sourced: 'Sourced & Invited',
+  staged: 'Sourced & Invited',
+  invited: 'Sourced & Invited',
   applied: 'Position Applied',
   screening: 'Under Review',
   completed: 'Screening Completed',
@@ -66,6 +69,14 @@ const getVisiblePages = (currentPage: number, totalPages: number) => {
   return Array.from(pages)
     .filter(page => page >= 1 && page <= totalPages)
     .sort((a, b) => a - b);
+};
+
+const alignScoreMentions = (text: string, score: any) => {
+  if (score === undefined || score === null || text === undefined || text === null) return text;
+  return String(text)
+    .replace(/(answer\s+scored\s+)(\d+(?:\.\d+)?)(\/100)/i, `$1${score}$3`)
+    .replace(/(score\s+is\s+)(\d+(?:\.\d+)?)(\/100)/i, `$1${score}$3`)
+    .replace(/(scored\s+)(\d+(?:\.\d+)?)(\s*out\s+of\s+100)/i, `$1${score}$3`);
 };
 
 export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, view = 'overview' }: Props) {
@@ -150,6 +161,23 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
   const selectedEvaluation = selectedApplication?.evaluation || candidateData.evaluation;
   const selectedScore = selectedEvaluation?.screening_score ?? candidateData.score;
   const selectedAgentError = selectedApplication?.last_agent_error || candidateData.lastAgentError;
+  const selectedHrFeedback = selectedApplication?.hr_feedback || candidateData.hrFeedback || '';
+  const selectedRejectionMessage = selectedApplication?.rejection_message || candidateData.rejectionMessage || '';
+  const selectedInterviewSlot = selectedApplication?.interview_slot || candidateData.interviewSlot;
+  const critiqueCounts = (selectedEvaluation?.critiques || []).reduce((counts: Record<string, number>, item: any) => {
+    const key = String(item?.critique || '').trim().toLowerCase();
+    if (key) counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+  const getDisplayCritique = (item: any, index: number) => {
+    const key = String(item?.critique || '').trim().toLowerCase();
+    const answer = item.candidate_answer || selectedApplication?.answers?.[index] || candidateData.sandboxAnswers?.[index] || item.candidate_answer_excerpt || '';
+    const alignedCritique = alignScoreMentions(item.critique, item.per_answer_score);
+    if (critiqueCounts[key] > 1 && answer) {
+      return `${alignedCritique} Candidate evidence reviewed for this question: "${String(answer)}"`;
+    }
+    return alignedCritique;
+  };
   const canReview = selectedStatus === 'screening' || selectedStatus === 'completed' || selectedStatus === 'hired' || selectedStatus === 'interview_scheduled' || selectedStatus === 'rejected';
   const canContinue = selectedStatus !== 'completed' && selectedStatus !== 'hired' && selectedStatus !== 'rejected' && selectedStatus !== 'interview_scheduled' && selectedStatus !== 'profile' && Boolean(selectedApplication) && !selectedAgentError && !(selectedApplication?.answers?.length);
   const appliedPositionIds = new Set(applications.map(application => application.position_id));
@@ -221,6 +249,16 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
         setPositions([]);
       });
   }, []);
+
+  useEffect(() => {
+    if (errorMessage) toast.error(errorMessage);
+  }, [errorMessage]);
+
+  useEffect(() => {
+    if (candidateData.selectedApplicationId && candidateData.selectedApplicationId !== selectedApplicationId) {
+      setSelectedApplicationId(candidateData.selectedApplicationId);
+    }
+  }, [candidateData.selectedApplicationId, selectedApplicationId]);
 
   useEffect(() => {
     profileChatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -371,6 +409,40 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
     }
   };
 
+  const syncSelectedApplication = (application = selectedApplication, position?: any) => {
+    if (!application) return;
+    const status = normalizeApplicationStatus(application.status);
+    const resolvedPosition = position || allPositions.find(item => item.id === application.position_id);
+    setSelectedApplicationId(application.application_id);
+    onUpdateCandidate({
+      ...candidateData,
+      selectedApplicationId: application.application_id,
+      jobId: application.position_id,
+      position: resolvedPosition?.title || candidateData.position || `Position #${application.position_id}`,
+      status,
+      progress: application.progress ?? (
+        status === 'completed' ? 100 :
+        status === 'hired' ? 100 :
+        status === 'rejected' ? 100 :
+        status === 'interview_scheduled' ? 85 :
+        status === 'screening' ? 70 :
+        status === 'profile' ? 10 : 40
+      ),
+      appliedAt: application.applied_at,
+      customQuestions: application.custom_questions,
+      sandboxAnswers: application.answers?.length ? application.answers : application.draft_answers,
+      score: application.evaluation?.screening_score,
+      evaluation: application.evaluation,
+      hrFeedback: application.hr_feedback || '',
+      rejectionMessage: application.rejection_message || '',
+      rejectedAt: application.rejected_at,
+      hiredAt: application.hired_at,
+      interviewSlot: application.interview_slot,
+      agentWarnings: application.agent_warnings || candidateData.agentWarnings || [],
+      lastAgentError: application.last_agent_error || ''
+    });
+  };
+
   const getMissingFields = (form = profileForm) =>
     profileFieldConfig.filter(item => !String(form[item.field] || '').trim());
 
@@ -433,6 +505,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
         education: data.profile_data?.education || candidateData.education,
         agentWarnings: data.agent_warnings || candidateData.agentWarnings || []
       });
+      toast.success('Profile details saved.');
       return data;
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to save profile details.');
@@ -493,6 +566,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
         gradeResults: updated.profile_data?.grade_results || '',
         notifications: updated.notifications || candidateData.notifications || []
       });
+      toast.success('Profile detail saved.');
       setProfileChatMessages(current => [...current, { role: 'agent', content: data.question || data.message }]);
     } catch (err: any) {
       setErrorMessage(err.message || 'Missing Information Assistant failed.');
@@ -606,13 +680,13 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
                 <p className="text-xs tracking-wider uppercase text-[#b91c1c] mb-1 font-semibold">Application Update</p>
                 <h2 className="text-[#1c1c1a] mb-2 font-semibold text-lg">Thank you for your application</h2>
                 <p className="text-sm text-[#52574e] leading-relaxed mb-2">
-                  {candidateData.rejectionMessage || "Thank you for applying. After careful consideration, we have decided to move forward with other candidates whose experience more closely matches our current needs. We appreciate the time you invested and wish you success in your career journey."}
+                  {selectedRejectionMessage || "Thank you for applying. After careful consideration, we have decided to move forward with other candidates whose experience more closely matches our current needs. We appreciate the time you invested and wish you success in your career journey."}
                 </p>
-                {candidateData.hrFeedback && (
+                {selectedHrFeedback && (
                   <div className="border-t border-[#f5c2c2] pt-4 mt-3">
                     <p className="text-xs font-semibold text-[#6b7063] uppercase tracking-wider mb-2">Hiring Team Notes & Feedback</p>
                     <div className="bg-[#fcf8f8] rounded-xl p-4 border border-[#f5c2c2]/30 text-sm text-[#6b7063] leading-relaxed">
-                      {candidateData.hrFeedback}
+                      {selectedHrFeedback}
                     </div>
                   </div>
                 )}
@@ -913,6 +987,11 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
               )}
             </div>
             <div className="space-y-2">
+              {applications.length === 0 && (
+                <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-5 text-sm text-[#6b7063]">
+                  You have not registered for any positions yet. Visit Jobs to apply when your profile is ready.
+                </div>
+              )}
               {paginatedApplications.map(application => {
                 const position = allPositions.find(item => item.id === application.position_id);
                 const isSelected = application.application_id === selectedApplication?.application_id;
@@ -920,36 +999,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
                 return (
                   <button
                     key={application.application_id}
-                    onClick={() => {
-                      const status = normalizeApplicationStatus(application.status);
-                      setSelectedApplicationId(application.application_id);
-                      onUpdateCandidate({
-                        ...candidateData,
-                        selectedApplicationId: application.application_id,
-                        jobId: application.position_id,
-                        position: position?.title || candidateData.position,
-                        status,
-                        progress: application.progress ?? (
-                          status === 'completed' ? 100 :
-                          status === 'hired' ? 100 :
-                          status === 'rejected' ? 100 :
-                          status === 'interview_scheduled' ? 85 :
-                          status === 'screening' ? 70 : 40
-                        ),
-                        appliedAt: application.applied_at,
-                        customQuestions: application.custom_questions,
-                        sandboxAnswers: application.answers?.length ? application.answers : application.draft_answers,
-                        score: application.evaluation?.screening_score,
-                        evaluation: application.evaluation,
-                        hrFeedback: application.hr_feedback || '',
-                        rejectionMessage: application.rejection_message || '',
-                        rejectedAt: application.rejected_at,
-                        hiredAt: application.hired_at,
-                        interviewSlot: application.interview_slot,
-                        agentWarnings: application.agent_warnings || candidateData.agentWarnings || [],
-                        lastAgentError: application.last_agent_error || ''
-                      });
-                    }}
+                    onClick={() => syncSelectedApplication(application, position)}
                     className={`w-full text-left border rounded-xl p-4 transition-colors ${isSelected ? 'border-[#2d6a55]/40 bg-[#f0f9f4]' : 'border-[#e4e1da] hover:bg-[#f7f6f3]'}`}
                   >
                     <div className="flex items-start justify-between gap-4">
@@ -971,7 +1021,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
         )}
 
         {/* Interview Scheduled Card — below Application History */}
-        {view === 'applications' && selectedStatus === 'interview_scheduled' && candidateData.interviewSlot && (
+        {view === 'applications' && selectedStatus === 'interview_scheduled' && selectedInterviewSlot && (
           <div className="mb-5 rounded-2xl border border-[#c5cbf7] bg-[#f5f7ff] p-6 shadow-sm">
             <div className="flex items-start gap-4">
               <div className="w-10 h-10 bg-[#eef2ff] rounded-xl flex items-center justify-center flex-shrink-0">
@@ -987,17 +1037,17 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
                   <div className="grid sm:grid-cols-2 gap-3 text-sm text-[#1c1c1a]">
                     <div>
                       <span className="block text-xs text-[#a8a49d] font-medium">Date &amp; Time</span>
-                      <span className="font-semibold">{candidateData.interviewSlot.date} at {candidateData.interviewSlot.time}</span>
+                      <span className="font-semibold">{selectedInterviewSlot.date} at {selectedInterviewSlot.time}</span>
                     </div>
                     <div>
                       <span className="block text-xs text-[#a8a49d] font-medium">Location / Link</span>
-                      <span className="font-semibold">{candidateData.interviewSlot.location}</span>
+                      <span className="font-semibold">{selectedInterviewSlot.location}</span>
                     </div>
                   </div>
-                  {candidateData.interviewSlot.notes && (
+                  {selectedInterviewSlot.notes && (
                     <div className="border-t border-[#e4e1da] pt-3">
                       <span className="block text-xs text-[#a8a49d] font-medium mb-1">Additional Instructions</span>
-                      <p className="text-xs text-[#6b7063] leading-relaxed">{candidateData.interviewSlot.notes}</p>
+                      <p className="text-xs text-[#6b7063] leading-relaxed">{selectedInterviewSlot.notes}</p>
                     </div>
                   )}
                 </div>
@@ -1016,6 +1066,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
           {canContinue && (
             <Link
               to="/candidate/sandbox"
+              onClick={() => syncSelectedApplication()}
               className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-[#2d6a55] text-white rounded-xl hover:bg-[#245747] transition-colors text-sm font-medium shadow-sm"
             >
               <PlayCircle className="w-4 h-4" />
@@ -1025,6 +1076,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
           {canReview ? (
             <Link
               to="/candidate/feedback"
+              onClick={() => syncSelectedApplication()}
               className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-xl hover:bg-[#f7f6f3] transition-colors text-sm font-medium shadow-sm"
             >
               <BarChart3 className="w-4 h-4" />
@@ -1033,6 +1085,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
           ) : selectedApplication ? (
             <Link
               to="/candidate/sandbox"
+              onClick={() => syncSelectedApplication()}
               className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-xl hover:bg-[#f7f6f3] transition-colors text-sm font-medium shadow-sm"
             >
               <BarChart3 className="w-4 h-4" />
@@ -1122,7 +1175,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
               {selectedEvaluation.critiques.map((item: any, index: number) => (
                 <div key={index} className="border-l-2 border-[#2d6a55] bg-[#f7f6f3] rounded-r-xl p-3">
                   <p className="text-xs text-[#2d6a55] font-semibold mb-1">Question {index + 1}</p>
-                  <p className="text-xs text-[#6b7063]">{item.critique}</p>
+                  <p className="text-xs text-[#6b7063]">{getDisplayCritique(item, index)}</p>
                 </div>
               ))}
             </div>

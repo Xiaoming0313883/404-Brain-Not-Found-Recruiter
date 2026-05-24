@@ -7,7 +7,7 @@ import shutil
 import uuid
 import base64
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr
@@ -24,12 +24,14 @@ from ..services.agents import (
     run_matching_agent,
     run_interview_agent_phase_a,
     run_interview_agent_phase_b,
+    build_position_specific_evaluation,
     run_report_agent
 )
-from ..services.mailer import send_candidate_verification_email, send_recruitment_email
+from ..services.mailer import is_smtp_configured, send_candidate_verification_email, send_recruitment_email
 
 router = APIRouter(prefix="/candidates", tags=["Candidates"])
 MAX_RESUME_BYTES = 10 * 1024 * 1024
+VERIFICATION_COOLDOWN_SECONDS = 60
 UPLOAD_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads"))
 RESUME_DIR = os.path.join(UPLOAD_ROOT, "resumes")
 PROFILE_IMAGE_DIR = os.path.join(UPLOAD_ROOT, "profile_pictures")
@@ -168,7 +170,7 @@ def create_email_verification(candidate: Dict[str, Any]) -> str:
     candidate["email_verification"] = {
         "code": code,
         "sent_at": datetime.now().isoformat(timespec="seconds"),
-        "prototype": True
+        "prototype": not is_smtp_configured()
     }
     return code
 
@@ -183,9 +185,35 @@ def create_pending_email_verification(db: Dict[str, Any], email: str) -> str:
         "code": code,
         "sent_at": datetime.now().isoformat(timespec="seconds"),
         "verified": False,
-        "prototype": True
+        "prototype": not is_smtp_configured()
     }
     return code
+
+def parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+def verification_cooldown_remaining(record: Dict[str, Any]) -> int:
+    sent_at = parse_iso_datetime(record.get("sent_at"))
+    if not sent_at:
+        return 0
+    elapsed = (datetime.now() - sent_at).total_seconds()
+    return max(0, VERIFICATION_COOLDOWN_SECONDS - int(elapsed))
+
+def verification_delivery_payload(record: Dict[str, Any], sent: bool = False, cooldown_seconds: int = 0) -> Dict[str, Any]:
+    sent_at = parse_iso_datetime(record.get("sent_at")) or datetime.now()
+    next_resend_at = sent_at + timedelta(seconds=VERIFICATION_COOLDOWN_SECONDS)
+    return {
+        "verification_sent": sent,
+        "prototype_verification_code": record.get("code") or "",
+        "cooldown_seconds": cooldown_seconds,
+        "next_resend_at": next_resend_at.isoformat(timespec="seconds"),
+        "smtp_configured": is_smtp_configured()
+    }
 
 def require_pending_email_verified(db: Dict[str, Any], email: str) -> None:
     pending = db.setdefault("pending_email_verifications", {}).get(email) or {}
@@ -207,6 +235,9 @@ def add_notification(candidate: Dict[str, Any], title: str, message: str, kind: 
     return notification
 
 def send_decision_email(email: str, subject: str, body: str) -> bool:
+    if not is_smtp_configured():
+        print(f"SMTP not configured. Decision email kept in prototype mode for {email}.")
+        return False
     try:
         return send_recruitment_email(to_email=email, subject=subject, body=body)
     except Exception as e:
@@ -477,34 +508,18 @@ def save_resume_file(email: str, filename: str, contents: bytes) -> str:
         f.write(contents)
     return stored_path
 
-def extract_profile_picture(email: str, pdf_contents: bytes) -> Optional[str]:
-    try:
-        pdf_reader = PdfReader(io.BytesIO(pdf_contents))
-        for page in pdf_reader.pages[:2]:
-            for index, image in enumerate(getattr(page, "images", [])):
-                image_data = image.data
-                if not image_data or len(image_data) < 1024:
-                    continue
-                extension = os.path.splitext(image.name or "")[1].lower() or ".jpg"
-                if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
-                    extension = ".jpg"
-                os.makedirs(PROFILE_IMAGE_DIR, exist_ok=True)
-                safe_email = re.sub(r"[^a-zA-Z0-9_.-]", "_", email)
-                stored_name = f"{safe_email}-{index}{extension}"
-                stored_path = os.path.join(PROFILE_IMAGE_DIR, stored_name)
-                with open(stored_path, "wb") as f:
-                    f.write(image_data)
-                return f"/uploads/profile_pictures/{stored_name}"
-    except Exception as e:
-        print(f"Profile image extraction skipped: {e}")
-    return None
-
 def save_profile_picture_file(email: str, image: UploadFile, contents: bytes) -> str:
     if len(contents) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Profile picture must be 5MB or smaller.")
     extension = os.path.splitext(image.filename or "profile.jpg")[1].lower()
     if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
         raise HTTPException(status_code=400, detail="Profile picture must be JPG, PNG, or WebP.")
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(contents)) as img:
+            img.verify()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Profile picture file could not be read as an image.")
     os.makedirs(PROFILE_IMAGE_DIR, exist_ok=True)
     safe_email = re.sub(r"[^a-zA-Z0-9_.-]", "_", email)
     stored_name = f"{safe_email}-{uuid.uuid4().hex[:8]}{extension}"
@@ -701,14 +716,17 @@ def resend_candidate_email_verification(email: str):
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate account not found.")
     if candidate.get("email_verified"):
-        return {**serialize_candidate(candidate, email_clean), "verification_sent": False}
+        return {**serialize_candidate(candidate, email_clean), **verification_delivery_payload({}, sent=False)}
 
+    existing = candidate.get("email_verification") or {}
+    remaining = verification_cooldown_remaining(existing)
+    if remaining:
+        return {**serialize_candidate(candidate, email_clean), **verification_delivery_payload(existing, sent=False, cooldown_seconds=remaining)}
     code = create_email_verification(candidate)
     sent = send_or_log_verification_email(email_clean, code)
     save_db(db)
     response = serialize_candidate(candidate, email_clean)
-    response["verification_sent"] = sent
-    response["prototype_verification_code"] = code
+    response.update(verification_delivery_payload(candidate.get("email_verification") or {"code": code}, sent=sent, cooldown_seconds=VERIFICATION_COOLDOWN_SECONDS))
     return response
 
 @router.post("/start-email-verification")
@@ -719,17 +737,29 @@ def start_candidate_email_verification(payload: CandidateEmailPayload):
 
     if candidate:
         if candidate.get("email_verified"):
-            return {**serialize_candidate(candidate, email_clean), "verification_sent": False}
+            return {**serialize_candidate(candidate, email_clean), **verification_delivery_payload({}, sent=False)}
+        existing = candidate.get("email_verification") or {}
+        remaining = verification_cooldown_remaining(existing)
+        if remaining:
+            return {**serialize_candidate(candidate, email_clean), **verification_delivery_payload(existing, sent=False, cooldown_seconds=remaining)}
         code = create_email_verification(candidate)
+        record = candidate.get("email_verification") or {"code": code}
     else:
+        pending = db.setdefault("pending_email_verifications", {}).get(email_clean) or {}
+        remaining = verification_cooldown_remaining(pending)
+        if remaining:
+            return {
+                "email": email_clean,
+                **verification_delivery_payload(pending, sent=False, cooldown_seconds=remaining)
+            }
         code = create_pending_email_verification(db, email_clean)
+        record = db.setdefault("pending_email_verifications", {}).get(email_clean) or {"code": code}
 
     sent = send_or_log_verification_email(email_clean, code)
     save_db(db)
     return {
         "email": email_clean,
-        "verification_sent": sent,
-        "prototype_verification_code": code
+        **verification_delivery_payload(record, sent=sent, cooldown_seconds=VERIFICATION_COOLDOWN_SECONDS)
     }
 
 @router.post("/verify-pending-email")
@@ -867,9 +897,6 @@ async def replace_candidate_resume(email: str, resume: UploadFile = File(...)):
     candidate["resume_url"] = f"/api/v1/candidates/{email_clean}/resume"
     candidate["resume_text"] = resume_text
     candidate["resume_summary"] = get_resume_summary(candidate["profile_data"], resume_text)
-    extracted_picture = extract_profile_picture(email_clean, contents)
-    if extracted_picture and not candidate.get("profile_picture_url"):
-        candidate["profile_picture_url"] = extracted_picture
     candidate["profile_verified"] = not get_missing_profile_fields(candidate["profile_data"])
     add_notification(candidate, "Resume updated", "Your resume and profile details were updated.", "profile")
     save_db(db)
@@ -1118,7 +1145,6 @@ async def signup_candidate(
     profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
 
     resume_path = save_resume_file(email_clean, resume.filename or "resume.pdf", contents)
-    profile_picture_url = extract_profile_picture(email_clean, contents)
     resume_summary = get_resume_summary(profile_data, resume_text)
 
     parsed_name = profile_data.get("name") if profile_data.get("name") and profile_data.get("name") != "Candidate Full Name" else name
@@ -1138,7 +1164,7 @@ async def signup_candidate(
         "resume_url": f"/api/v1/candidates/{email_clean}/resume",
         "resume_text": resume_text,
         "resume_summary": resume_summary,
-        "profile_picture_url": profile_picture_url,
+        "profile_picture_url": "",
         "sourcing_pitch": "",
         "outreach_email": "",
         "match_results": {},
@@ -1223,6 +1249,8 @@ def update_candidate_status(email: str, payload: CandidateStatusPayload):
     application = find_application(candidate, payload.position_id)
     if payload.position_id and not application:
         raise HTTPException(status_code=404, detail="Candidate application not found.")
+    smtp_configured = is_smtp_configured()
+    email_sent = False
     if application:
         # Track previous status in history (max 10 entries)
         previous_status = application.get("status")
@@ -1235,7 +1263,7 @@ def update_candidate_status(email: str, payload: CandidateStatusPayload):
         if payload.status == "hired":
             application["hired_at"] = datetime.now().isoformat(timespec="seconds")
             add_notification(candidate, "Application decision", "Congratulations. You have been hired for this position.", "success", payload.position_id)
-            send_decision_email(email_clean, "Application update - hired", "Congratulations. The hiring team has marked your application as hired. Please check the candidate portal for details.")
+            email_sent = send_decision_email(email_clean, "Application update - hired", "Congratulations. The hiring team has marked your application as hired. Please check the candidate portal for details.")
         sync_current_application(candidate, application)
     else:
         previous_status = candidate.get("status")
@@ -1247,9 +1275,12 @@ def update_candidate_status(email: str, payload: CandidateStatusPayload):
         if payload.status == "hired":
             candidate["hired_at"] = datetime.now().isoformat(timespec="seconds")
             add_notification(candidate, "Application decision", "Congratulations. You have been hired.", "success")
-            send_decision_email(email_clean, "Application update - hired", "Congratulations. The hiring team has marked your application as hired. Please check the candidate portal for details.")
+            email_sent = send_decision_email(email_clean, "Application update - hired", "Congratulations. The hiring team has marked your application as hired. Please check the candidate portal for details.")
     save_db(db)
-    return serialize_candidate(candidate, email_clean)
+    result = serialize_candidate(candidate, email_clean)
+    result["email_sent"] = email_sent
+    result["smtp_configured"] = smtp_configured
+    return result
 
 @router.post("/{email}/revert-status")
 def revert_candidate_status(email: str, payload: RevertStatusPayload):
@@ -1385,7 +1416,6 @@ async def apply_inbound(
         ]
         
     resume_path = save_resume_file(email_clean, resume.filename or "resume.pdf", contents)
-    profile_picture_url = extract_profile_picture(email_clean, contents)
     resume_summary = get_resume_summary(profile_data, resume_text)
     applied_at = datetime.now().isoformat(timespec="seconds")
     application = {
@@ -1420,7 +1450,7 @@ async def apply_inbound(
         "resume_url": f"/api/v1/candidates/{email_clean}/resume",
         "resume_text": resume_text,
         "resume_summary": resume_summary,
-        "profile_picture_url": profile_picture_url,
+        "profile_picture_url": existing_candidate.get("profile_picture_url", "") if existing_candidate else "",
         "sourcing_pitch": "Inbound applicant with verified profile details.",
         "outreach_email": "Thank you for applying!",
         "match_results": match_results,
@@ -1478,37 +1508,7 @@ def submit_sandbox(email: str, payload: SandboxAnswers):
     except Exception as e:
         print(f"Error evaluating sandbox answers: {e}")
         agent_warnings.append("Interview Agent evaluation failed, so a basic response review was used.")
-        evaluation = {
-            "screening_score": 80,
-            "position_fit_verdict": "Moderate fit for the current position",
-            "hiring_recommendation": "hold",
-            "role_alignment_summary": (
-                "The fallback review could not access the full Interview Agent, so this score should be treated as provisional. "
-                "The candidate submitted answers for the required screening prompts, which is positive process evidence, but the hiring manager should still verify depth directly. "
-                "Use the next interview to ask for project context, the candidate's own contribution, trade-offs, failure handling, and measurable impact. "
-                "Do not treat this fallback score as a final hiring signal without a human review of the answer text."
-            ),
-            "critiques": [
-                {
-                    "question": q,
-                    "candidate_answer_excerpt": payload.answers[idx] if idx < len(payload.answers) else "",
-                    "candidate_answer": payload.answers[idx] if idx < len(payload.answers) else "",
-                    "per_answer_score": 80,
-                    "requirement_focus": "Current-position evidence",
-                    "critique": (
-                        "The answer was received and appears usable for human review, but the Interview Agent was unavailable for detailed scoring. "
-                        "My opinion is that the hiring manager should read this answer as preliminary evidence only. "
-                        "Look for whether the candidate names a real situation, explains their own decision-making, and connects the example to the current position. "
-                        "If those pieces are not explicit, the next interview should request specifics before moving the candidate forward."
-                    ),
-                    "strengths": ["Submitted a response to the role-specific screening prompt."],
-                    "weaknesses": ["Automated detailed evaluation was unavailable, so evidence quality still needs human verification."],
-                    "suggested_improvement": "Ask the candidate to add concrete project details, trade-offs, and measurable outcomes.",
-                    "hiring_manager_note": "Use this as a prompt for a follow-up interview question, not as a standalone evaluation."
-                }
-                for idx, q in enumerate(application.get("custom_questions", []))
-            ]
-        }
+        evaluation = build_position_specific_evaluation(application.get("custom_questions", []), payload.answers, job)
         
     # Invoke Report Agent to generate upskilling roadmap
     try:
@@ -1689,22 +1689,25 @@ def invite_candidate(payload: InvitePayload):
     if payload.hr_feedback is not None:
         candidate["hr_feedback"] = payload.hr_feedback
 
-    # Trigger Outreach SMTP dispatch
+    # Trigger Outreach SMTP dispatch only when real SMTP credentials exist.
+    smtp_configured = is_smtp_configured(payload.smtp_settings)
     try:
         email_sent = send_recruitment_email(
             to_email=email_clean,
             subject=f"Exclusive Sourcing Invitation - {candidate.get('profile_data', {}).get('headline')}",
             body=candidate.get("outreach_email", ""),
             smtp_settings=payload.smtp_settings
-        )
+        ) if smtp_configured else False
     except Exception as e:
         print(f"SMTP dispatch failure: {e}")
         email_sent = False
+    history_status = "sent" if email_sent else "prototype"
+    history_detail = "SMTP dispatch completed." if email_sent else "SMTP is not configured; invitation was saved in prototype mode."
     record_outreach_history(
         candidate,
         candidate.get("outreach_email", ""),
-        "sent" if email_sent else "failed",
-        "SMTP dispatch completed." if email_sent else "SMTP was not configured or delivery failed.",
+        history_status,
+        history_detail,
         candidate.get("position_id")
     )
     add_notification(candidate, "Recruitment invitation", "A hiring manager sent you an outreach invitation.", "application", candidate.get("position_id"))
@@ -1712,7 +1715,8 @@ def invite_candidate(payload: InvitePayload):
     save_db(db)
     return {
         "candidate": serialize_candidate(candidate, email_clean),
-        "outreach_sent": email_sent
+        "outreach_sent": email_sent,
+        "smtp_configured": smtp_configured
     }
 
 @router.post("/{email}/reject")
@@ -1754,11 +1758,12 @@ def reject_candidate(email: str, payload: RejectCandidatePayload):
         candidate["rejected_at"] = datetime.now().isoformat(timespec="seconds")
         add_notification(candidate, "Application update", rejection_message, "decision")
 
-    send_decision_email(email_clean, "Application update", rejection_message)
+    email_sent = send_decision_email(email_clean, "Application update", rejection_message)
     save_db(db)
-    if application:
-        return serialize_application_candidate(candidate, email_clean, application)
-    return serialize_candidate(candidate, email_clean)
+    result = serialize_application_candidate(candidate, email_clean, application) if application else serialize_candidate(candidate, email_clean)
+    result["email_sent"] = email_sent
+    result["smtp_configured"] = is_smtp_configured()
+    return result
 
 @router.post("/{email}/schedule-interview")
 def schedule_interview(email: str, payload: InterviewSlotPayload):
@@ -1825,19 +1830,22 @@ def schedule_interview(email: str, payload: InterviewSlotPayload):
         f"\nPlease confirm your attendance by replying to this email.\n\n"
         f"We look forward to meeting you.\n\nBest regards,\nHiring Team"
     )
+    smtp_configured = is_smtp_configured()
     email_sent = False
-    try:
-        email_sent = send_recruitment_email(
-            to_email=email_clean,
-            subject=f"Interview Invitation — {position_title}",
-            body=interview_body
-        )
-    except Exception as e:
-        print(f"Interview invite SMTP failure: {e}")
+    if smtp_configured:
+        try:
+            email_sent = send_recruitment_email(
+                to_email=email_clean,
+                subject=f"Interview Invitation - {position_title}",
+                body=interview_body
+            )
+        except Exception as e:
+            print(f"Interview invite SMTP failure: {e}")
 
     save_db(db)
     result = serialize_application_candidate(candidate, email_clean, application) if application else serialize_candidate(candidate, email_clean)
     result["interview_email_sent"] = email_sent
+    result["smtp_configured"] = smtp_configured
     return result
 
 def role_search_terms(job: Dict[str, Any], limit: int = 8) -> List[str]:

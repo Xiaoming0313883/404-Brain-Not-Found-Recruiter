@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router';
 import { Lock, Mail, Upload, ArrowRight, ArrowLeft, Loader2, ShieldCheck } from 'lucide-react';
+import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
 import { BrandLogo } from '../BrandLogo';
 import * as Progress from '@radix-ui/react-progress';
@@ -43,6 +44,8 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
   const [prototypeVerificationCode, setPrototypeVerificationCode] = useState('');
   const [verificationMessage, setVerificationMessage] = useState('');
   const [isVerifyingEmail, setIsVerifyingEmail] = useState(false);
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
+  const [verificationCooldown, setVerificationCooldown] = useState(0);
   const [emailVerifiedForSignup, setEmailVerifiedForSignup] = useState(forceNewApplication);
   
   // Real active jobs fetched from backend
@@ -75,6 +78,18 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       setEmailVerifiedForSignup(true);
     }
   }, [forceNewApplication, initialEmail]);
+
+  useEffect(() => {
+    if (!verificationCooldown) return;
+    const timer = window.setInterval(() => {
+      setVerificationCooldown(current => Math.max(0, current - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [verificationCooldown]);
+
+  useEffect(() => {
+    if (errorMessage) toast.error(errorMessage);
+  }, [errorMessage]);
 
   const mapCandidateFromApi = (data: any): CandidateData => {
     const normalizeStatus = (statusValue: string): CandidateData['status'] =>
@@ -283,9 +298,17 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       throw new Error(data.detail || 'Unable to start email verification.');
     }
     setPrototypeVerificationCode(data.prototype_verification_code || '');
-    setVerificationMessage(data.verification_sent
-      ? `A verification email was sent to ${targetEmail}.`
-      : 'Prototype mode: SMTP is not configured, so use the demo code below.');
+    setVerificationCooldown(data.cooldown_seconds || 0);
+    if (data.cooldown_seconds && !data.verification_sent) {
+      setVerificationMessage(`Please wait ${data.cooldown_seconds} seconds before resending the verification email.`);
+      toast.warning(`Please wait ${data.cooldown_seconds} seconds before resending.`);
+    } else if (data.verification_sent) {
+      setVerificationMessage(`A verification email was sent to ${targetEmail}.`);
+      toast.success(`Verification email sent to ${targetEmail}.`);
+    } else {
+      setVerificationMessage('Prototype mode: SMTP is not configured, so use the demo code below.');
+      toast.info('Prototype mode: use the demo verification code shown below.');
+    }
     return data;
   };
 
@@ -400,9 +423,11 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       if (!data.email_verified) {
         setPendingVerification(mappedData);
         setPrototypeVerificationCode(data.prototype_verification_code || '');
+        setVerificationCooldown(data.cooldown_seconds || 0);
         setVerificationMessage(data.verification_sent
           ? `A verification email was sent to ${data.email}.`
           : 'Prototype mode: SMTP is not configured, so use the demo code below.');
+        toast.info(data.verification_sent ? 'Please verify your email before continuing.' : 'Prototype mode: use the demo verification code shown below.');
         setIsSubmitting(false);
         setUploadProgress(0);
         setProcessingMessage('');
@@ -410,6 +435,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       }
 
       onAuthenticate(mappedData);
+      toast.success('Candidate profile created.');
       navigate('/candidate/home');
     } catch (err: any) {
       console.error(err);
@@ -454,6 +480,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
           setCandidateType('inbound');
           setLookupComplete(true);
         }
+        toast.success('Email verified.');
         return;
       }
       const response = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(pendingVerification!.email)}/verify-email`, {
@@ -472,6 +499,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
         profileVerified: data.profile_verified,
       };
       onAuthenticate(verifiedCandidate);
+      toast.success('Email verified.');
       navigate('/candidate/home');
     } catch (err: any) {
       setErrorMessage(err.message || 'Unable to verify email.');
@@ -483,6 +511,12 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
   const handleResendVerification = async () => {
     if (!pendingVerification && !emailVerificationMode) return;
     setErrorMessage('');
+    if (verificationCooldown > 0) {
+      setVerificationMessage(`Please wait ${verificationCooldown} seconds before resending the verification email.`);
+      toast.warning(`Please wait ${verificationCooldown} seconds before resending.`);
+      return;
+    }
+    setIsResendingVerification(true);
     try {
       if (emailVerificationMode) {
         await startEmailVerification(email.trim());
@@ -496,11 +530,21 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
         throw new Error(data.detail || 'Unable to resend verification email.');
       }
       setPrototypeVerificationCode(data.prototype_verification_code || '');
-      setVerificationMessage(data.verification_sent
-        ? `A new verification email was sent to ${pendingVerification!.email}.`
-        : 'Prototype mode: SMTP is not configured, so use the new demo code below.');
+      setVerificationCooldown(data.cooldown_seconds || 0);
+      if (data.cooldown_seconds && !data.verification_sent) {
+        setVerificationMessage(`Please wait ${data.cooldown_seconds} seconds before resending the verification email.`);
+        toast.warning(`Please wait ${data.cooldown_seconds} seconds before resending.`);
+      } else if (data.verification_sent) {
+        setVerificationMessage(`A new verification email was sent to ${pendingVerification!.email}.`);
+        toast.success('Verification email resent.');
+      } else {
+        setVerificationMessage('Prototype mode: SMTP is not configured, so use the new demo code below.');
+        toast.info('Prototype mode: use the new demo verification code shown below.');
+      }
     } catch (err: any) {
       setErrorMessage(err.message || 'Unable to resend verification email.');
+    } finally {
+      setIsResendingVerification(false);
     }
   };
 
@@ -713,9 +757,14 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
 
             <button
               onClick={handleResendVerification}
-              className="w-full py-2 text-sm text-[#2d6a55] hover:text-[#245747] transition-colors"
+              disabled={verificationCooldown > 0 || isResendingVerification}
+              className="w-full py-2 text-sm text-[#2d6a55] hover:text-[#245747] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors"
             >
-              Resend verification email
+              {isResendingVerification
+                ? 'Resending...'
+                : verificationCooldown > 0
+                  ? `Resend in ${verificationCooldown}s`
+                  : 'Resend verification email'}
             </button>
           </div>
         )}

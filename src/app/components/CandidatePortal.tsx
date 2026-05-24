@@ -16,7 +16,7 @@ export interface CandidateData {
   applications?: Array<{
     application_id: string;
     position_id: number;
-    status: 'profile' | 'sourced' | 'applied' | 'screening' | 'completed' | 'hired' | 'rejected' | 'interview_scheduled';
+    status: 'profile' | 'sourced' | 'staged' | 'invited' | 'applied' | 'screening' | 'completed' | 'hired' | 'rejected' | 'interview_scheduled';
     applied_at?: string;
     progress?: number;
     custom_questions?: string[];
@@ -253,7 +253,7 @@ export function CandidatePortal() {
         <Route
           path="/feedback"
           element={
-            candidateData && (candidateData.status === 'screening' || candidateData.status === 'completed' || candidateData.status === 'hired' || candidateData.status === 'rejected' || candidateData.status === 'interview_scheduled') ? (
+            candidateData ? (
               <CandidateFeedback candidateData={candidateData} onSignOut={handleSignOut} />
             ) : (
               <Navigate to="/candidate" replace />

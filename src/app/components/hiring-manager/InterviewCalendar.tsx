@@ -3,6 +3,7 @@ import { Calendar, momentLocalizer, Views } from 'react-big-calendar';
 import moment from 'moment';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { CalendarCheck, Clock, MapPin, User, AlertTriangle, Send, Loader2, CheckCircle2, X, Mail, Phone } from 'lucide-react';
+import { toast } from 'sonner';
 import { ScrapedCandidate } from '../HiringManagerPortal';
 import { Job } from '../HiringManagerPortal';
 
@@ -18,7 +19,7 @@ interface InterviewSlot {
 interface Props {
   jobs: Job[];
   candidates: ScrapedCandidate[];
-  onScheduleInterview: (email: string, positionId: number | undefined, date: string, time: string, location: string, notes?: string) => Promise<void>;
+  onScheduleInterview: (email: string, positionId: number | undefined, date: string, time: string, location: string, notes?: string) => Promise<any>;
 }
 
 interface CalendarEvent {
@@ -89,7 +90,9 @@ export function InterviewCalendar({ jobs, candidates, onScheduleInterview }: Pro
 
   const handleSchedule = async () => {
     if (!selectedEmail || !interviewDate || !interviewTime) {
-      setErrorMessage('Please select a candidate, date, and time.');
+      const message = 'Please select a candidate, date, and time.';
+      setErrorMessage(message);
+      toast.warning(message);
       return;
     }
     const candidate = candidates.find(c => c.email === selectedEmail);
@@ -97,15 +100,23 @@ export function InterviewCalendar({ jobs, candidates, onScheduleInterview }: Pro
     setErrorMessage('');
     setSuccessMessage('');
     try {
-      await onScheduleInterview(selectedEmail, candidate?.jobId, interviewDate, interviewTime, interviewLocation || 'To be confirmed', interviewNotes);
-      setSuccessMessage(`Interview scheduled for ${candidate?.name}. A notification email has been sent.`);
+      const result = await onScheduleInterview(selectedEmail, candidate?.jobId, interviewDate, interviewTime, interviewLocation || 'To be confirmed', interviewNotes);
+      const message = result?.interview_email_sent
+        ? `Interview scheduled for ${candidate?.name}. A notification email has been sent.`
+        : result?.smtp_configured === false
+          ? `Interview scheduled for ${candidate?.name}. SMTP is not configured, so no email was sent.`
+          : `Interview scheduled for ${candidate?.name}. Email delivery was not confirmed.`;
+      setSuccessMessage(message);
+      toast.success(message);
       setSelectedEmail('');
       setInterviewDate('');
       setInterviewTime('');
       setInterviewLocation('');
       setInterviewNotes('');
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to schedule interview.');
+      const message = err.message || 'Failed to schedule interview.';
+      setErrorMessage(message);
+      toast.error(message);
     } finally {
       setIsSubmitting(false);
     }
