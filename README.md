@@ -213,8 +213,8 @@ The backend is a FastAPI application. It exposes REST routes under `/api/v1`, st
 
 Install the following:
 
-- Node.js 18 or newer
-- npm
+- Node.js 20 or newer
+- npm 10 or newer
 - Python 3.10 or newer
 - pip
 
@@ -271,10 +271,18 @@ VITE_API_URL=http://localhost:8000/api/v1
 
 ## Installation
 
+This repository uses npm for the frontend. Use the committed `package-lock.json`; do not mix in pnpm or Yarn lockfiles.
+
 Install frontend dependencies:
 
 ```powershell
 npm install
+```
+
+For a clean GitHub clone or CI install, you can also use:
+
+```powershell
+npm ci
 ```
 
 Install backend dependencies:
@@ -738,6 +746,23 @@ Confirm `.env.local` contains:
 ```env
 VITE_API_URL=http://localhost:8000/api/v1
 ```
+
+### `npm install` fails
+
+Use Node.js 20 or newer and npm 10 or newer:
+
+```powershell
+node -v
+npm -v
+```
+
+Then reinstall from the npm lockfile:
+
+```powershell
+npm install
+```
+
+If the local dependency folder came from an older install attempt, remove `node_modules` and run `npm install` again. The project is intentionally npm-only, so avoid generating `pnpm-lock.yaml` or `yarn.lock`.
 
 ### Resume upload fails validation
 
