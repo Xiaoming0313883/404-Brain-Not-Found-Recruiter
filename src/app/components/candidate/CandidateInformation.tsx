@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { FileText, Loader2, Save, Upload, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
@@ -43,6 +43,7 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
   });
   const [resume, setResume] = useState<File | null>(null);
   const [picture, setPicture] = useState<File | null>(null);
+  const pictureInputRef = useRef<HTMLInputElement>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [message, setMessage] = useState('');
@@ -128,8 +129,8 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
     }
   };
 
-  const uploadFile = (kind: 'resume' | 'picture') => {
-    const file = kind === 'resume' ? resume : picture;
+  const uploadFile = (kind: 'resume' | 'picture', selectedFile?: File | null) => {
+    const file = kind === 'resume' ? resume : (selectedFile !== undefined ? selectedFile : picture);
     if (!file) return;
     if (kind === 'resume' && !file.name.toLowerCase().endsWith('.pdf')) {
       setErrorMessage('Please upload a PDF resume.');
@@ -220,19 +221,35 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
             </p>
           </div>
 
+          <div className="text-right text-xs text-[#6b7063] mb-3">
+            <span className="text-[#b91c1c] font-bold">*</span> Indicates a required field
+          </div>
+
           <div className="grid md:grid-cols-2 gap-4">
             {[
               ['name', 'Full name'], ['age', 'Age'], ['phone', 'Phone'], ['address', 'Address'],
               ['cameFrom', 'Came from'], ['location', 'Location'], ['headline', 'Headline'],
               ['qualification', 'Qualification'], ['gradeResults', 'Grade and results'], ['skills', 'Skills'], ['awards', 'Awards']
-            ].map(([field, label]) => (
-              <div key={field}>
-                <label className="block text-xs text-[#6b7063] mb-1 font-semibold">{label}</label>
-                <input value={(form as any)[field]} onChange={(event) => setForm(current => ({ ...current, [field]: event.target.value }))} className={inputClass} />
-              </div>
-            ))}
+            ].map(([field, label]) => {
+              const isMandatory = ['name', 'age', 'phone', 'address', 'cameFrom', 'qualification', 'gradeResults'].includes(field);
+              return (
+                <div key={field}>
+                  <label className="block text-xs text-[#6b7063] mb-1 font-semibold flex items-center justify-between">
+                    <span>
+                      {label}
+                      {isMandatory && <span className="text-[#b91c1c] ml-0.5 font-bold">*</span>}
+                    </span>
+                    {!isMandatory && <span className="text-[#a8a49d] font-normal text-[10px] lowercase">(optional)</span>}
+                  </label>
+                  <input value={(form as any)[field]} onChange={(event) => setForm(current => ({ ...current, [field]: event.target.value }))} className={inputClass} />
+                </div>
+              );
+            })}
             <div className="md:col-span-2">
-              <label className="block text-xs text-[#6b7063] mb-1 font-semibold">Work experience</label>
+              <label className="block text-xs text-[#6b7063] mb-1 font-semibold">
+                Work experience
+                <span className="text-[#b91c1c] ml-0.5 font-bold">*</span>
+              </label>
               <textarea value={form.workExperience} onChange={(event) => setForm(current => ({ ...current, workExperience: event.target.value }))} rows={4} className={`${inputClass} resize-none`} />
             </div>
           </div>
@@ -281,10 +298,40 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
             ) : (
               <div className="w-32 h-32 rounded-2xl bg-[#e8f2ee] flex items-center justify-center text-[#2d6a55] text-3xl font-semibold mb-4">{candidateData.name.charAt(0).toUpperCase()}</div>
             )}
-            <input type="file" accept=".jpg,.jpeg,.png,.webp" onChange={(event) => setPicture(event.target.files?.[0] || null)} className="text-sm" />
-            <button onClick={() => uploadFile('picture')} disabled={!picture || isSaving} className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#2d6a55] text-white text-sm disabled:opacity-50">
-              <Upload className="w-4 h-4" />
-              Upload Picture
+            <input
+              type="file"
+              ref={pictureInputRef}
+              accept=".jpg,.jpeg,.png,.webp"
+              onChange={(event) => {
+                const file = event.target.files?.[0] || null;
+                setPicture(file);
+                if (file) {
+                  uploadFile('picture', file);
+                }
+              }}
+              className="hidden"
+            />
+            {uploadProgress !== null && picture && (
+              <div className="mt-3 mb-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-[#6b7063] font-medium">Uploading picture...</span>
+                  <span className="text-xs text-[#2d6a55] font-semibold">{uploadProgress}%</span>
+                </div>
+                <div className="w-full bg-[#e4e1da] rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-[#2d6a55] h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            <button
+              onClick={() => pictureInputRef.current?.click()}
+              disabled={isSaving}
+              className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#2d6a55] text-white text-sm font-medium disabled:opacity-50 cursor-pointer"
+            >
+              {isSaving && uploadProgress !== null && picture ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              {isSaving && uploadProgress !== null && picture ? `Uploading (${uploadProgress}%)` : 'Upload Picture'}
             </button>
           </div>
         </div>

@@ -17,6 +17,14 @@ interface Props {
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1$/, '');
 const PAGE_SIZE = 10;
+const getCandidatePhase = (status: string, answers?: string[]): string => {
+  if (status === 'hired') return 'Hired';
+  if (status === 'rejected') return 'Rejected';
+  if (status === 'interview_scheduled') return 'Interview In Progress';
+  if (status === 'completed') return 'Waiting for Interview';
+  if (status === 'screening' || (answers && answers.length > 0)) return 'Screening Completed';
+  return 'Waiting for Screening';
+};
 
 const getVisiblePages = (currentPage: number, totalPages: number) => {
   const pages = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
@@ -221,25 +229,21 @@ export function CandidateAccountsPage({
                           {candidate.applicationCount || 0} {(candidate.applicationCount || 0) === 1 ? 'application' : 'applications'}
                         </span>
                         {/* Candidate Status Badge */}
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                          candidate.status === 'invited' ? 'bg-[#e8f2ee] text-[#2d6a55]' :
-                          candidate.status === 'applied' ? 'bg-[#e8eef8] text-[#3a5d9e]' :
-                          candidate.status === 'screening' ? 'bg-[#fdf0e6] text-[#c25a2a]' :
-                          candidate.status === 'completed' ? 'bg-[#fdf8ee] text-[#c9a84c]' :
-                          candidate.status === 'hired' ? 'bg-[#e8f2ee] text-[#245747]' :
-                          candidate.status === 'rejected' ? 'bg-[#fdf2f2] text-[#b91c1c]' :
-                          candidate.status === 'interview_scheduled' ? 'bg-[#eef2ff] text-[#3730a3]' :
-                          'bg-[#f0ede8] text-[#a8a49d]'
-                        }`}>
-                          {candidate.status === 'invited' ? 'Invited' :
-                           candidate.status === 'applied' ? 'Applied' :
-                           candidate.status === 'screening' ? 'Screening' :
-                           candidate.status === 'completed' ? 'Completed' :
-                           candidate.status === 'hired' ? 'Hired' :
-                           candidate.status === 'rejected' ? 'Rejected' :
-                           candidate.status === 'interview_scheduled' ? 'Interview Scheduled' :
-                           'Staged'}
-                        </span>
+                        {(() => {
+                          const phase = getCandidatePhase(candidate.status, candidate.answers);
+                          const classes = 
+                            phase === 'Waiting for Screening' ? 'bg-[#f0ede8] text-[#6b7063]' :
+                            phase === 'Screening Completed' ? 'bg-[#fff7ed] text-[#c2410c]' :
+                            phase === 'Waiting for Interview' ? 'bg-[#fef9c3] text-[#854d0e]' :
+                            phase === 'Interview In Progress' ? 'bg-[#e0e7ff] text-[#3730a3]' :
+                            phase === 'Hired' ? 'bg-[#dcfce7] text-[#15803d]' :
+                            'bg-[#fee2e2] text-[#b91c1c]'; // Rejected
+                          return (
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${classes}`}>
+                              {phase}
+                            </span>
+                          );
+                        })()}
                         {/* Interview Date — only shown when scheduled */}
                         {candidate.status === 'interview_scheduled' && candidate.interviewSlot && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-[#eef2ff] text-[#3730a3] border border-[#c7d2fe]">

@@ -87,6 +87,7 @@ export interface CandidateData {
 }
 
 const CANDIDATE_SESSION_KEY = 'candidateSessionV3';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 export function CandidatePortal() {
   const [candidateData, setCandidateData] = useState<CandidateData | null>(() => {
@@ -96,6 +97,57 @@ export function CandidatePortal() {
     return stored ? JSON.parse(stored) : null;
   });
 
+  const refetchCandidateData = async () => {
+    if (!candidateData?.email) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/candidates/lookup?email=${encodeURIComponent(candidateData.email.trim())}`);
+      if (response.ok) {
+        const data = await response.json();
+        setCandidateData(prev => {
+          if (!prev) return null;
+          const applications = data.applications || [];
+          const selectedApp = applications.find((app: any) => app.application_id === prev.selectedApplicationId)
+            || applications.find((app: any) => app.position_id === prev.jobId)
+            || applications[applications.length - 1];
+          
+          const status = selectedApp?.status || data.status;
+          return {
+            ...prev,
+            ...data,
+            status,
+            applications,
+            selectedApplicationId: selectedApp?.application_id || prev.selectedApplicationId,
+            jobId: selectedApp?.position_id || prev.jobId,
+            name: data.name ?? prev.name,
+            profilePictureUrl: data.profile_picture_url ?? prev.profilePictureUrl,
+            resumeUrl: data.resume_url ?? prev.resumeUrl,
+            resumeSummary: data.resume_summary ?? prev.resumeSummary,
+            profileVerified: data.profile_verified ?? prev.profileVerified,
+            profileMissingFields: data.profile_missing_fields ?? prev.profileMissingFields ?? [],
+            profileCompletion: data.profile_completion ?? prev.profileCompletion,
+            age: data.profile_data?.age ?? prev.age,
+            phone: data.profile_data?.phone ?? prev.phone,
+            address: data.profile_data?.address ?? prev.address,
+            cameFrom: data.profile_data?.came_from ?? prev.cameFrom,
+            location: data.profile_data?.location ?? prev.location,
+            headline: data.profile_data?.headline ?? prev.headline,
+            about: data.profile_data?.about ?? prev.about,
+            workExperience: data.profile_data?.work_experience ?? prev.workExperience,
+            qualification: data.profile_data?.qualification ?? prev.qualification,
+            gradeResults: data.profile_data?.grade_results ?? prev.gradeResults,
+            awards: data.profile_data?.awards ?? prev.awards,
+            skills: data.profile_data?.skills ?? prev.skills,
+            experiences: data.profile_data?.experiences ?? prev.experiences,
+            education: data.profile_data?.education ?? prev.education,
+            notifications: data.notifications ?? prev.notifications
+          };
+        });
+      }
+    } catch (err) {
+      console.error("Failed to refetch candidate status dynamically:", err);
+    }
+  };
+
   useEffect(() => {
     if (candidateData) {
       window.localStorage.setItem(CANDIDATE_SESSION_KEY, JSON.stringify(candidateData));
@@ -103,6 +155,20 @@ export function CandidatePortal() {
       window.localStorage.removeItem(CANDIDATE_SESSION_KEY);
     }
   }, [candidateData]);
+
+  useEffect(() => {
+    if (!candidateData?.email) return;
+
+    // Initial load refetch
+    refetchCandidateData();
+
+    // Dynanic live-polling sync every 5 seconds
+    const interval = setInterval(() => {
+      refetchCandidateData();
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [candidateData?.email]);
 
   const handleSignOut = () => setCandidateData(null);
 

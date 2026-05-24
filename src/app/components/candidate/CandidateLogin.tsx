@@ -94,7 +94,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
   const mapCandidateFromApi = (data: any): CandidateData => {
     const normalizeStatus = (statusValue: string): CandidateData['status'] =>
       statusValue === 'invited' || statusValue === 'staged'
-        ? 'sourced'
+        ? 'invited'
         : statusValue === 'completed'
           ? 'completed'
           : statusValue === 'hired'
@@ -107,7 +107,9 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
                   ? 'interview_scheduled'
                   : statusValue === 'profile'
                     ? 'profile'
-                    : 'applied';
+                    : statusValue === 'applied'
+                      ? 'applied'
+                      : 'invited';
     const applications = (data.applications || []).map((application: any) => ({
       ...application,
       status: normalizeStatus(application.status),
@@ -599,40 +601,31 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
 
     authenticate();
   };
-
   const getAccountProgressInfo = (cand: any) => {
     const status = cand.status;
     const apps = cand.applications || [];
     const latestApp = apps.length > 0 ? apps[apps.length - 1] : null;
     const activeStatus = latestApp ? latestApp.status : status;
+    const hasAnswers = Boolean(latestApp?.answers?.length || cand.answers?.length);
 
     if (activeStatus === 'hired') {
-      return { percent: 100, label: '100% - Hired' };
-    }
-    if (activeStatus === 'completed') {
-      return { percent: 100, label: '100% - Screening Completed' };
+      return { percent: 100, label: 'Hired' };
     }
     if (activeStatus === 'rejected') {
-      return { percent: 100, label: '100% - Application Processed' };
+      return { percent: 100, label: 'Rejected' };
     }
     if (activeStatus === 'interview_scheduled') {
-      return { percent: 85, label: '85% - Interview Scheduled' };
+      return { percent: 80, label: 'Interview In Progress' };
     }
-    if (activeStatus === 'screening') {
-      return { percent: 70, label: '70% - In Screening' };
+    if (activeStatus === 'completed') {
+      return { percent: 60, label: 'Waiting for Interview' };
     }
-    if (activeStatus === 'applied') {
-      return { percent: 40, label: '40% - Applied' };
-    }
-    if (activeStatus === 'sourced' || activeStatus === 'staged' || activeStatus === 'invited') {
-      return { percent: 20, label: '20% - Sourced' };
+    if (activeStatus === 'screening' || hasAnswers) {
+      return { percent: 40, label: 'Screening Completed' };
     }
     
-    // Otherwise, use profile completion
-    const completion = cand.profile_completion ?? 0;
-    return { percent: completion, label: `${completion}% - Profile Configured` };
+    return { percent: 20, label: 'Waiting for Screening' };
   };
-
   const inputClass = "w-full px-3.5 py-2.5 bg-white border border-[#e4e1da] rounded-lg text-[#1c1c1a] placeholder-[#a8a49d] focus:outline-none focus:border-[#2d6a55] focus:ring-1 focus:ring-[#2d6a55]/20 transition-colors";
   const needsPasswordSetup = !loadedCandidate?.has_password;
   const passwordFields = (

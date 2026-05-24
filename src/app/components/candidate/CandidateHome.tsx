@@ -48,7 +48,7 @@ const statusLabels: Record<CandidateData['status'], string> = {
 
 const normalizeApplicationStatus = (status: string): CandidateData['status'] =>
   status === 'invited' || status === 'staged'
-    ? 'sourced'
+    ? 'invited'
     : status === 'completed'
       ? 'completed'
       : status === 'hired'
@@ -61,7 +61,26 @@ const normalizeApplicationStatus = (status: string): CandidateData['status'] =>
               ? 'interview_scheduled'
               : status === 'profile'
                 ? 'profile'
-                : 'applied';
+                : status === 'applied'
+                  ? 'applied'
+                  : 'invited';
+const getPhaseLabel = (status: string, hasAnswers: boolean): string => {
+  if (status === 'hired') return 'Hired';
+  if (status === 'rejected') return 'Rejected';
+  if (status === 'interview_scheduled') return 'Interview In Progress';
+  if (status === 'completed') return 'Waiting for Interview';
+  if (status === 'screening' || hasAnswers) return 'Screening Completed';
+  return 'Waiting for Screening';
+};
+
+const getActiveStepIndex = (status: string, hasAnswers: boolean): number => {
+  if (status === 'rejected') return 4;
+  if (status === 'hired') return 4;
+  if (status === 'interview_scheduled') return 3;
+  if (status === 'completed') return 2;
+  if (status === 'screening' || hasAnswers) return 1;
+  return 0; // Waiting for Screening
+};
 
 const PAGE_SIZE = 10;
 const getVisiblePages = (currentPage: number, totalPages: number) => {
@@ -729,7 +748,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
             <Link to="/candidate/applications" className="bg-white border border-[#e4e1da] rounded-2xl p-5 shadow-sm hover:border-[#2d6a55]/30 transition-colors">
               <BarChart3 className="w-5 h-5 text-[#2d6a55] mb-3" />
               <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Current Status</p>
-              <p className="text-lg text-[#1c1c1a] font-semibold mt-1">{statusLabels[selectedStatus]}</p>
+              <p className="text-lg text-[#1c1c1a] font-semibold mt-1">{getPhaseLabel(selectedStatus, Boolean(selectedApplication?.answers?.length))}</p>
               <p className="text-xs text-[#6b7063] mt-1">{applications.length} application{applications.length === 1 ? '' : 's'} on record</p>
             </Link>
             <Link to="/candidate/jobs" className="bg-white border border-[#e4e1da] rounded-2xl p-5 shadow-sm hover:border-[#2d6a55]/30 transition-colors">
@@ -937,16 +956,86 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
 
         {(view === 'overview' || view === 'applications') && (
         <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mb-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-4">
             <span className="text-xs text-[#6b7063] uppercase tracking-wider font-semibold">Application Progress</span>
-            <span className="text-xs text-[#2d6a55] font-semibold">{statusLabels[selectedStatus]}</span>
+            <span className="text-xs text-[#2d6a55] font-bold bg-[#e8f2ee] px-2.5 py-0.5 rounded-full">
+              {getPhaseLabel(selectedStatus, Boolean(selectedApplication?.answers?.length))}
+            </span>
           </div>
-          <Progress.Root className="relative overflow-hidden bg-[#f0ede8] rounded-full h-2 w-full">
-            <Progress.Indicator
-              className="bg-[#2d6a55] h-full transition-transform duration-500"
-              style={{ transform: `translateX(-${100 - progress}%)`, width: '100%' }}
-            />
-          </Progress.Root>
+          
+          {/* Custom Horizontal Workflow Stepper */}
+          {(() => {
+            const steps = [
+              { label: 'Waiting for Screening', description: 'Complete warm-up sandbox' },
+              { label: 'Screening Completed', description: 'AI evaluation submitted' },
+              { label: 'Waiting for Interview', description: 'Screening passed, wait list' },
+              { label: 'Interview In Progress', description: 'Interview scheduled or active' },
+              { 
+                label: selectedStatus === 'rejected' ? 'Rejected' : 'Hired', 
+                description: selectedStatus === 'rejected' ? 'Application processed' : 'Offer extended!' 
+              }
+            ];
+            const activeStepIndex = getActiveStepIndex(selectedStatus, Boolean(selectedApplication?.answers?.length));
+
+            return (
+              <div className="w-full py-5 relative">
+                {/* Track lines wrapper */}
+                <div className="absolute left-6 right-6 top-[28px] h-1 -translate-y-1/2 z-0">
+                  {/* Background Gray Track */}
+                  <div className="absolute inset-0 bg-[#f0ede8] rounded-full" />
+                  {/* Completed Green Progress Track */}
+                  <div 
+                    className="absolute left-0 top-0 bottom-0 bg-[#2d6a55] rounded-full transition-all duration-500"
+                    style={{ width: `${(activeStepIndex / (steps.length - 1)) * 100}%` }}
+                  />
+                </div>
+                
+                {/* Node Grid */}
+                <div className="relative flex justify-between items-center w-full z-10">
+                  {steps.map((step, idx) => {
+                    const isActive = idx === activeStepIndex;
+                    const isCompleted = idx < activeStepIndex;
+                    const isTerminalRejected = idx === 4 && selectedStatus === 'rejected';
+                    const isTerminalHired = idx === 4 && selectedStatus === 'hired';
+
+                    let nodeStyles = 'bg-white border-2 border-[#e4e1da] text-[#a8a49d]';
+                    if (isActive) {
+                      if (isTerminalRejected) {
+                        nodeStyles = 'bg-[#b91c1c] text-white ring-4 ring-[#b91c1c]/20 scale-110 shadow-lg';
+                      } else if (isTerminalHired) {
+                        nodeStyles = 'bg-[#2d6a55] text-white ring-4 ring-[#2d6a55]/20 scale-110 shadow-lg animate-pulse';
+                      } else {
+                        nodeStyles = 'bg-[#2d6a55] text-white ring-4 ring-[#2d6a55]/20 scale-110 shadow-lg';
+                      }
+                    } else if (isCompleted) {
+                      nodeStyles = 'bg-[#2d6a55] text-white';
+                    }
+
+                    let textStyles = 'text-[#6b7063]';
+                    if (isActive) {
+                      textStyles = isTerminalRejected ? 'text-[#b91c1c] font-bold' : 'text-[#2d6a55] font-bold';
+                    }
+
+                    return (
+                      <div key={idx} className="flex flex-col items-center flex-1">
+                        {/* Circular node */}
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-all duration-500 shadow-sm ${nodeStyles}`}>
+                          {isCompleted ? '✓' : idx + 1}
+                        </div>
+                        {/* Node labels */}
+                        <p className={`text-[10px] sm:text-[11px] font-semibold text-center mt-3 max-w-[125px] leading-tight transition-colors duration-300 ${textStyles}`}>
+                          {step.label}
+                        </p>
+                        <p className="hidden md:block text-[9px] text-[#a8a49d] text-center max-w-[100px] mt-0.5 leading-normal">
+                          {step.description}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
           <div className="grid grid-cols-3 gap-3 mt-5">
             <div className="border border-[#e4e1da] rounded-xl p-4">
               <FileText className="w-4 h-4 text-[#2d6a55] mb-2" />
@@ -956,7 +1045,15 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
             <div className="border border-[#e4e1da] rounded-xl p-4">
               <PlayCircle className="w-4 h-4 text-[#2d6a55] mb-2" />
               <p className="text-xs text-[#a8a49d]">Interview</p>
-              <p className="text-sm text-[#1c1c1a] font-medium">{canContinue ? 'Ready' : 'Completed'}</p>
+              <p className="text-sm text-[#1c1c1a] font-medium">
+                {!selectedApplication
+                  ? 'Waiting for Interview'
+                  : selectedStatus === 'interview_scheduled'
+                    ? 'Interview Scheduled'
+                    : (selectedStatus === 'completed' || selectedStatus === 'screening' || selectedStatus === 'hired' || selectedStatus === 'rejected')
+                      ? 'Interview Completed'
+                      : 'Waiting for Interview'}
+              </p>
             </div>
             <div className="border border-[#e4e1da] rounded-xl p-4">
               <BarChart3 className="w-4 h-4 text-[#2d6a55] mb-2" />
@@ -1009,7 +1106,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
                         <p className="text-xs text-[#a8a49d] mt-2">Applied: {formatDateTime(application.applied_at)}</p>
                       </div>
                       <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-[#e8f2ee] text-[#2d6a55] whitespace-nowrap">
-                        {statusLabels[applicationStatus]}
+                        {getPhaseLabel(applicationStatus, Boolean(application.answers?.length))}
                       </span>
                     </div>
                   </button>
@@ -1112,6 +1209,30 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
             </div>
           </div>
 
+          {(!candidateData.profileVerified || !candidateData.resumeUrl) && (
+            <div className="mb-5 rounded-xl border border-[#c25a2a]/20 bg-[#fffaf5] p-4 text-sm text-[#c25a2a] space-y-2">
+              <div className="flex items-center gap-2 font-semibold">
+                <span>⚠️</span>
+                <span>Application Prerequisites Incomplete</span>
+              </div>
+              <p className="text-xs text-[#6b7063] leading-relaxed">
+                Before you can apply for any position, you must complete the following:
+              </p>
+              <ul className="list-disc list-inside text-xs text-[#6b7063] pl-2 space-y-1">
+                {!candidateData.profileVerified && (
+                  <li>
+                    <strong>Incomplete profile information:</strong> Please go to the <Link to="/candidate/profile" className="underline font-medium text-[#c25a2a] hover:text-[#a0441b]">Profile Information page</Link> and complete all mandatory fields.
+                  </li>
+                )}
+                {!candidateData.resumeUrl && (
+                  <li>
+                    <strong>Missing resume upload:</strong> Please upload a PDF copy of your resume on the <Link to="/candidate/profile" className="underline font-medium text-[#c25a2a] hover:text-[#a0441b]">Profile Information page</Link>.
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
+
           <div className="space-y-3">
             {paginatedPositions.map(position => (
               <div key={position.id} className="border border-[#e4e1da] rounded-xl p-4">
@@ -1144,11 +1265,11 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
                   </div>
                   <button
                     onClick={() => handleApply(position)}
-                    disabled={isApplying !== null || appliedPositionIds.has(position.id) || !candidateData.profileVerified}
+                    disabled={isApplying !== null || appliedPositionIds.has(position.id) || !candidateData.profileVerified || !candidateData.resumeUrl}
                     className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:opacity-50 transition-colors text-sm font-medium whitespace-nowrap"
                   >
                     {isApplying === position.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
-                    {!candidateData.profileVerified ? 'Verify Profile' : appliedPositionIds.has(position.id) ? 'Applied' : 'Apply'}
+                    {!candidateData.profileVerified ? 'Verify Profile' : !candidateData.resumeUrl ? 'Upload Resume' : appliedPositionIds.has(position.id) ? 'Applied' : 'Apply'}
                   </button>
                 </div>
               </div>

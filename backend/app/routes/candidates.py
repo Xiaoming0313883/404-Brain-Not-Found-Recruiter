@@ -353,7 +353,7 @@ def serialize_candidate(candidate: Dict[str, Any], management_email: Optional[st
     missing_fields = get_missing_profile_fields(profile_data)
     serialized["profile_missing_fields"] = missing_fields
     serialized["profile_completion"] = max(0, round(((len(PROFILE_REQUIRED_FIELDS) - len(missing_fields)) / len(PROFILE_REQUIRED_FIELDS)) * 100))
-    serialized["profile_verified"] = bool(candidate.get("profile_verified")) and not missing_fields
+    serialized["profile_verified"] = not missing_fields
     serialized["email_verified"] = bool(candidate.get("email_verified", True))
     serialized["hr_feedback"] = candidate.get("hr_feedback", "")
     serialized["notifications"] = candidate.get("notifications", [])

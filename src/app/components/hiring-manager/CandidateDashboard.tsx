@@ -31,6 +31,15 @@ import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import { PdfResumeViewer } from '../PdfResumeViewer';
 
+const getCandidatePhase = (status: string, answers?: string[]): string => {
+  if (status === 'hired') return 'Hired';
+  if (status === 'rejected') return 'Rejected';
+  if (status === 'interview_scheduled') return 'Interview In Progress';
+  if (status === 'completed') return 'Waiting for Interview';
+  if (status === 'screening' || (answers && answers.length > 0)) return 'Screening Completed';
+  return 'Waiting for Screening';
+};
+
 interface Props {
   jobs: Job[];
   candidates: ScrapedCandidate[];
@@ -848,14 +857,27 @@ initial={{ opacity: 0, y: 16 }}
               const draftFeedback = editedFeedback[candidate.email] ?? candidate.hrFeedback ?? '';
               const isSavingThis = isSavingField[candidate.email] ?? false;
 
-              const saveOutreachAndFeedbackFields = async () => {
+              const saveOutreachField = async () => {
                 setIsSavingField(prev => ({ ...prev, [candidate.email]: true }));
                 try {
-                  await onUpdateOutreachNotes(actionEmail, candidate.jobId, draftOutreach, draftFeedback);
-                  setInviteSuccessMessage(`Outreach email & internal notes saved successfully for ${candidate.name}!`);
+                  await onUpdateOutreachNotes(actionEmail, candidate.jobId, draftOutreach, undefined);
+                  setInviteSuccessMessage(`Outreach email saved successfully for ${candidate.name}!`);
                   setTimeout(() => setInviteSuccessMessage(''), 4000);
                 } catch (err: any) {
-                  setActionError(err.message || 'Failed to update outreach or HR notes.');
+                  setActionError(err.message || 'Failed to update outreach notes.');
+                } finally {
+                  setIsSavingField(prev => ({ ...prev, [candidate.email]: false }));
+                }
+              };
+
+              const saveFeedbackField = async () => {
+                setIsSavingField(prev => ({ ...prev, [candidate.email]: true }));
+                try {
+                  await onUpdateOutreachNotes(actionEmail, candidate.jobId, undefined, draftFeedback);
+                  setInviteSuccessMessage(`Internal notes saved successfully for ${candidate.name}!`);
+                  setTimeout(() => setInviteSuccessMessage(''), 4000);
+                } catch (err: any) {
+                  setActionError(err.message || 'Failed to update HR notes.');
                 } finally {
                   setIsSavingField(prev => ({ ...prev, [candidate.email]: false }));
                 }
@@ -905,27 +927,21 @@ initial={{ opacity: 0, y: 16 }}
                                     ★ High Fit
                                   </span>
                                 )}
-
-                                <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                  candidate.status === 'invited' ? 'bg-[#e8f2ee] text-[#2d6a55]' :
-                                  candidate.status === 'applied' ? 'bg-[#e8eef8] text-[#3a5d9e]' :
-                                  candidate.status === 'screening' ? 'bg-[#fdf0e6] text-[#c25a2a]' :
-                                  candidate.status === 'completed' ? 'bg-[#fdf8ee] text-[#c9a84c]' :
-                                  candidate.status === 'hired' ? 'bg-[#e8f2ee] text-[#245747]' :
-                                  candidate.status === 'rejected' ? 'bg-[#fdf2f2] text-[#b91c1c]' :
-                                  candidate.status === 'interview_scheduled' ? 'bg-[#eef2ff] text-[#3730a3]' :
-                                  'bg-[#f0ede8] text-[#a8a49d]'
-                                }`}>
-                                  {candidate.status === 'invited' ? 'Invited' :
-                                   candidate.status === 'applied' ? 'Applied' :
-                                   candidate.status === 'screening' ? 'Screening' :
-                                   candidate.status === 'completed' ? 'Completed' :
-                                   candidate.status === 'hired' ? 'Hired' :
-                                   candidate.status === 'rejected' ? 'Rejected' :
-                                   candidate.status === 'interview_scheduled' ? 'Interview Scheduled' :
-                                   'Staged'}
-                                </span>
-                                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-white border border-[#e4e1da] text-[#6b7063] whitespace-nowrap">
+                                {(() => {
+                                  const phase = getCandidatePhase(candidate.status, candidate.answers);
+                                  const classes = 
+                                    phase === 'Waiting for Screening' ? 'bg-[#f0ede8] text-[#6b7063]' :
+                                    phase === 'Screening Completed' ? 'bg-[#fff7ed] text-[#c2410c]' :
+                                    phase === 'Waiting for Interview' ? 'bg-[#fef9c3] text-[#854d0e]' :
+                                    phase === 'Interview In Progress' ? 'bg-[#e0e7ff] text-[#3730a3]' :
+                                    phase === 'Hired' ? 'bg-[#dcfce7] text-[#15803d]' :
+                                    'bg-[#fee2e2] text-[#b91c1c]'; // Rejected
+                                  return (
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${classes}`}>
+                                      {phase}
+                                    </span>
+                                  );
+                                })()}                                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-white border border-[#e4e1da] text-[#6b7063] whitespace-nowrap">
                                   {candidate.sourceMethod === 'prototype_auto_source' ? 'LinkedIn auto search' : candidate.sourceMethod === 'manual_authenticated' ? 'LinkedIn authenticated' : candidate.sourceType === 'linkedin' ? 'LinkedIn manual add' : 'Inbound resume'}
                                 </span>
                               </div>
@@ -1275,7 +1291,7 @@ initial={{ opacity: 0, y: 16 }}
 
                             <div className="text-right">
                               <button
-                                onClick={saveOutreachAndFeedbackFields}
+                                onClick={saveOutreachField}
                                 disabled={isSavingThis}
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] text-xs font-medium transition-colors disabled:opacity-50 cursor-pointer"
                               >
@@ -1298,7 +1314,6 @@ initial={{ opacity: 0, y: 16 }}
                               </div>
                             ) : null}
                           </div>
-
                           {/* F2: Standalone Internal notes / HR feedback */}
                           <div className="bg-white border border-[#e4e1da] rounded-xl p-4 shadow-sm space-y-3">
                             <div className="flex items-center justify-between">
@@ -1314,7 +1329,7 @@ initial={{ opacity: 0, y: 16 }}
                             />
                             <div className="text-right">
                               <button
-                                onClick={saveOutreachAndFeedbackFields}
+                                onClick={saveFeedbackField}
                                 disabled={isSavingThis}
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#3730a3] text-white rounded-lg hover:bg-[#312e81] text-xs font-medium transition-colors disabled:opacity-50 cursor-pointer"
                               >
@@ -1322,8 +1337,25 @@ initial={{ opacity: 0, y: 16 }}
                                 Save Notes & Feedback
                               </button>
                             </div>
-                          </div>
-                        </div>
+                            {candidate.hrFeedback ? (
+                              <div className="border-t border-[#e4e1da] pt-3 space-y-2">
+                                <p className="text-[10px] text-[#a8a49d] uppercase tracking-wider font-semibold">Active Saved Notes</p>
+                                <div className="rounded-lg bg-[#f5f3ff] border border-[#e0dbff] p-3 space-y-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#3730a3]">Saved Feedback Note</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditedFeedback(prev => ({ ...prev, [candidate.email]: candidate.hrFeedback || '' }))}
+                                      className="text-[10px] font-semibold text-[#3730a3] hover:underline cursor-pointer bg-transparent border-none p-0"
+                                    >
+                                      Edit Note
+                                    </button>
+                                  </div>
+                                  <p className="text-xs text-[#1e1b4b] whitespace-pre-wrap leading-relaxed">{candidate.hrFeedback}</p>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>                        </div>
 
                         {/* Profile */}
                         <div className="bg-white border border-[#e4e1da] rounded-xl p-4 shadow-sm">

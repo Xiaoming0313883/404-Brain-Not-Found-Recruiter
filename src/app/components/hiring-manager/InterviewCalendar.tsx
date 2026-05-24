@@ -7,6 +7,15 @@ import { toast } from 'sonner';
 import { ScrapedCandidate } from '../HiringManagerPortal';
 import { Job } from '../HiringManagerPortal';
 
+const getCandidatePhase = (status: string, answers?: string[]): string => {
+  if (status === 'hired') return 'Hired';
+  if (status === 'rejected') return 'Rejected';
+  if (status === 'interview_scheduled') return 'Interview In Progress';
+  if (status === 'completed') return 'Waiting for Interview';
+  if (status === 'screening' || (answers && answers.length > 0)) return 'Screening Completed';
+  return 'Waiting for Screening';
+};
+
 const localizer = momentLocalizer(moment);
 
 interface InterviewSlot {
@@ -343,19 +352,21 @@ export function InterviewCalendar({ jobs, candidates, onScheduleInterview }: Pro
                     </div>
                     <div>
                       <p className="font-semibold text-[#1c1c1a]">{selectedEvent.resource.candidate.name}</p>
-                      <span className={`inline-block mt-0.5 px-2 py-0.5 rounded-full text-xs font-semibold ${
-                        selectedEvent.resource.candidate.status === 'interview_scheduled' ? 'bg-[#eef2ff] text-[#3730a3]' :
-                        selectedEvent.resource.candidate.status === 'completed' ? 'bg-[#fdf8ee] text-[#c9a84c]' :
-                        selectedEvent.resource.candidate.status === 'hired' ? 'bg-[#e8f2ee] text-[#245747]' :
-                        selectedEvent.resource.candidate.status === 'screening' ? 'bg-[#fdf0e6] text-[#c25a2a]' :
-                        'bg-[#f0ede8] text-[#a8a49d]'
-                      }`}>
-                        {selectedEvent.resource.candidate.status === 'interview_scheduled' ? 'Interview Scheduled' :
-                         selectedEvent.resource.candidate.status === 'completed' ? 'Completed' :
-                         selectedEvent.resource.candidate.status === 'hired' ? 'Hired' :
-                         selectedEvent.resource.candidate.status === 'screening' ? 'Screening' :
-                         selectedEvent.resource.candidate.status}
-                      </span>
+                      {(() => {
+                        const phase = getCandidatePhase(selectedEvent.resource.candidate.status, selectedEvent.resource.candidate.answers);
+                        const classes = 
+                          phase === 'Waiting for Screening' ? 'bg-[#f0ede8] text-[#6b7063]' :
+                          phase === 'Screening Completed' ? 'bg-[#fff7ed] text-[#c2410c]' :
+                          phase === 'Waiting for Interview' ? 'bg-[#fef9c3] text-[#854d0e]' :
+                          phase === 'Interview In Progress' ? 'bg-[#e0e7ff] text-[#3730a3]' :
+                          phase === 'Hired' ? 'bg-[#dcfce7] text-[#15803d]' :
+                          'bg-[#fee2e2] text-[#b91c1c]'; // Rejected
+                        return (
+                          <span className={`inline-block mt-0.5 px-2 py-0.5 rounded-full text-xs font-semibold ${classes}`}>
+                            {phase}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </div>
                   <button onClick={() => setSelectedEvent(null)} className="text-[#a8a49d] hover:text-[#1c1c1a] transition-colors">
