@@ -137,6 +137,10 @@ class AutoSourcePayload(BaseModel):
 class NotificationReadPayload(BaseModel):
     notification_id: Optional[str] = None
 
+class RevertStatusPayload(BaseModel):
+    position_id: Optional[int] = None
+
+
 def get_anonymized_hash(email: str) -> str:
     """Generates a consistent anonymized identifier like 'Candidate #7291'."""
     val = int(hashlib.md5(email.encode("utf-8")).hexdigest(), 16) % 10000
@@ -303,7 +307,8 @@ def serialize_application_candidate(candidate: Dict[str, Any], email: str, appli
         "interview_slot": application.get("interview_slot"),
         "draft_answers": application.get("draft_answers", []),
         "last_agent_error": application.get("last_agent_error", ""),
-        "agent_warnings": application.get("agent_warnings", candidate.get("agent_warnings", []))
+        "agent_warnings": application.get("agent_warnings", candidate.get("agent_warnings", [])),
+        "status_history": application.get("status_history", [])
     })
     return serialized
 
@@ -1219,6 +1224,12 @@ def update_candidate_status(email: str, payload: CandidateStatusPayload):
     if payload.position_id and not application:
         raise HTTPException(status_code=404, detail="Candidate application not found.")
     if application:
+        # Track previous status in history (max 10 entries)
+        previous_status = application.get("status")
+        if previous_status and previous_status != payload.status:
+            history = application.setdefault("status_history", [])
+            history.append(previous_status)
+            application["status_history"] = history[-10:]
         application["status"] = payload.status
         application["progress"] = get_application_progress(payload.status)
         if payload.status == "hired":
@@ -1227,6 +1238,11 @@ def update_candidate_status(email: str, payload: CandidateStatusPayload):
             send_decision_email(email_clean, "Application update - hired", "Congratulations. The hiring team has marked your application as hired. Please check the candidate portal for details.")
         sync_current_application(candidate, application)
     else:
+        previous_status = candidate.get("status")
+        if previous_status and previous_status != payload.status:
+            history = candidate.setdefault("status_history", [])
+            history.append(previous_status)
+            candidate["status_history"] = history[-10:]
         candidate["status"] = payload.status
         if payload.status == "hired":
             candidate["hired_at"] = datetime.now().isoformat(timespec="seconds")
@@ -1234,6 +1250,44 @@ def update_candidate_status(email: str, payload: CandidateStatusPayload):
             send_decision_email(email_clean, "Application update - hired", "Congratulations. The hiring team has marked your application as hired. Please check the candidate portal for details.")
     save_db(db)
     return serialize_candidate(candidate, email_clean)
+
+@router.post("/{email}/revert-status")
+def revert_candidate_status(email: str, payload: RevertStatusPayload):
+    """Undo the last status change for a candidate application."""
+    db = load_db()
+    email_clean = email.strip().lower()
+    candidate = db.setdefault("candidates", {}).get(email_clean)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+
+    application = find_application(candidate, payload.position_id)
+    target = application if application else candidate
+
+    history = target.get("status_history", [])
+    if not history:
+        raise HTTPException(status_code=400, detail="No status history available to revert.")
+
+    current_status = target.get("status")
+    previous_status = history[-1]
+    target["status_history"] = history[:-1]
+    target["status"] = previous_status
+    target["progress"] = get_application_progress(previous_status)
+
+    # Clean up status-specific fields when reverting
+    if current_status == "interview_scheduled":
+        target.pop("interview_slot", None)
+    if current_status == "rejected":
+        target["rejection_message"] = ""
+        target["rejected_at"] = None
+    if current_status == "hired":
+        target["hired_at"] = None
+
+    if application:
+        sync_current_application(candidate, application)
+
+    save_db(db)
+    return serialize_candidate(candidate, email_clean)
+
 
 @router.delete("/{email}")
 def delete_candidate(email: str):
@@ -1624,6 +1678,11 @@ def invite_candidate(payload: InvitePayload):
     if not candidate:
         raise HTTPException(status_code=404, detail="Staged candidate profile not found.")
         
+    previous_status = candidate.get("status")
+    if previous_status and previous_status != "invited":
+        history = candidate.setdefault("status_history", [])
+        history.append(previous_status)
+        candidate["status_history"] = history[-10:]
     candidate["status"] = "invited"
     if payload.outreach_email:
         candidate["outreach_email"] = payload.outreach_email
@@ -1671,6 +1730,11 @@ def reject_candidate(email: str, payload: RejectCandidatePayload):
         "success in your career journey."
     )
     if application:
+        previous_status = application.get("status")
+        if previous_status and previous_status != "rejected":
+            history = application.setdefault("status_history", [])
+            history.append(previous_status)
+            application["status_history"] = history[-10:]
         application["status"] = "rejected"
         application["progress"] = get_application_progress("rejected")
         application["hr_feedback"] = payload.hr_feedback or ""
@@ -1679,6 +1743,11 @@ def reject_candidate(email: str, payload: RejectCandidatePayload):
         add_notification(candidate, "Application update", rejection_message, "decision", payload.position_id)
         sync_current_application(candidate, application)
     else:
+        previous_status = candidate.get("status")
+        if previous_status and previous_status != "rejected":
+            history = candidate.setdefault("status_history", [])
+            history.append(previous_status)
+            candidate["status_history"] = history[-10:]
         candidate["status"] = "rejected"
         candidate["hr_feedback"] = payload.hr_feedback or ""
         candidate["rejection_message"] = rejection_message
@@ -1708,6 +1777,11 @@ def schedule_interview(email: str, payload: InterviewSlotPayload):
         "notes": payload.interview_notes or ""
     }
     if application:
+        previous_status = application.get("status")
+        if previous_status and previous_status != "interview_scheduled":
+            history = application.setdefault("status_history", [])
+            history.append(previous_status)
+            application["status_history"] = history[-10:]
         application["status"] = "interview_scheduled"
         application["progress"] = get_application_progress("interview_scheduled")
         application["interview_slot"] = interview_slot
@@ -1721,6 +1795,11 @@ def schedule_interview(email: str, payload: InterviewSlotPayload):
         )
         sync_current_application(candidate, application)
     else:
+        previous_status = candidate.get("status")
+        if previous_status and previous_status != "interview_scheduled":
+            history = candidate.setdefault("status_history", [])
+            history.append(previous_status)
+            candidate["status_history"] = history[-10:]
         candidate["status"] = "interview_scheduled"
         candidate["interview_slot"] = interview_slot
         add_notification(

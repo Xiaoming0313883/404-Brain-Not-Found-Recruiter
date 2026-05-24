@@ -34,7 +34,7 @@ const statusLabels: Record<CandidateData['status'], string> = {
   profile: 'Profile Ready',
   sourced: 'Sourced & Invited',
   applied: 'Position Applied',
-  screening: 'Interview In Progress',
+  screening: 'Under Review',
   completed: 'Screening Completed',
   hired: 'Hired',
   rejected: 'Not Selected',

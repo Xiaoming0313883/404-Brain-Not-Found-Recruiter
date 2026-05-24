@@ -20,7 +20,9 @@ import {
   KeyRound,
   XCircle,
   X,
-  Calendar
+  Calendar,
+  RotateCcw,
+  FileSpreadsheet
 } from 'lucide-react';
 import * as Switch from '@radix-ui/react-switch';
 import * as Accordion from '@radix-ui/react-accordion';
@@ -41,10 +43,33 @@ interface Props {
   onReject: (email: string, positionId?: number, hrFeedback?: string, rejectionMessage?: string) => Promise<void>;
   onScheduleInterview: (email: string, positionId: number | undefined, date: string, time: string, location: string, notes?: string) => Promise<void>;
   onUpdateOutreachNotes: (email: string, positionId?: number, outreachEmail?: string, hrFeedback?: string) => Promise<void>;
+  onRevertStatus?: (email: string, positionId?: number) => Promise<void>;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1$/, '');
+
+// Predefined outreach templates for Feature 6
+const OUTREACH_TEMPLATES = [
+  {
+    label: 'Tech / Software',
+    emoji: '💻',
+    generate: (name: string, jobTitle: string) =>
+      `Hi ${name},\n\nI came across your profile and was genuinely impressed by your background. We're building something exciting here and your experience feels like a strong match for the ${jobTitle} role we currently have open.\n\nOur team is collaborative, technically driven, and moves fast. We're strong believers in remote-first culture, continuous learning, and giving engineers real ownership of the product.\n\nWould love to set aside 20 minutes to chat about what we're working on and whether it might be the right fit for you. Keen to hear more?\n\nBest regards,\nThe Talent Team`
+  },
+  {
+    label: 'Operations / General',
+    emoji: '🏢',
+    generate: (name: string, jobTitle: string) =>
+      `Hi ${name},\n\nThank you for your interest in the ${jobTitle} position at our company. We reviewed your profile carefully and believe your practical experience makes you a strong candidate for this role.\n\nWe are a fast-growing team focused on building reliable, people-first operations. The ${jobTitle} role plays a key part in supporting our day-to-day success and long-term growth plans.\n\nWe would love to learn more about your background and share more about the opportunity. Please let us know a convenient time to connect.\n\nWarm regards,\nThe Recruiting Team`
+  },
+  {
+    label: 'Senior / Leadership',
+    emoji: '🌟',
+    generate: (name: string, jobTitle: string) =>
+      `Hi ${name},\n\nYour career trajectory stood out to us — particularly the way you've consistently moved into roles with broader impact and responsibility. We're currently searching for the right person to take on the ${jobTitle} position, and your profile came up as a compelling match.\n\nThis is a leadership role where you'd be setting direction, mentoring a growing team, and working closely with senior stakeholders. We're looking for someone who leads with clarity, earns trust quickly, and sees the bigger picture.\n\nI'd welcome the chance to speak with you directly. Would you be open to a brief exploratory call?\n\nWith respect,\nThe Executive Search Team`
+  }
+];
 
 const getVisiblePages = (currentPage: number, totalPages: number) => {
   const pages = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
@@ -60,18 +85,77 @@ export function CandidateDashboard({
   onToggleNeutralize,
   isLoading,
   onRefresh,
-  onStatusChange,
-  onInvite,
+  onStatusChange: onStatusChangeProp,
+  onInvite: onInviteProp,
   onDelete,
-  onReject,
-  onScheduleInterview,
-  onUpdateOutreachNotes
+  onReject: onRejectProp,
+  onScheduleInterview: onScheduleInterviewProp,
+  onUpdateOutreachNotes,
+  onRevertStatus
 }: Props) {
   const [anonymizedMode, setAnonymizedMode] = useState(false);
   const [busyEmail, setBusyEmail] = useState('');
   const actionLocksRef = useRef<Set<string>>(new Set());
   const [actionError, setActionError] = useState('');
   const [selectedPositionId, setSelectedPositionId] = useState<number | 'all'>('all');
+
+  const [lastActionCandidate, setLastActionCandidate] = useState<{ email: string; name: string; oldStatus: string; newStatus: string; jobId?: number } | null>(null);
+
+  const onStatusChange = async (email: string, newStatus: ScrapedCandidate['status'], jobId?: number) => {
+    const candidate = candidates.find(c => getActionEmail(c).toLowerCase() === email.toLowerCase());
+    if (candidate) {
+      setLastActionCandidate({
+        email,
+        name: candidate.name,
+        oldStatus: candidate.status,
+        newStatus,
+        jobId
+      });
+    }
+    await onStatusChangeProp(email, newStatus, jobId);
+  };
+
+  const onInvite = async (email: string, outreachEmail?: string, hrFeedback?: string) => {
+    const candidate = candidates.find(c => getActionEmail(c).toLowerCase() === email.toLowerCase());
+    if (candidate) {
+      setLastActionCandidate({
+        email,
+        name: candidate.name,
+        oldStatus: candidate.status,
+        newStatus: 'invited',
+        jobId: candidate.jobId
+      });
+    }
+    await onInviteProp(email, outreachEmail, hrFeedback);
+  };
+
+  const onReject = async (email: string, positionId?: number, hrFeedback?: string, rejectionMessage?: string) => {
+    const candidate = candidates.find(c => getActionEmail(c).toLowerCase() === email.toLowerCase());
+    if (candidate) {
+      setLastActionCandidate({
+        email,
+        name: candidate.name,
+        oldStatus: candidate.status,
+        newStatus: 'rejected',
+        jobId: positionId
+      });
+    }
+    await onRejectProp(email, positionId, hrFeedback, rejectionMessage);
+  };
+
+  const onScheduleInterview = async (email: string, positionId: number | undefined, date: string, time: string, location: string, notes?: string) => {
+    const candidate = candidates.find(c => getActionEmail(c).toLowerCase() === email.toLowerCase());
+    if (candidate) {
+      setLastActionCandidate({
+        email,
+        name: candidate.name,
+        oldStatus: candidate.status,
+        newStatus: 'interview_scheduled',
+        jobId: positionId
+      });
+    }
+    await onScheduleInterviewProp(email, positionId, date, time, location, notes);
+  };
 
   const openPdfInBrowser = async (url: string) => {
     try {
@@ -101,6 +185,8 @@ export function CandidateDashboard({
   const [rejectTarget, setRejectTarget] = useState<ScrapedCandidate | null>(null);
   const [rejectFeedback, setRejectFeedback] = useState<string>('');
   const [rejectMessage, setRejectMessage] = useState<string>('');
+
+  const [openMarkDropdown, setOpenMarkDropdown] = useState<string>('');
 
   const [scheduleTarget, setScheduleTarget] = useState<ScrapedCandidate | null>(null);
   const [scheduleDate, setScheduleDate] = useState<string>('');
@@ -681,6 +767,40 @@ initial={{ opacity: 0, y: 16 }}
               <button onClick={() => setInviteSuccessMessage('')} className="text-[#2d6a55] hover:text-[#245747] font-bold text-sm leading-none">×</button>
             </div>
           )}
+
+          {/* F4: Undo status change Toast alert banner */}
+          {lastActionCandidate && (
+            <div className="mt-3 flex items-center justify-between p-3.5 bg-[#fff8ed] border border-[#f2d3a4] rounded-xl text-xs text-[#8a5a14] font-semibold animate-fadeIn shadow-sm">
+              <div className="flex items-center gap-2">
+                <RotateCcw className="w-4 h-4 text-[#8a5a14] animate-spin" style={{ animationDuration: '3s' }} />
+                <span>
+                  Changed <strong className="text-[#1c1c1a]">{lastActionCandidate.name}</strong>'s status from{' '}
+                  <span className="italic font-bold">"{lastActionCandidate.oldStatus}"</span> to{' '}
+                  <span className="italic font-bold">"{lastActionCandidate.newStatus}"</span>.
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    const c = lastActionCandidate;
+                    setLastActionCandidate(null);
+                    runAction(c.email, () => onRevertStatus?.(c.email, c.jobId));
+                  }}
+                  disabled={busyEmail === lastActionCandidate.email}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] text-xs font-semibold cursor-pointer transition-colors disabled:opacity-50"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Undo Last Action
+                </button>
+                <button
+                  onClick={() => setLastActionCandidate(null)}
+                  className="text-[#8a5a14] hover:text-[#5a3b0d] font-bold text-sm leading-none cursor-pointer"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {totalFiltered === 0 ? (
@@ -966,25 +1086,44 @@ initial={{ opacity: 0, y: 16 }}
                               </div>
                             ) : (
                               <>
+                                {/* F3: Combined Mark Screening / Mark Complete split-button */}
                                 {candidate.status !== 'completed' && candidate.status !== 'hired' && candidate.status !== 'rejected' && candidate.status !== 'interview_scheduled' && (
-                                  <button
-                                    onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'screening', candidate.jobId))}
-                                    disabled={busyEmail === actionEmail}
-                                    className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f7f6f3] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
-                                  >
-                                    <UserCheck className="w-3.5 h-3.5" />
-                                    Mark Screening
-                                  </button>
-                                )}
-                                {candidate.status !== 'completed' && candidate.status !== 'hired' && candidate.status !== 'rejected' && candidate.status !== 'interview_scheduled' && (
-                                  <button
-                                    onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'completed', candidate.jobId))}
-                                    disabled={busyEmail === actionEmail}
-                                    className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f7f6f3] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
-                                  >
-                                    <CheckCircle2 className="w-3.5 h-3.5" />
-                                    Mark Complete
-                                  </button>
+                                  <div className="relative inline-flex rounded-lg shadow-sm" style={{ isolation: 'isolate' }}>
+                                    {/* Primary: Mark Screening */}
+                                    <button
+                                      onClick={() => runAction(actionEmail, () => onStatusChange(actionEmail, 'screening', candidate.jobId))}
+                                      disabled={busyEmail === actionEmail}
+                                      className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-l-lg hover:bg-[#f7f6f3] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer border-r-0"
+                                    >
+                                      <UserCheck className="w-3.5 h-3.5" />
+                                      Mark Screening
+                                    </button>
+                                    {/* Dropdown toggle */}
+                                    <button
+                                      onClick={() => setOpenMarkDropdown(prev => prev === actionEmail ? '' : actionEmail)}
+                                      disabled={busyEmail === actionEmail}
+                                      className="inline-flex items-center justify-center px-2 py-2 bg-white border border-[#e4e1da] text-[#6b7063] rounded-r-lg hover:bg-[#f7f6f3] hover:text-[#1c1c1a] disabled:opacity-50 text-xs transition-colors cursor-pointer"
+                                      title="More options"
+                                    >
+                                      <ChevronDown className={`w-3 h-3 transition-transform duration-150 ${openMarkDropdown === actionEmail ? 'rotate-180' : ''}`} />
+                                    </button>
+                                    {/* Dropdown: Mark Complete */}
+                                    {openMarkDropdown === actionEmail && (
+                                      <div className="absolute top-full left-0 mt-1 z-20 bg-white border border-[#e4e1da] rounded-xl shadow-lg overflow-hidden min-w-[160px]">
+                                        <button
+                                          onClick={() => {
+                                            setOpenMarkDropdown('');
+                                            runAction(actionEmail, () => onStatusChange(actionEmail, 'completed', candidate.jobId));
+                                          }}
+                                          disabled={busyEmail === actionEmail}
+                                          className="w-full inline-flex items-center gap-2 px-4 py-2.5 hover:bg-[#f0f9f4] text-xs font-medium text-[#2d6a55] transition-colors cursor-pointer"
+                                        >
+                                          <CheckCircle2 className="w-3.5 h-3.5" />
+                                          Mark Complete
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
                                 )}
                                 {candidate.status !== 'hired' && candidate.status !== 'rejected' && candidate.status !== 'interview_scheduled' && (
                                   <button
@@ -1033,6 +1172,7 @@ initial={{ opacity: 0, y: 16 }}
                               </>
                             )}
 
+
                             <button
                               onClick={() => {
                                 if (window.confirm(`Delete ${candidate.name} from the pipeline?`)) {
@@ -1045,16 +1185,54 @@ initial={{ opacity: 0, y: 16 }}
                               <Trash2 className="w-3.5 h-3.5" />
                               Delete
                             </button>
+
+                            {/* F4: Undo Last Status */}
+                            {onRevertStatus && candidate.statusHistory && candidate.statusHistory.length > 0 && (
+                              <button
+                                onClick={() => {
+                                  if (window.confirm(`Undo the last status change for ${candidate.name}? This will revert them from "${candidate.status}" back to "${candidate.statusHistory![candidate.statusHistory!.length - 1]}".`)) {
+                                    runAction(actionEmail, () => onRevertStatus(actionEmail, candidate.jobId));
+                                  }
+                                }}
+                                disabled={busyEmail === actionEmail}
+                                className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#6b7063] rounded-lg hover:bg-[#f7f6f3] hover:text-[#1c1c1a] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
+                                title={`Undo: revert to "${candidate.statusHistory[candidate.statusHistory.length - 1]}"`}
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                                Undo Last Status
+                              </button>
+                            )}
                           </div>
                         </div>
 
                         {/* F1: Outreach Email Editable Area & F2: Standalone Internal Notes / Feedback */}
                         <div className="grid md:grid-cols-2 gap-4">
-                          {/* F1: Editable Outreach email text area */}
+                          {/* F6: Editable Outreach email text area */}
                           <div className="bg-white border border-[#e4e1da] rounded-xl p-4 shadow-sm space-y-3">
                             <div className="flex items-center justify-between">
                               <span className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Outreach Recruitment Pitch</span>
                               <span className="text-[10px] text-[#2d6a55] font-semibold">Draft</span>
+                            </div>
+                            {/* F6: Template chips */}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[10px] text-[#a8a49d] font-semibold uppercase tracking-wider mr-1 flex-shrink-0">Templates:</span>
+                              {OUTREACH_TEMPLATES.map((template) => (
+                                <button
+                                  key={template.label}
+                                  type="button"
+                                  onClick={() => setEditedOutreach(prev => ({
+                                    ...prev,
+                                    [candidate.email]: template.generate(
+                                      candidate.name || 'there',
+                                      job?.title || 'this position'
+                                    )
+                                  }))}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-[#e4e1da] bg-[#f7f6f3] text-[10px] font-semibold text-[#6b7063] hover:bg-[#e8f2ee] hover:border-[#2d6a55] hover:text-[#2d6a55] transition-colors cursor-pointer"
+                                >
+                                  <span>{template.emoji}</span>
+                                  {template.label}
+                                </button>
+                              ))}
                             </div>
                             <textarea
                               value={draftOutreach}
@@ -1063,6 +1241,7 @@ initial={{ opacity: 0, y: 16 }}
                               rows={5}
                               className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-xs text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55] resize-none"
                             />
+
                             <div className="text-right">
                               <button
                                 onClick={saveOutreachAndFeedbackFields}

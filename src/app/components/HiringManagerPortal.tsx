@@ -94,6 +94,7 @@ export interface ScrapedCandidate {
   };
   agentWarnings?: string[];
   lastAgentError?: string;
+  statusHistory?: string[];
 }
 
 interface AuthUser {
@@ -218,7 +219,8 @@ export function HiringManagerPortal() {
           outreachHistory: c.outreach_history || [],
           interviewSlot: c.interview_slot,
           agentWarnings: c.agent_warnings || [],
-          lastAgentError: c.last_agent_error || ''
+          lastAgentError: c.last_agent_error || '',
+          statusHistory: c.status_history || []
         }));
         setCandidates(mapped);
       }
@@ -292,6 +294,19 @@ export function HiringManagerPortal() {
       body: JSON.stringify({ status, position_id: positionId })
     });
     if (!res.ok) throw new Error('Failed to update candidate status.');
+    await fetchCandidates();
+  };
+
+  const revertCandidateStatusByEmail = async (email: string, positionId?: number) => {
+    const res = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(email)}/revert-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ position_id: positionId })
+    });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null);
+      throw new Error(errorData?.detail || 'Failed to revert candidate status.');
+    }
     await fetchCandidates();
   };
 
@@ -498,6 +513,7 @@ export function HiringManagerPortal() {
                 onReject={rejectCandidateByEmail}
                 onScheduleInterview={scheduleInterviewByEmail}
                 onUpdateOutreachNotes={updateCandidateOutreachNotesByEmail}
+                onRevertStatus={revertCandidateStatusByEmail}
               />
             }
           />

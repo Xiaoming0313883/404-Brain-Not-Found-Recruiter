@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Calendar, momentLocalizer, Views } from 'react-big-calendar';
 import moment from 'moment';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
-import { CalendarCheck, Clock, MapPin, User, AlertTriangle, Send, Loader2, CheckCircle2, X } from 'lucide-react';
+import { CalendarCheck, Clock, MapPin, User, AlertTriangle, Send, Loader2, CheckCircle2, X, Mail, Phone } from 'lucide-react';
 import { ScrapedCandidate } from '../HiringManagerPortal';
 import { Job } from '../HiringManagerPortal';
 
@@ -313,6 +313,10 @@ export function InterviewCalendar({ jobs, candidates, onScheduleInterview }: Pro
               endAccessor="end"
               eventPropGetter={eventStyleGetter}
               onSelectEvent={(event) => setSelectedEvent(event as CalendarEvent)}
+              tooltipAccessor={(event) => {
+                const e = event as CalendarEvent;
+                return `${e.resource.candidate.name} — ${e.resource.slot.date} at ${e.resource.slot.time}${e.resource.isConflict ? ' ⚠ Conflict' : ''}`;
+              }}
               style={{ fontFamily: 'Inter, sans-serif', fontSize: '13px' }}
             />
           </div>
@@ -323,33 +327,61 @@ export function InterviewCalendar({ jobs, candidates, onScheduleInterview }: Pro
               <div className="bg-white rounded-2xl p-6 shadow-xl max-w-sm w-full" onClick={e => e.stopPropagation()}>
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
-                      <User className="w-5 h-5 text-[#2d6a55]" />
+                    <div className="w-10 h-10 bg-[#e8f2ee] rounded-xl flex items-center justify-center text-[#2d6a55] font-semibold text-lg flex-shrink-0">
+                      {selectedEvent.resource.candidate.name.charAt(0).toUpperCase()}
                     </div>
                     <div>
                       <p className="font-semibold text-[#1c1c1a]">{selectedEvent.resource.candidate.name}</p>
-                      <p className="text-xs text-[#6b7063]">{selectedEvent.resource.candidate.email}</p>
+                      <span className={`inline-block mt-0.5 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                        selectedEvent.resource.candidate.status === 'interview_scheduled' ? 'bg-[#eef2ff] text-[#3730a3]' :
+                        selectedEvent.resource.candidate.status === 'completed' ? 'bg-[#fdf8ee] text-[#c9a84c]' :
+                        selectedEvent.resource.candidate.status === 'hired' ? 'bg-[#e8f2ee] text-[#245747]' :
+                        selectedEvent.resource.candidate.status === 'screening' ? 'bg-[#fdf0e6] text-[#c25a2a]' :
+                        'bg-[#f0ede8] text-[#a8a49d]'
+                      }`}>
+                        {selectedEvent.resource.candidate.status === 'interview_scheduled' ? 'Interview Scheduled' :
+                         selectedEvent.resource.candidate.status === 'completed' ? 'Completed' :
+                         selectedEvent.resource.candidate.status === 'hired' ? 'Hired' :
+                         selectedEvent.resource.candidate.status === 'screening' ? 'Screening' :
+                         selectedEvent.resource.candidate.status}
+                      </span>
                     </div>
                   </div>
-                  <button onClick={() => setSelectedEvent(null)} className="text-[#a8a49d] hover:text-[#1c1c1a]">
+                  <button onClick={() => setSelectedEvent(null)} className="text-[#a8a49d] hover:text-[#1c1c1a] transition-colors">
                     <X className="w-4 h-4" />
                   </button>
                 </div>
-                <div className="space-y-2 text-sm">
+                <div className="space-y-2.5 text-sm">
+                  {selectedEvent.resource.job && (
+                    <div className="flex items-center gap-2 text-[#6b7063]">
+                      <User className="w-4 h-4 text-[#2d6a55] flex-shrink-0" />
+                      <span className="font-medium text-[#1c1c1a]">{selectedEvent.resource.job.title}</span>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 text-[#6b7063]">
-                    <CalendarCheck className="w-4 h-4 text-[#2d6a55]" />
+                    <CalendarCheck className="w-4 h-4 text-[#2d6a55] flex-shrink-0" />
                     <span>{selectedEvent.resource.slot.date} at {selectedEvent.resource.slot.time}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[#6b7063]">
-                    <MapPin className="w-4 h-4 text-[#2d6a55]" />
+                    <MapPin className="w-4 h-4 text-[#2d6a55] flex-shrink-0" />
                     <span>{selectedEvent.resource.slot.location}</span>
                   </div>
-                  {selectedEvent.resource.job && (
+
+                  {/* Contact Details */}
+                  <div className="border-t border-[#e4e1da] pt-2.5 mt-2.5 space-y-2">
+                    <p className="text-[10px] text-[#a8a49d] uppercase tracking-wider font-semibold">Contact Details</p>
                     <div className="flex items-center gap-2 text-[#6b7063]">
-                      <User className="w-4 h-4 text-[#2d6a55]" />
-                      <span>{selectedEvent.resource.job.title}</span>
+                      <Mail className="w-4 h-4 text-[#2d6a55] flex-shrink-0" />
+                      <span className="text-xs truncate">{selectedEvent.resource.candidate.managementEmail || selectedEvent.resource.candidate.email}</span>
                     </div>
-                  )}
+                    {selectedEvent.resource.candidate.phone && (
+                      <div className="flex items-center gap-2 text-[#6b7063]">
+                        <Phone className="w-4 h-4 text-[#2d6a55] flex-shrink-0" />
+                        <span className="text-xs">{selectedEvent.resource.candidate.phone}</span>
+                      </div>
+                    )}
+                  </div>
+
                   {selectedEvent.resource.slot.notes && (
                     <p className="text-xs text-[#a8a49d] mt-2 border-t border-[#e4e1da] pt-2">{selectedEvent.resource.slot.notes}</p>
                   )}
