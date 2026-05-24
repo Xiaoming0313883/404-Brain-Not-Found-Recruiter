@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Job, ScrapedCandidate } from '../HiringManagerPortal';
 import { Plus, Briefcase, Calendar, X, Loader2, Edit3, Power, Bot, Send, Clock, Users, Trash2 } from 'lucide-react';
 
@@ -50,6 +50,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
   const [title, setTitle] = useState('');
   const [department, setDepartment] = useState('');
   const [description, setDescription] = useState('');
+  const [address, setAddress] = useState('');
   const [active, setActive] = useState(true);
   const [openTime, setOpenTime] = useState('');
   const [endTime, setEndTime] = useState('');
@@ -67,6 +68,11 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
   const [chatMessages, setChatMessages] = useState<Array<{ role: 'agent' | 'manager'; content: string }>>([
     { role: 'agent', content: 'Enter the basic position details, then I will ask adaptive follow-up questions and prefill editable draft values.' }
   ]);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [chatMessages, isAgentThinking]);
 
   const startCreate = () => {
     resetForm();
@@ -94,6 +100,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
         active,
         openTime,
         endTime,
+        address,
         sourcingCriteria: buildSourcingCriteria(),
         intakeChat: chatMessages.map(message => ({ role: message.role, content: message.content }))
       });
@@ -111,6 +118,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
     setDepartment('');
     setDescription('');
     setActive(true);
+    setAddress('');
     setOpenTime('');
     setEndTime('');
     setRequirements([]);
@@ -134,6 +142,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
     setDepartment(job.department);
     setDescription(job.description);
     setActive(job.active ?? true);
+    setAddress(job.address || '');
     setOpenTime(toDateTimeLocalValue(job.openTime));
     setEndTime(toDateTimeLocalValue(job.endTime));
     setRequirements(job.requirements);
@@ -162,6 +171,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
         active,
         openTime,
         endTime,
+        address,
         sourcingCriteria: buildSourcingCriteria(),
         intakeChat: chatMessages.map(message => ({ role: message.role, content: message.content }))
       });
@@ -426,6 +436,27 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
             </div>
           </div>
 
+          <div>
+            <label className="block mb-1.5 text-sm text-[#1c1c1a]">Job Address</label>
+            <input
+              type="text"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder="Office address or work location"
+              className={inputClass}
+            />
+            {address && (
+              <div className="mt-3 overflow-hidden rounded-xl border border-[#e4e1da]">
+                <iframe
+                  title="Job address map"
+                  src={`https://www.google.com/maps?q=${encodeURIComponent(address)}&output=embed`}
+                  className="w-full h-48"
+                  loading="lazy"
+                />
+              </div>
+            )}
+          </div>
+
           <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-5">
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 bg-[#e8f2ee] rounded-lg flex items-center justify-center flex-shrink-0">
@@ -441,13 +472,31 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
           </div>
 
           <div className="pt-2 border-t border-[#e4e1da]">
-            <button
-              onClick={beginAdaptiveIntake}
-              disabled={!basicInfoReady}
-              className="w-full py-3 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors"
-            >
-              Continue to AI Intake
-            </button>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <button
+                onClick={() => {
+                  setBuilderStep('intake');
+                  setIsIntakeComplete(true);
+                  setIntakeContext(current => ({
+                    ...current,
+                    generated_description: description || `${title} role in ${department}.`,
+                    generated_requirements: requirements.length ? requirements : [`Relevant experience for ${title}`],
+                    agent_summary: 'Manual edit mode selected. Saved values will come from the hiring manager edits below.'
+                  }));
+                }}
+                disabled={!basicInfoReady}
+                className="w-full py-3 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f7f6f3] disabled:bg-[#f0ede8] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors"
+              >
+                Manual Edit
+              </button>
+              <button
+                onClick={beginAdaptiveIntake}
+                disabled={!basicInfoReady}
+                className="w-full py-3 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors"
+              >
+                AI Chatbot Intake
+              </button>
+            </div>
           </div>
           </>
           )}
@@ -490,6 +539,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
                   </div>
                 </div>
               )}
+              <div ref={chatEndRef} />
             </div>
 
             {!isIntakeComplete ? (
@@ -714,6 +764,16 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
               <p className="text-sm text-[#6b7063] mb-4 leading-relaxed">
                 {job.description}
               </p>
+              {job.address && (
+                <div className="mb-4 overflow-hidden rounded-xl border border-[#e4e1da]">
+                  <iframe
+                    title={`${job.title} map`}
+                    src={`https://www.google.com/maps?q=${encodeURIComponent(job.address)}&output=embed`}
+                    className="w-full h-44"
+                    loading="lazy"
+                  />
+                </div>
+              )}
 
               <div className="flex flex-wrap gap-2">
                 {job.requirements.map((req, index) => (

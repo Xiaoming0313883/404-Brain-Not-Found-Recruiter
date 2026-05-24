@@ -1,5 +1,6 @@
 import { Link } from 'react-router';
 import { ArrowRight, Users, Briefcase } from 'lucide-react';
+import { BrandLogo } from './BrandLogo';
 
 export function PortalSelector() {
   return (
@@ -8,11 +9,12 @@ export function PortalSelector() {
 
         {/* Header */}
         <div className="text-center mb-16">
+          <BrandLogo className="justify-center mb-6" imageClassName="h-20 md:h-24" />
           <p className="text-xs tracking-[0.2em] uppercase text-[#2d6a55] mb-5">
             AI-Powered Recruitment
           </p>
           <h1 className="text-[#1c1c1a] mb-4">
-            Intelligent Recruiter Workspace
+            404Hire Recruitment Workspace
           </h1>
           <p className="text-[#6b7063] max-w-md mx-auto leading-relaxed">
             Hybrid dual-portal system with bias mitigation and trajectory-based candidate evaluation.

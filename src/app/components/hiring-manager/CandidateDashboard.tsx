@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { Job, ScrapedCandidate } from '../HiringManagerPortal';
 import {
   Users,
@@ -26,6 +26,7 @@ import * as Switch from '@radix-ui/react-switch';
 import * as Accordion from '@radix-ui/react-accordion';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ZAxis } from 'recharts';
 import { motion } from 'motion/react';
+import { PdfResumeViewer } from '../PdfResumeViewer';
 
 interface Props {
   jobs: Job[];
@@ -40,12 +41,17 @@ interface Props {
   onReject: (email: string, positionId?: number, hrFeedback?: string, rejectionMessage?: string) => Promise<void>;
   onScheduleInterview: (email: string, positionId: number | undefined, date: string, time: string, location: string, notes?: string) => Promise<void>;
   onUpdateOutreachNotes: (email: string, positionId?: number, outreachEmail?: string, hrFeedback?: string) => Promise<void>;
-  onUpdateAccount: (email: string, updates: { emailVerified?: boolean; profileVerified?: boolean }) => Promise<void>;
-  onResetPassword: (email: string) => Promise<string>;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1$/, '');
+
+const getVisiblePages = (currentPage: number, totalPages: number) => {
+  const pages = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+  return Array.from(pages)
+    .filter(page => page >= 1 && page <= totalPages)
+    .sort((a, b) => a - b);
+};
 
 export function CandidateDashboard({
   jobs,
@@ -59,14 +65,25 @@ export function CandidateDashboard({
   onDelete,
   onReject,
   onScheduleInterview,
-  onUpdateOutreachNotes,
-  onUpdateAccount,
-  onResetPassword
+  onUpdateOutreachNotes
 }: Props) {
   const [anonymizedMode, setAnonymizedMode] = useState(false);
   const [busyEmail, setBusyEmail] = useState('');
+  const actionLocksRef = useRef<Set<string>>(new Set());
   const [actionError, setActionError] = useState('');
   const [selectedPositionId, setSelectedPositionId] = useState<number | 'all'>('all');
+
+  const openPdfInBrowser = async (url: string) => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const win = window.open(blobUrl, '_blank');
+      if (!win) window.open(url, '_blank');
+    } catch {
+      window.open(url, '_blank');
+    }
+  };
 
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'match' | 'match-asc' | 'velocity' | 'name'>('match');
@@ -74,7 +91,7 @@ export function CandidateDashboard({
   const [accountSearch, setAccountSearch] = useState('');
   const [accountFilter, setAccountFilter] = useState<'all' | 'verified' | 'unverified' | 'password_set' | 'password_missing'>('all');
   const [passwordResetMessage, setPasswordResetMessage] = useState('');
-  const pageSize = 50;
+  const pageSize = 10;
 
   const [editedOutreach, setEditedOutreach] = useState<Record<string, string>>({});
   const [editedFeedback, setEditedFeedback] = useState<Record<string, string>>({});
@@ -212,6 +229,7 @@ export function CandidateDashboard({
 
   const totalFiltered = sortedCandidates.length;
   const totalPages = Math.ceil(totalFiltered / pageSize);
+  const visiblePages = getVisiblePages(currentPage, totalPages);
 
   // Paginate sorted & filtered candidates
   const paginatedCandidates = useMemo(() => {
@@ -220,6 +238,8 @@ export function CandidateDashboard({
   }, [sortedCandidates, currentPage, pageSize]);
 
   const runAction = async (email: string, action: () => Promise<void> | void) => {
+    if (actionLocksRef.current.has(email)) return;
+    actionLocksRef.current.add(email);
     setBusyEmail(email);
     setActionError('');
     try {
@@ -227,7 +247,10 @@ export function CandidateDashboard({
     } catch (error: any) {
       setActionError(error.message || 'Candidate action failed.');
     } finally {
-      setBusyEmail('');
+      window.setTimeout(() => {
+        actionLocksRef.current.delete(email);
+        setBusyEmail(current => current === email ? '' : current);
+      }, 900);
     }
   };
 
@@ -557,156 +580,6 @@ export function CandidateDashboard({
         )}
       </motion.div>
 
-      {/* Candidate Account Management */}
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, delay: 0.45 }}
-        className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm"
-      >
-        <div className="flex flex-col gap-4 mb-5 border-b border-[#e4e1da] pb-5">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
-                <UserCog className="w-4.5 h-4.5 text-[#2d6a55]" style={{ width: '18px', height: '18px' }} />
-              </div>
-              <div>
-                <h3 className="text-[#1c1c1a] font-semibold text-base">Candidate Account Management</h3>
-                <p className="text-xs text-[#6b7063]">
-                  {filteredAccounts.length} of {candidateAccounts.length} registered {candidateAccounts.length === 1 ? 'account' : 'accounts'}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                value={accountSearch}
-                onChange={(event) => setAccountSearch(event.target.value)}
-                placeholder="Search name or email"
-                className="min-w-56 px-3 py-2 bg-white border border-[#e4e1da] rounded-lg text-xs text-[#1c1c1a] placeholder-[#a8a49d] focus:outline-none focus:border-[#2d6a55]"
-              />
-              <select
-                value={accountFilter}
-                onChange={(event) => setAccountFilter(event.target.value as typeof accountFilter)}
-                className="px-3 py-2 bg-white border border-[#e4e1da] rounded-lg text-xs text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
-              >
-                <option value="all">All accounts</option>
-                <option value="verified">Email verified</option>
-                <option value="unverified">Email unverified</option>
-                <option value="password_set">Password set</option>
-                <option value="password_missing">Password missing</option>
-              </select>
-            </div>
-          </div>
-
-          {passwordResetMessage && (
-            <div className="flex items-start justify-between gap-3 rounded-xl border border-[#f2d3a4] bg-[#fff8ed] px-4 py-3 text-xs text-[#8a5a14]">
-              <span>{passwordResetMessage}</span>
-              <button onClick={() => setPasswordResetMessage('')} className="text-[#8a5a14] hover:text-[#5a3b0d] font-bold leading-none">x</button>
-            </div>
-          )}
-        </div>
-
-        {filteredAccounts.length === 0 ? (
-          <div className="text-center py-10">
-            <div className="w-12 h-12 bg-[#f0ede8] rounded-2xl flex items-center justify-center mx-auto mb-3">
-              <UserCog className="w-6 h-6 text-[#c8c4bc]" />
-            </div>
-            <p className="text-sm text-[#1c1c1a] mb-1 font-semibold">No candidate accounts match this filter</p>
-            <p className="text-xs text-[#6b7063]">Try a different account status or search term.</p>
-          </div>
-        ) : (
-          <div className="space-y-2.5">
-            {filteredAccounts.map(candidate => {
-              const accountEmail = getActionEmail(candidate);
-              const displayName = getDisplayName(candidate);
-              const displayEmail = anonymizedMode ? getDisplayEmail(candidate) : accountEmail;
-              const isBusy = busyEmail === accountEmail;
-              return (
-                <div key={accountEmail} className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 p-4 bg-[#f7f6f3] border border-[#e4e1da] rounded-xl">
-                  <div className="flex items-center gap-3 min-w-0">
-                    {candidate.profilePictureUrl ? (
-                      <img
-                        src={`${API_ORIGIN}${candidate.profilePictureUrl}`}
-                        alt={displayName}
-                        className="w-11 h-11 rounded-xl object-cover border border-[#e4e1da]"
-                      />
-                    ) : (
-                      <div className="w-11 h-11 bg-[#e8f2ee] rounded-xl flex items-center justify-center text-[#2d6a55] font-semibold flex-shrink-0">
-                        {displayName.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    <div className="min-w-0">
-                      <p className="text-sm text-[#1c1c1a] font-semibold truncate">{displayName}</p>
-                      <p className="text-xs text-[#6b7063] truncate">{displayEmail}</p>
-                      <div className="flex flex-wrap gap-1.5 mt-2">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${candidate.emailVerified ? 'bg-[#e8f2ee] text-[#2d6a55]' : 'bg-[#fff8ed] text-[#8a5a14]'}`}>
-                          {candidate.emailVerified ? 'Email verified' : 'Email unverified'}
-                        </span>
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${candidate.hasPassword ? 'bg-[#e8eef8] text-[#3a5d9e]' : 'bg-[#fdf2f2] text-[#b91c1c]'}`}>
-                          {candidate.hasPassword ? 'Password set' : 'No password'}
-                        </span>
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${candidate.profileVerified ? 'bg-[#e8f2ee] text-[#2d6a55]' : 'bg-[#f0ede8] text-[#6b7063]'}`}>
-                          {candidate.profileVerified ? 'Profile verified' : 'Profile pending'}
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-white text-[#6b7063] border border-[#e4e1da]">
-                          {candidate.applicationCount || 0} {(candidate.applicationCount || 0) === 1 ? 'application' : 'applications'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 xl:justify-end">
-                    <button
-                      onClick={() => runAction(accountEmail, () => onUpdateAccount(accountEmail, { emailVerified: !candidate.emailVerified }))}
-                      disabled={isBusy}
-                      className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f0ede8] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
-                    >
-                      <ShieldCheck className="w-3.5 h-3.5" />
-                      {candidate.emailVerified ? 'Unverify Email' : 'Verify Email'}
-                    </button>
-                    <button
-                      onClick={() => runAction(accountEmail, () => onUpdateAccount(accountEmail, { profileVerified: !candidate.profileVerified }))}
-                      disabled={isBusy}
-                      className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-lg hover:bg-[#f0ede8] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
-                    >
-                      <UserCheck className="w-3.5 h-3.5" />
-                      {candidate.profileVerified ? 'Mark Pending' : 'Verify Profile'}
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (!window.confirm(`Reset password for ${candidate.name}? A temporary password will be generated.`)) return;
-                        runAction(accountEmail, async () => {
-                          const temporaryPassword = await onResetPassword(accountEmail);
-                          setPasswordResetMessage(`Temporary password for ${candidate.name}: ${temporaryPassword}`);
-                        });
-                      }}
-                      disabled={isBusy}
-                      className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#e4e1da] text-[#3a5d9e] rounded-lg hover:bg-[#e8eef8] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
-                    >
-                      <KeyRound className="w-3.5 h-3.5" />
-                      Reset Password
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (window.confirm(`Delete candidate account for ${candidate.name}? This removes their profile and application records.`)) {
-                          runAction(accountEmail, () => onDelete(accountEmail));
-                        }
-                      }}
-                      disabled={isBusy}
-                      className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-[#f0c9c9] text-[#b91c1c] rounded-lg hover:bg-[#fdf2f2] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
-                    >
-                      {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                      Delete Account
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </motion.div>
-
       {/* Active Pipeline */}
       <motion.div
 initial={{ opacity: 0, y: 16 }}
@@ -908,6 +781,9 @@ initial={{ opacity: 0, y: 16 }}
                                    candidate.status === 'interview_scheduled' ? 'Interview Scheduled' :
                                    'Staged'}
                                 </span>
+                                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-white border border-[#e4e1da] text-[#6b7063] whitespace-nowrap">
+                                  {candidate.sourceMethod === 'prototype_auto_source' ? 'LinkedIn auto search' : candidate.sourceMethod === 'manual_authenticated' ? 'LinkedIn authenticated' : candidate.sourceType === 'linkedin' ? 'LinkedIn manual add' : 'Inbound resume'}
+                                </span>
                               </div>
                               <p className="text-xs text-[#6b7063] truncate">{neutralizeText(candidate.headline)}</p>
                               <p className="text-xs text-[#a8a49d] mt-0.5">{job?.title || 'Sourced Position'}</p>
@@ -998,6 +874,11 @@ initial={{ opacity: 0, y: 16 }}
                         {candidate.sourceWarning && (
                           <div className="bg-[#fff8ed] border border-[#f2d3a4] rounded-xl p-4 shadow-sm">
                             <p className="text-xs tracking-wider uppercase text-[#8a5a14] mb-2 font-semibold">LinkedIn Source Verification</p>
+                            <div className="flex flex-wrap gap-2 mb-2">
+                              <span className="px-2 py-0.5 rounded-full bg-white border border-[#f2d3a4] text-xs font-semibold text-[#8a5a14]">
+                                {candidate.sourceMethod === 'prototype_auto_source' ? 'LinkedIn auto search' : candidate.sourceMethod === 'manual_authenticated' ? 'LinkedIn authenticated' : candidate.sourceType === 'linkedin' ? 'LinkedIn manual add' : 'Inbound resume'}
+                              </span>
+                            </div>
                             <p className="text-sm text-[#6b7063] leading-relaxed">{candidate.sourceWarning}</p>
                             {candidate.sourceStatus && (
                               <p className="text-xs text-[#a8a49d] mt-2">Extraction status: {candidate.sourceStatus}</p>
@@ -1059,10 +940,10 @@ initial={{ opacity: 0, y: 16 }}
                                 <button
                                   onClick={() => {
                                     setScheduleTarget(candidate);
-                                    setScheduleDate('');
-                                    setScheduleTime('');
-                                    setScheduleLocation('To be confirmed');
-                                    setScheduleNotes('');
+                                    setScheduleDate(candidate.interviewSlot?.date || '');
+                                    setScheduleTime(candidate.interviewSlot?.time || '');
+                                    setScheduleLocation(candidate.interviewSlot?.location || 'To be confirmed');
+                                    setScheduleNotes(candidate.interviewSlot?.notes || '');
                                   }}
                                   disabled={busyEmail === actionEmail}
                                   className="inline-flex items-center gap-1.5 px-3 py-2 bg-[#eef2ff] border border-[#c7d2fe] text-[#3730a3] rounded-lg hover:bg-[#e0e7ff] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
@@ -1109,10 +990,10 @@ initial={{ opacity: 0, y: 16 }}
                                   <button
                                     onClick={() => {
                                       setScheduleTarget(candidate);
-                                      setScheduleDate('');
-                                      setScheduleTime('');
-                                      setScheduleLocation('To be confirmed');
-                                      setScheduleNotes('');
+                                      setScheduleDate(candidate.interviewSlot?.date || '');
+                                      setScheduleTime(candidate.interviewSlot?.time || '');
+                                      setScheduleLocation(candidate.interviewSlot?.location || 'To be confirmed');
+                                      setScheduleNotes(candidate.interviewSlot?.notes || '');
                                     }}
                                     disabled={busyEmail === actionEmail}
                                     className="inline-flex items-center gap-2 px-3 py-2 bg-[#eef2ff] border border-[#c7d2fe] text-[#3730a3] rounded-lg hover:bg-[#e0e7ff] disabled:opacity-50 text-xs font-medium transition-colors cursor-pointer"
@@ -1192,6 +1073,20 @@ initial={{ opacity: 0, y: 16 }}
                                 Save Outreach
                               </button>
                             </div>
+                            {candidate.outreachHistory?.length ? (
+                              <div className="border-t border-[#e4e1da] pt-3 space-y-2">
+                                <p className="text-[10px] text-[#a8a49d] uppercase tracking-wider font-semibold">Message History</p>
+                                {candidate.outreachHistory.slice(0, 3).map(item => (
+                                  <div key={item.id} className="rounded-lg bg-[#f7f6f3] border border-[#e4e1da] p-2">
+                                    <div className="flex items-center justify-between gap-2 mb-1">
+                                      <span className={`text-[10px] font-semibold uppercase ${item.status === 'sent' ? 'text-[#2d6a55]' : item.status === 'failed' ? 'text-[#b91c1c]' : 'text-[#8a5a14]'}`}>{item.status}</span>
+                                      <span className="text-[10px] text-[#a8a49d]">{new Date(item.sent_at).toLocaleString()}</span>
+                                    </div>
+                                    <p className="text-[11px] text-[#6b7063] whitespace-pre-wrap line-clamp-3">{item.message}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
 
                           {/* F2: Standalone Internal notes / HR feedback */}
@@ -1314,14 +1209,9 @@ initial={{ opacity: 0, y: 16 }}
                             </summary>
                             <div className="px-4 pb-4 pt-2 border-t border-[#e4e1da]">
                               {candidate.resumeUrl && (
-                                <a
-                                  href={`${API_ORIGIN}${candidate.resumeUrl}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex items-center gap-2 px-3 py-2 mb-3 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] text-xs font-medium transition-colors"
-                                >
-                                  Open Original PDF
-                                </a>
+                                <div className="mb-3">
+                                  <PdfResumeViewer url={`${API_ORIGIN}${candidate.resumeUrl}`} filename={candidate.resumeFilename} />
+                                </div>
                               )}
                               {candidate.resumeText && (
                                 <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs text-[#6b7063] leading-relaxed font-sans">
@@ -1457,9 +1347,9 @@ initial={{ opacity: 0, y: 16 }}
                                       )}
                                     </div>
                                     <p className="text-xs text-[#1c1c1a] font-medium leading-relaxed">{item.question}</p>
-                                    {item.candidate_answer_excerpt && (
+                                    {(item.candidate_answer || item.candidate_answer_excerpt) && (
                                       <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">
-                                        <span className="font-semibold text-[#1c1c1a]">Candidate answer:</span> {item.candidate_answer_excerpt}
+                                        <span className="font-semibold text-[#1c1c1a]">Candidate answer:</span> {item.candidate_answer || item.candidate_answer_excerpt}
                                       </p>
                                     )}
                                     {item.requirement_focus && (
@@ -1468,6 +1358,46 @@ initial={{ opacity: 0, y: 16 }}
                                       </p>
                                     )}
                                     <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">{item.critique}</p>
+                                    {item.strengths?.length ? (
+                                      <div className="mt-3">
+                                        <p className="text-[10px] text-[#2d6a55] uppercase tracking-wider font-semibold mb-1.5">Evidence supporting the score</p>
+                                        <ul className="space-y-1">
+                                          {item.strengths.map((strength: string, strengthIndex: number) => (
+                                            <li key={strengthIndex} className="text-xs text-[#3d5a4a] leading-relaxed flex items-start gap-1.5">
+                                              <CheckCircle2 className="w-3 h-3 text-[#2d6a55] flex-shrink-0 mt-0.5" />
+                                              <span>{strength}</span>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : null}
+                                    {item.weaknesses?.length ? (
+                                      <div className="mt-3">
+                                        <p className="text-[10px] text-[#c25a2a] uppercase tracking-wider font-semibold mb-1.5">Risks or missing proof</p>
+                                        <ul className="space-y-1">
+                                          {item.weaknesses.map((weakness: string, weaknessIndex: number) => (
+                                            <li key={weaknessIndex} className="text-xs text-[#6b7063] leading-relaxed flex items-start gap-1.5">
+                                              <AlertCircle className="w-3 h-3 text-[#c25a2a] flex-shrink-0 mt-0.5" />
+                                              <span>{weakness}</span>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : null}
+                                    {(item.suggested_improvement || item.hiring_manager_note) && (
+                                      <div className="mt-3 rounded-lg border border-[#e4e1da] bg-[#f7f6f3] p-3">
+                                        {item.hiring_manager_note && (
+                                          <p className="text-xs text-[#1c1c1a] leading-relaxed">
+                                            <span className="font-semibold">Hiring manager note:</span> {item.hiring_manager_note}
+                                          </p>
+                                        )}
+                                        {item.suggested_improvement && (
+                                          <p className="text-xs text-[#6b7063] leading-relaxed mt-2">
+                                            <span className="font-semibold text-[#1c1c1a]">Suggested probe:</span> {item.suggested_improvement}
+                                          </p>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -1502,6 +1432,19 @@ initial={{ opacity: 0, y: 16 }}
                               <div><span className="text-[#6b7280]">Location</span><p className="text-[#1c1c1a] font-medium mt-0.5">{candidate.interviewSlot.location}</p></div>
                               {candidate.interviewSlot.notes && <div className="col-span-2 mt-1.5"><span className="text-[#6b7280]">Notes</span><p className="text-[#1c1c1a] font-medium mt-0.5 leading-relaxed">{candidate.interviewSlot.notes}</p></div>}
                             </div>
+                            <button
+                              onClick={() => {
+                                setScheduleTarget(candidate);
+                                setScheduleDate(candidate.interviewSlot?.date || '');
+                                setScheduleTime(candidate.interviewSlot?.time || '');
+                                setScheduleLocation(candidate.interviewSlot?.location || 'To be confirmed');
+                                setScheduleNotes(candidate.interviewSlot?.notes || '');
+                              }}
+                              className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 bg-white border border-[#c7d2fe] text-[#3730a3] rounded-lg hover:bg-[#e0e7ff] text-xs font-medium transition-colors"
+                            >
+                              <Calendar className="w-3.5 h-3.5" />
+                              Edit Interview Time
+                            </button>
                           </div>
                         )}
 
@@ -1532,7 +1475,7 @@ initial={{ opacity: 0, y: 16 }}
             <span className="text-xs text-[#6b7063]">
               Showing {Math.min(totalFiltered, (currentPage - 1) * pageSize + 1)} to {Math.min(totalFiltered, currentPage * pageSize)} of {totalFiltered} candidates
             </span>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-1.5">
               <button
                 disabled={currentPage === 1}
                 onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
@@ -1540,6 +1483,21 @@ initial={{ opacity: 0, y: 16 }}
               >
                 Previous
               </button>
+              {visiblePages.map((page, index) => (
+                <span key={page} className="inline-flex items-center gap-1.5">
+                  {index > 0 && page - visiblePages[index - 1] > 1 && <span className="px-1 text-xs text-[#a8a49d]">...</span>}
+                  <button
+                    onClick={() => setCurrentPage(page)}
+                    className={`min-w-8 px-2.5 py-1.5 border rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                      page === currentPage
+                        ? 'border-[#2d6a55] bg-[#e8f2ee] text-[#2d6a55]'
+                        : 'border-[#e4e1da] bg-white text-[#6b7063] hover:bg-[#f7f6f3]'
+                    }`}
+                  >
+                    {page}
+                  </button>
+                </span>
+              ))}
               <button
                 disabled={currentPage === totalPages}
                 onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}

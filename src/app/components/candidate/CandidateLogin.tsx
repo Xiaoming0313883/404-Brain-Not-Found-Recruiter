@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router';
 import { Lock, Mail, Upload, ArrowRight, ArrowLeft, Loader2, ShieldCheck } from 'lucide-react';
 import { CandidateData } from '../CandidatePortal';
+import { BrandLogo } from '../BrandLogo';
 import * as Progress from '@radix-ui/react-progress';
 
 interface Props {
@@ -37,10 +38,12 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [pendingVerification, setPendingVerification] = useState<CandidateData | null>(null);
+  const [emailVerificationMode, setEmailVerificationMode] = useState<'new' | 'existing' | null>(null);
   const [verificationCode, setVerificationCode] = useState('');
   const [prototypeVerificationCode, setPrototypeVerificationCode] = useState('');
   const [verificationMessage, setVerificationMessage] = useState('');
   const [isVerifyingEmail, setIsVerifyingEmail] = useState(false);
+  const [emailVerifiedForSignup, setEmailVerifiedForSignup] = useState(forceNewApplication);
   
   // Real active jobs fetched from backend
   const [jobs, setJobs] = useState<any[]>(mockJobs);
@@ -69,6 +72,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       setEmail(initialEmail);
       setCandidateType('inbound');
       setLookupComplete(true);
+      setEmailVerifiedForSignup(true);
     }
   }, [forceNewApplication, initialEmail]);
 
@@ -147,14 +151,19 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       education: data.profile_data?.education || [],
       recruitmentEmail: data.outreach_email,
       customQuestions: selectedApplication?.custom_questions || data.custom_questions,
-      sandboxAnswers: selectedApplication?.answers || data.answers,
+      sandboxAnswers: selectedApplication?.answers?.length ? selectedApplication.answers : (selectedApplication?.draft_answers || data.answers),
       score: (selectedApplication?.evaluation || data.evaluation)?.screening_score,
       evaluation: selectedApplication?.evaluation || data.evaluation,
       hrFeedback: selectedApplication?.hr_feedback || data.hr_feedback || '',
       rejectionMessage: selectedApplication?.rejection_message || data.rejection_message || '',
       rejectedAt: selectedApplication?.rejected_at || data.rejected_at,
       hiredAt: selectedApplication?.hired_at || data.hired_at,
-      interviewSlot: selectedApplication?.interview_slot || data.interview_slot
+      interviewSlot: selectedApplication?.interview_slot || data.interview_slot,
+      agentWarnings: data.agent_warnings || selectedApplication?.agent_warnings || [],
+      notifications: data.notifications || [],
+      sourceType: data.source_type,
+      sourceMethod: data.source_method,
+      lastAgentError: selectedApplication?.last_agent_error || data.last_agent_error || ''
     };
   };
 
@@ -263,10 +272,31 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
     });
   };
 
+  const startEmailVerification = async (targetEmail: string) => {
+    const response = await fetch(`${API_BASE_URL}/candidates/start-email-verification`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: targetEmail })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || 'Unable to start email verification.');
+    }
+    setPrototypeVerificationCode(data.prototype_verification_code || '');
+    setVerificationMessage(data.verification_sent
+      ? `A verification email was sent to ${targetEmail}.`
+      : 'Prototype mode: SMTP is not configured, so use the demo code below.');
+    return data;
+  };
+
   const handleEmailLookup = async () => {
     setErrorMessage('');
     setPassword('');
     setConfirmPassword('');
+    setVerificationCode('');
+    setPrototypeVerificationCode('');
+    setEmailVerificationMode(null);
+    setEmailVerifiedForSignup(false);
     if (!validateEmailInput()) return;
     try {
       const response = await fetch(`${API_BASE_URL}/candidates/lookup?email=${encodeURIComponent(email.trim())}`);
@@ -274,11 +304,18 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
         const data = await response.json();
         setLoadedCandidate(data);
         setCandidateType(data.status === 'invited' || data.is_sourced ? 'invited' : 'account');
-        setLookupComplete(true);
+        if (data.email_verified === false) {
+          await startEmailVerification(data.management_email || data.email);
+          setEmailVerificationMode('existing');
+          setLookupComplete(false);
+        } else {
+          setLookupComplete(true);
+        }
       } else if (response.status === 404) {
-        // Inbound applicant (not found in database yet)
+        await startEmailVerification(email.trim());
         setCandidateType('inbound');
-        setLookupComplete(true);
+        setEmailVerificationMode('new');
+        setLookupComplete(false);
       } else {
         const errorData = await response.json();
         throw new Error(errorData.detail || 'Unable to look up this email.');
@@ -292,6 +329,10 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
   const handleInboundSubmit = async () => {
     if (!fullName.trim() || !resume) return;
     if (!validateEmailInput()) return;
+    if (!emailVerifiedForSignup) {
+      setErrorMessage('Verify your email address before creating your candidate profile.');
+      return;
+    }
     if (!validatePassword()) return;
     if (resume.size > MAX_RESUME_BYTES) {
       setErrorMessage('Resume must be 10MB or smaller.');
@@ -349,7 +390,11 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
         education: data.profile_data?.education || [],
         applications: data.applications || [],
         customQuestions: data.custom_questions,
-        evaluation: data.evaluation
+        evaluation: data.evaluation,
+        agentWarnings: data.agent_warnings || [],
+        notifications: data.notifications || [],
+        sourceType: data.source_type,
+        sourceMethod: data.source_method
       };
 
       if (!data.email_verified) {
@@ -376,7 +421,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
   };
 
   const handleVerifyEmail = async () => {
-    if (!pendingVerification) return;
+    if (!pendingVerification && !emailVerificationMode) return;
     if (!verificationCode.trim()) {
       setErrorMessage('Enter the verification code from your email.');
       return;
@@ -384,7 +429,34 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
     setIsVerifyingEmail(true);
     setErrorMessage('');
     try {
-      const response = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(pendingVerification.email)}/verify-email`, {
+      if (emailVerificationMode) {
+        const response = await fetch(`${API_BASE_URL}/candidates/verify-pending-email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email.trim(), code: verificationCode.trim() })
+        });
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || 'Invalid verification code.');
+        }
+        const data = await response.json();
+        setPrototypeVerificationCode('');
+        setVerificationMessage('');
+        setVerificationCode('');
+        const mode = emailVerificationMode;
+        setEmailVerificationMode(null);
+        if (mode === 'existing') {
+          setLoadedCandidate(data);
+          setCandidateType(data.status === 'invited' || data.is_sourced ? 'invited' : 'account');
+          setLookupComplete(true);
+        } else {
+          setEmailVerifiedForSignup(true);
+          setCandidateType('inbound');
+          setLookupComplete(true);
+        }
+        return;
+      }
+      const response = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(pendingVerification!.email)}/verify-email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: verificationCode.trim() })
@@ -395,7 +467,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       }
       const data = await response.json();
       const verifiedCandidate = {
-        ...pendingVerification,
+        ...pendingVerification!,
         emailVerified: data.email_verified,
         profileVerified: data.profile_verified,
       };
@@ -409,10 +481,14 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
   };
 
   const handleResendVerification = async () => {
-    if (!pendingVerification) return;
+    if (!pendingVerification && !emailVerificationMode) return;
     setErrorMessage('');
     try {
-      const response = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(pendingVerification.email)}/resend-verification`, {
+      if (emailVerificationMode) {
+        await startEmailVerification(email.trim());
+        return;
+      }
+      const response = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(pendingVerification!.email)}/resend-verification`, {
         method: 'POST'
       });
       const data = await response.json();
@@ -421,7 +497,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       }
       setPrototypeVerificationCode(data.prototype_verification_code || '');
       setVerificationMessage(data.verification_sent
-        ? `A new verification email was sent to ${pendingVerification.email}.`
+        ? `A new verification email was sent to ${pendingVerification!.email}.`
         : 'Prototype mode: SMTP is not configured, so use the new demo code below.');
     } catch (err: any) {
       setErrorMessage(err.message || 'Unable to resend verification email.');
@@ -480,6 +556,39 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
     authenticate();
   };
 
+  const getAccountProgressInfo = (cand: any) => {
+    const status = cand.status;
+    const apps = cand.applications || [];
+    const latestApp = apps.length > 0 ? apps[apps.length - 1] : null;
+    const activeStatus = latestApp ? latestApp.status : status;
+
+    if (activeStatus === 'hired') {
+      return { percent: 100, label: '100% - Hired' };
+    }
+    if (activeStatus === 'completed') {
+      return { percent: 100, label: '100% - Screening Completed' };
+    }
+    if (activeStatus === 'rejected') {
+      return { percent: 100, label: '100% - Application Processed' };
+    }
+    if (activeStatus === 'interview_scheduled') {
+      return { percent: 85, label: '85% - Interview Scheduled' };
+    }
+    if (activeStatus === 'screening') {
+      return { percent: 70, label: '70% - In Screening' };
+    }
+    if (activeStatus === 'applied') {
+      return { percent: 40, label: '40% - Applied' };
+    }
+    if (activeStatus === 'sourced' || activeStatus === 'staged' || activeStatus === 'invited') {
+      return { percent: 20, label: '20% - Sourced' };
+    }
+    
+    // Otherwise, use profile completion
+    const completion = cand.profile_completion ?? 0;
+    return { percent: completion, label: `${completion}% - Profile Configured` };
+  };
+
   const inputClass = "w-full px-3.5 py-2.5 bg-white border border-[#e4e1da] rounded-lg text-[#1c1c1a] placeholder-[#a8a49d] focus:outline-none focus:border-[#2d6a55] focus:ring-1 focus:ring-[#2d6a55]/20 transition-colors";
   const needsPasswordSetup = !loadedCandidate?.has_password;
   const passwordFields = (
@@ -523,6 +632,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       )}
     </div>
   );
+  const verificationEmail = pendingVerification?.email || email.trim();
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-[#f7f6f3]">
@@ -536,8 +646,9 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       <div className="max-w-lg w-full">
         {/* Header */}
         <div className="text-center mb-10">
+          <BrandLogo className="justify-center mb-5" imageClassName="h-16" />
           <p className="text-xs tracking-[0.2em] uppercase text-[#2d6a55] mb-4">Candidate Portal</p>
-          <h1 className="text-[#1c1c1a] mb-3">Sign In to Your Interview</h1>
+          <h1 className="text-[#1c1c1a] mb-3">Sign In to 404Hire</h1>
           <p className="text-sm text-[#6b7063]">
             Log in with your email, configure your profile, then start your personalized interview session.
           </p>
@@ -549,7 +660,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
           </div>
         )}
 
-        {pendingVerification && (
+        {(pendingVerification || emailVerificationMode) && (
           <div className="bg-white border border-[#e4e1da] rounded-2xl p-8 space-y-5 shadow-sm">
             <div className="flex items-start gap-4">
               <div className="w-11 h-11 rounded-xl bg-[#e8f2ee] flex items-center justify-center flex-shrink-0">
@@ -559,7 +670,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
                 <p className="text-xs tracking-wider uppercase text-[#2d6a55] mb-1 font-semibold">Email Verification</p>
                 <h2 className="text-[#1c1c1a] mb-1 font-semibold text-lg">Verify your email address</h2>
                 <p className="text-sm text-[#6b7063] leading-relaxed">
-                  {verificationMessage || `Enter the verification code sent to ${pendingVerification.email}.`}
+                  {verificationMessage || `Enter the verification code sent to ${verificationEmail}.`}
                 </p>
               </div>
             </div>
@@ -610,7 +721,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
         )}
 
         {/* Email Lookup */}
-        {!pendingVerification && !lookupComplete && (
+        {!pendingVerification && !emailVerificationMode && !lookupComplete && (
           <div className="bg-white border border-[#e4e1da] rounded-2xl p-8 shadow-sm">
             <label className="block mb-1.5 text-sm text-[#1c1c1a]">Email Address</label>
             <div className="flex gap-2.5">
@@ -641,7 +752,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
         )}
 
         {/* Invited Candidate */}
-        {!pendingVerification && lookupComplete && candidateType === 'invited' && loadedCandidate && (
+        {!pendingVerification && !emailVerificationMode && lookupComplete && candidateType === 'invited' && loadedCandidate && (
           <div className="space-y-4">
             {/* Welcome */}
             <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm">
@@ -718,7 +829,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
         )}
 
         {/* Returning Candidate Account */}
-        {!pendingVerification && lookupComplete && candidateType === 'account' && loadedCandidate && (
+        {!pendingVerification && !emailVerificationMode && lookupComplete && candidateType === 'account' && loadedCandidate && (
           <div className="space-y-4">
             <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm">
               <div className="flex items-start gap-4">
@@ -743,13 +854,13 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm text-[#6b7063]">Application Progress</span>
                 <span className="text-sm text-[#2d6a55] font-medium">
-                  {loadedCandidate.status === 'hired' ? '100% - Hired' : loadedCandidate.status === 'completed' ? '100% - Screening Completed' : '33% - Profile Configured'}
+                  {getAccountProgressInfo(loadedCandidate).label}
                 </span>
               </div>
               <Progress.Root className="relative overflow-hidden bg-[#f0ede8] rounded-full h-1.5 w-full">
                 <Progress.Indicator
                   className="bg-[#2d6a55] h-full transition-transform duration-500 ease-out"
-                  style={{ transform: `translateX(-${loadedCandidate.status === 'completed' || loadedCandidate.status === 'hired' ? 0 : 67}%)`, width: '100%' }}
+                  style={{ transform: `translateX(-${100 - getAccountProgressInfo(loadedCandidate).percent}%)`, width: '100%' }}
                 />
               </Progress.Root>
             </div>
@@ -767,12 +878,18 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
         )}
 
         {/* Inbound Applicant */}
-        {!pendingVerification && lookupComplete && candidateType === 'inbound' && (
+        {!pendingVerification && !emailVerificationMode && lookupComplete && candidateType === 'inbound' && (
           <div className="bg-white border border-[#e4e1da] rounded-2xl p-8 space-y-5 shadow-sm">
-            <div>
-              <h2 className="text-[#1c1c1a] mb-1 font-semibold text-lg">Create Your Candidate Profile</h2>
-              <p className="text-sm text-[#6b7063]">Upload your resume and set up your account. You can choose positions after login.</p>
-            </div>
+          <div>
+            <h2 className="text-[#1c1c1a] mb-1 font-semibold text-lg">Create Your Candidate Profile</h2>
+            <p className="text-sm text-[#6b7063]">Upload your resume and set up your account. You can choose positions after login.</p>
+          </div>
+
+            {emailVerifiedForSignup && (
+              <div className="rounded-xl border border-[#c8e6d8] bg-[#e8f2ee] px-4 py-3 text-sm text-[#2d6a55] font-semibold">
+                Email verified for {email.trim()}.
+              </div>
+            )}
 
             <div>
               <label className="block mb-1.5 text-sm text-[#1c1c1a]">Full Name *</label>

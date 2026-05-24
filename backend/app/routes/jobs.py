@@ -16,6 +16,7 @@ class JobCreate(BaseModel):
     active: bool = True
     open_time: Optional[str] = None
     end_time: Optional[str] = None
+    address: Optional[str] = None
     sourcing_criteria: Optional[Dict[str, Any]] = None
     intake_chat: Optional[List[Dict[str, str]]] = None
 
@@ -27,6 +28,7 @@ class JobUpdate(BaseModel):
     active: Optional[bool] = None
     open_time: Optional[str] = None
     end_time: Optional[str] = None
+    address: Optional[str] = None
     sourcing_criteria: Optional[Dict[str, Any]] = None
     intake_chat: Optional[List[Dict[str, str]]] = None
 
@@ -59,7 +61,10 @@ def get_jobs(active_only: bool = False):
 def get_next_intake_turn(payload: JobIntakePayload):
     if not payload.title.strip() or not payload.department.strip():
         raise HTTPException(status_code=400, detail="Title and department are required before starting intake.")
-    return run_requirement_intake_agent(payload.title.strip(), payload.department.strip(), payload.chat_messages)
+    try:
+        return run_requirement_intake_agent(payload.title.strip(), payload.department.strip(), payload.chat_messages)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 @router.post("")
 def create_job(payload: JobCreate):
@@ -105,6 +110,7 @@ def create_job(payload: JobCreate):
         "active": payload.active,
         "open_time": payload.open_time,
         "end_time": payload.end_time,
+        "address": payload.address or "",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "sourcing_criteria": payload.sourcing_criteria or {},
         "intake_chat": payload.intake_chat or [],

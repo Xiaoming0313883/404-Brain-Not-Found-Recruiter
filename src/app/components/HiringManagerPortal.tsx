@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router';
-import { Briefcase, Users, BarChart3, ArrowLeft, LogOut, Calendar } from 'lucide-react';
+import { Briefcase, Users, BarChart3, ArrowLeft, LogOut, Calendar, UserCog } from 'lucide-react';
 import { JobBuilder } from './hiring-manager/JobBuilder';
 import { LinkedInScraper } from './hiring-manager/LinkedInScraper';
 import { CandidateDashboard } from './hiring-manager/CandidateDashboard';
 import { HiringManagerLogin } from './hiring-manager/HiringManagerLogin';
 import { InterviewCalendar } from './hiring-manager/InterviewCalendar';
+import { CandidateAccountsPage } from './hiring-manager/CandidateAccountsPage';
+import { BrandLogo } from './BrandLogo';
 
 export interface Job {
   id: number;
@@ -16,6 +18,7 @@ export interface Job {
   active: boolean;
   openTime?: string;
   endTime?: string;
+  address?: string;
   applicationStatus?: 'open' | 'scheduled' | 'closed' | 'inactive';
   isOpenForApplications?: boolean;
   sourcingCriteria?: Record<string, any>;
@@ -63,6 +66,8 @@ export interface ScrapedCandidate {
   profilePictureUrl?: string;
   sourceStatus?: string;
   sourceWarning?: string;
+  sourceType?: string;
+  sourceMethod?: string;
   phone?: string;
   age?: string;
   address?: string;
@@ -80,12 +85,15 @@ export interface ScrapedCandidate {
   emailVerified?: boolean;
   profileVerified?: boolean;
   applicationCount?: number;
+  outreachHistory?: Array<{ id: string; sent_at: string; status: string; message: string; detail?: string; position_id?: number }>;
   interviewSlot?: {
     date: string;
     time: string;
     location: string;
     notes: string;
   };
+  agentWarnings?: string[];
+  lastAgentError?: string;
 }
 
 interface AuthUser {
@@ -101,6 +109,7 @@ const mapJobFromApi = (j: any): Job => ({
   active: j.active ?? true,
   openTime: j.open_time || '',
   endTime: j.end_time || '',
+  address: j.address || '',
   applicationStatus: j.application_status || (j.active === false ? 'inactive' : 'open'),
   isOpenForApplications: j.is_open_for_applications ?? (j.active ?? true),
   sourcingCriteria: j.sourcing_criteria || {},
@@ -117,6 +126,7 @@ const toJobApiPayload = (job: Partial<Omit<Job, 'id' | 'createdAt'>>) => {
     active: job.active,
     open_time: job.openTime,
     end_time: job.endTime,
+    address: job.address,
     sourcing_criteria: job.sourcingCriteria,
     intake_chat: job.intakeChat
   };
@@ -186,6 +196,8 @@ export function HiringManagerPortal() {
           profilePictureUrl: c.profile_picture_url,
           sourceStatus: c.profile_data?.scrape_status || '',
           sourceWarning: c.profile_data?.scrape_warning || '',
+          sourceType: c.source_type,
+          sourceMethod: c.source_method,
           age: c.profile_data?.age || '',
           phone: c.profile_data?.phone || c.profile_data?.basic_info?.phone || '',
           address: c.profile_data?.address || '',
@@ -203,7 +215,10 @@ export function HiringManagerPortal() {
           emailVerified: c.email_verified ?? true,
           profileVerified: Boolean(c.profile_verified),
           applicationCount: c.application_count || 0,
-          interviewSlot: c.interview_slot
+          outreachHistory: c.outreach_history || [],
+          interviewSlot: c.interview_slot,
+          agentWarnings: c.agent_warnings || [],
+          lastAgentError: c.last_agent_error || ''
         }));
         setCandidates(mapped);
       }
@@ -381,6 +396,7 @@ export function HiringManagerPortal() {
     { path: '/hiring-manager/jobs', label: 'Job Builder', icon: Briefcase },
     { path: '/hiring-manager/sourcing', label: 'LinkedIn Sourcing', icon: Users },
     { path: '/hiring-manager/dashboard', label: 'Candidate Pipeline', icon: BarChart3 },
+    { path: '/hiring-manager/accounts', label: 'Candidate Accounts', icon: UserCog },
     { path: '/hiring-manager/calendar', label: 'Interview Calendar', icon: Calendar },
   ];
 
@@ -391,12 +407,10 @@ export function HiringManagerPortal() {
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center gap-3 mb-0.5">
-                <div className="w-6 h-6 rounded bg-[#2d6a55] flex items-center justify-center">
-                  <Briefcase className="w-3.5 h-3.5 text-white" />
-                </div>
+                <BrandLogo imageClassName="h-9" />
                 <h1 className="text-[#1c1c1a] text-lg font-semibold">Hiring Manager Portal</h1>
               </div>
-              <p className="text-xs text-[#6b7063] ml-9">AI-Powered Recruitment Workspace</p>
+              <p className="text-xs text-[#6b7063]">AI-Powered Recruitment Workspace</p>
             </div>
             <div className="flex items-center gap-5">
               <div className="flex items-center gap-3">
@@ -484,6 +498,18 @@ export function HiringManagerPortal() {
                 onReject={rejectCandidateByEmail}
                 onScheduleInterview={scheduleInterviewByEmail}
                 onUpdateOutreachNotes={updateCandidateOutreachNotesByEmail}
+              />
+            }
+          />
+          <Route
+            path="/accounts"
+            element={
+              <CandidateAccountsPage
+                candidates={candidates}
+                neutralize={neutralizeActive}
+                isLoading={isLoading}
+                onRefresh={() => fetchCandidates()}
+                onDelete={deleteCandidateByEmail}
                 onUpdateAccount={updateCandidateAccountByEmail}
                 onResetPassword={resetCandidatePasswordByEmail}
               />

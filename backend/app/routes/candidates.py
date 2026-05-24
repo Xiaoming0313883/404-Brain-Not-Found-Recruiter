@@ -49,6 +49,10 @@ class SandboxAnswers(BaseModel):
     answers: List[str]
     position_id: Optional[int] = None
 
+class DraftAnswersPayload(BaseModel):
+    answers: List[str]
+    position_id: Optional[int] = None
+
 class CandidateStatusPayload(BaseModel):
     status: str
     position_id: Optional[int] = None
@@ -59,6 +63,13 @@ class CandidatePasswordPayload(BaseModel):
 class CandidateLoginPayload(BaseModel):
     email: str
     password: str
+
+class CandidateEmailPayload(BaseModel):
+    email: str
+
+class CandidatePendingEmailVerificationPayload(BaseModel):
+    email: str
+    code: str
 
 class CandidateEmailVerificationPayload(BaseModel):
     code: str
@@ -86,6 +97,10 @@ class CandidateProfilePayload(BaseModel):
     grade_results: Optional[str] = None
     awards: Optional[List[str]] = None
     skills: Optional[List[str]] = None
+
+class CandidateProfileAssistantPayload(BaseModel):
+    message: str
+    field: Optional[str] = None
 
 class ScrapePayload(BaseModel):
     position_id: int
@@ -118,6 +133,9 @@ class InterviewSlotPayload(BaseModel):
 class AutoSourcePayload(BaseModel):
     position_id: int
     count: int = 3
+
+class NotificationReadPayload(BaseModel):
+    notification_id: Optional[str] = None
 
 def get_anonymized_hash(email: str) -> str:
     """Generates a consistent anonymized identifier like 'Candidate #7291'."""
@@ -155,6 +173,55 @@ def send_or_log_verification_email(email: str, code: str) -> bool:
     print(f"Prototype email verification code for {email}: {code}")
     return sent
 
+def create_pending_email_verification(db: Dict[str, Any], email: str) -> str:
+    code = f"{secrets.randbelow(900000) + 100000}"
+    db.setdefault("pending_email_verifications", {})[email] = {
+        "code": code,
+        "sent_at": datetime.now().isoformat(timespec="seconds"),
+        "verified": False,
+        "prototype": True
+    }
+    return code
+
+def require_pending_email_verified(db: Dict[str, Any], email: str) -> None:
+    pending = db.setdefault("pending_email_verifications", {}).get(email) or {}
+    if not pending.get("verified"):
+        raise HTTPException(status_code=403, detail="Please verify your email address before creating your candidate profile.")
+
+def add_notification(candidate: Dict[str, Any], title: str, message: str, kind: str = "info", position_id: Optional[int] = None) -> Dict[str, Any]:
+    notification = {
+        "id": uuid.uuid4().hex[:12],
+        "title": title,
+        "message": message,
+        "kind": kind,
+        "position_id": position_id,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "read": False
+    }
+    candidate.setdefault("notifications", []).insert(0, notification)
+    candidate["notifications"] = candidate["notifications"][:50]
+    return notification
+
+def send_decision_email(email: str, subject: str, body: str) -> bool:
+    try:
+        return send_recruitment_email(to_email=email, subject=subject, body=body)
+    except Exception as e:
+        print(f"Decision email dispatch failure: {e}")
+        return False
+
+def record_outreach_history(candidate: Dict[str, Any], message: str, status: str, detail: str = "", position_id: Optional[int] = None) -> Dict[str, Any]:
+    item = {
+        "id": uuid.uuid4().hex[:12],
+        "sent_at": datetime.now().isoformat(timespec="seconds"),
+        "status": status,
+        "message": message or "",
+        "detail": detail,
+        "position_id": position_id
+    }
+    candidate.setdefault("outreach_history", []).insert(0, item)
+    candidate["outreach_history"] = candidate["outreach_history"][:50]
+    return item
+
 def build_application_id(position_id: int) -> str:
     return f"position-{position_id}"
 
@@ -185,7 +252,9 @@ def normalize_candidate_applications(candidate: Dict[str, Any]) -> List[Dict[str
             "answers": candidate.get("answers", []),
             "evaluation": candidate.get("evaluation", {}),
             "sourcing_pitch": candidate.get("sourcing_pitch", ""),
-            "outreach_email": candidate.get("outreach_email", "")
+            "outreach_email": candidate.get("outreach_email", ""),
+            "draft_answers": candidate.get("draft_answers", {}).get(str(candidate.get("position_id")), []),
+            "last_agent_error": candidate.get("last_agent_error", "")
         })
     return applications
 
@@ -231,7 +300,10 @@ def serialize_application_candidate(candidate: Dict[str, Any], email: str, appli
         "rejection_message": application.get("rejection_message", ""),
         "rejected_at": application.get("rejected_at"),
         "hired_at": application.get("hired_at"),
-        "interview_slot": application.get("interview_slot")
+        "interview_slot": application.get("interview_slot"),
+        "draft_answers": application.get("draft_answers", []),
+        "last_agent_error": application.get("last_agent_error", ""),
+        "agent_warnings": application.get("agent_warnings", candidate.get("agent_warnings", []))
     })
     return serialized
 
@@ -248,6 +320,10 @@ def serialize_candidate(candidate: Dict[str, Any], management_email: Optional[st
     serialized["profile_verified"] = bool(candidate.get("profile_verified")) and not missing_fields
     serialized["email_verified"] = bool(candidate.get("email_verified", True))
     serialized["hr_feedback"] = candidate.get("hr_feedback", "")
+    serialized["notifications"] = candidate.get("notifications", [])
+    serialized["outreach_history"] = candidate.get("outreach_history", [])
+    serialized["source_type"] = candidate.get("source_type") or profile_data.get("source_type") or ("linkedin" if candidate.get("is_sourced") else "inbound")
+    serialized["source_method"] = candidate.get("source_method") or profile_data.get("source_method") or ("manual_public" if candidate.get("linkedin_url") else "resume")
     return serialized
 
 def neutralize_text(text: str) -> str:
@@ -352,6 +428,40 @@ def get_missing_profile_fields(profile_data: Dict[str, Any]) -> List[Dict[str, s
         if not has_profile_value(normalized_profile.get(field))
     ]
 
+def validate_resume_text_for_agent(resume_text: str) -> None:
+    text = " ".join((resume_text or "").split())
+    lowered = text.lower()
+    signal_terms = {
+        "resume", "cv", "education", "experience", "employment", "work",
+        "skills", "qualification", "degree", "university", "project",
+        "summary", "profile", "award", "certification"
+    }
+    signal_count = sum(1 for term in signal_terms if term in lowered)
+    section_count = sum(1 for term in ("experience", "education", "skills", "projects", "certification", "summary", "profile") if term in lowered)
+    has_contact = bool(re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", text)) or bool(re.search(r"\+?\d[\d\s().-]{7,}\d", text))
+    mostly_non_words = len(re.findall(r"[A-Za-z]{3,}", text)) < 35
+    if len(text) < 180 or mostly_non_words or signal_count < 3 or (section_count < 1 and not has_contact):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This PDF does not look like a valid readable resume. Upload a resume PDF with clear text, "
+                "candidate identity, and resume sections such as experience, education, skills, projects, or certifications."
+            )
+        )
+
+def validate_resume_agent_profile(profile_data: Dict[str, Any], submitted_name: str) -> None:
+    profile_data = profile_data or {}
+    has_identity = has_profile_value(profile_data.get("name")) and str(profile_data.get("name")).strip().lower() != "candidate full name"
+    has_resume_content = any(has_profile_value(profile_data.get(field)) for field in ("skills", "experiences", "education", "work_experience", "qualification", "about"))
+    if not has_identity and submitted_name.strip():
+        profile_data["name"] = submitted_name.strip()
+        has_identity = True
+    if not has_identity or not has_resume_content:
+        raise HTTPException(
+            status_code=400,
+            detail="Resume validation failed. The Resume Agent could not find candidate identity plus resume content in this PDF."
+        )
+
 def save_resume_file(email: str, filename: str, contents: bytes) -> str:
     os.makedirs(RESUME_DIR, exist_ok=True)
     extension = os.path.splitext(filename or "resume.pdf")[1].lower() or ".pdf"
@@ -383,6 +493,20 @@ def extract_profile_picture(email: str, pdf_contents: bytes) -> Optional[str]:
     except Exception as e:
         print(f"Profile image extraction skipped: {e}")
     return None
+
+def save_profile_picture_file(email: str, image: UploadFile, contents: bytes) -> str:
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Profile picture must be 5MB or smaller.")
+    extension = os.path.splitext(image.filename or "profile.jpg")[1].lower()
+    if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
+        raise HTTPException(status_code=400, detail="Profile picture must be JPG, PNG, or WebP.")
+    os.makedirs(PROFILE_IMAGE_DIR, exist_ok=True)
+    safe_email = re.sub(r"[^a-zA-Z0-9_.-]", "_", email)
+    stored_name = f"{safe_email}-{uuid.uuid4().hex[:8]}{extension}"
+    stored_path = os.path.join(PROFILE_IMAGE_DIR, stored_name)
+    with open(stored_path, "wb") as f:
+        f.write(contents)
+    return f"/uploads/profile_pictures/{stored_name}"
 
 @router.get("")
 def get_candidates(neutralize: bool = Query(False)):
@@ -582,6 +706,53 @@ def resend_candidate_email_verification(email: str):
     response["prototype_verification_code"] = code
     return response
 
+@router.post("/start-email-verification")
+def start_candidate_email_verification(payload: CandidateEmailPayload):
+    db = load_db()
+    email_clean = normalize_candidate_email(payload.email)
+    candidate = db.get("candidates", {}).get(email_clean)
+
+    if candidate:
+        if candidate.get("email_verified"):
+            return {**serialize_candidate(candidate, email_clean), "verification_sent": False}
+        code = create_email_verification(candidate)
+    else:
+        code = create_pending_email_verification(db, email_clean)
+
+    sent = send_or_log_verification_email(email_clean, code)
+    save_db(db)
+    return {
+        "email": email_clean,
+        "verification_sent": sent,
+        "prototype_verification_code": code
+    }
+
+@router.post("/verify-pending-email")
+def verify_pending_candidate_email(payload: CandidatePendingEmailVerificationPayload):
+    db = load_db()
+    email_clean = normalize_candidate_email(payload.email)
+    submitted_code = (payload.code or "").strip()
+    candidate = db.get("candidates", {}).get(email_clean)
+
+    if candidate:
+        verification = candidate.get("email_verification") or {}
+        expected_code = str(verification.get("code") or "").strip()
+        if not expected_code or submitted_code != expected_code:
+            raise HTTPException(status_code=400, detail="Invalid verification code.")
+        candidate["email_verified"] = True
+        candidate["email_verified_at"] = datetime.now().isoformat(timespec="seconds")
+        candidate.pop("email_verification", None)
+        save_db(db)
+        return serialize_candidate(candidate, email_clean)
+
+    pending = db.setdefault("pending_email_verifications", {}).get(email_clean)
+    if not pending or str(pending.get("code") or "").strip() != submitted_code:
+        raise HTTPException(status_code=400, detail="Invalid verification code.")
+    pending["verified"] = True
+    pending["verified_at"] = datetime.now().isoformat(timespec="seconds")
+    save_db(db)
+    return {"email": email_clean, "email_verified": True}
+
 @router.patch("/{email}/profile")
 def update_candidate_profile(email: str, payload: CandidateProfilePayload):
     db = load_db()
@@ -608,6 +779,94 @@ def update_candidate_profile(email: str, payload: CandidateProfilePayload):
     candidate["profile_data"] = profile_data
     candidate["profile_verified"] = not get_missing_profile_fields(profile_data)
 
+    save_db(db)
+    return serialize_candidate(candidate, email_clean)
+
+@router.post("/{email}/profile-assistant")
+def profile_assistant(email: str, payload: CandidateProfileAssistantPayload):
+    db = load_db()
+    email_clean = normalize_candidate_email(email)
+    candidate = db.setdefault("candidates", {}).get(email_clean)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate account not found.")
+
+    profile_data = normalize_profile_details(candidate.setdefault("profile_data", {}))
+    missing = get_missing_profile_fields(profile_data)
+    if not missing:
+        return {
+            "is_complete": True,
+            "accepted": True,
+            "field": "",
+            "question": "",
+            "message": "Your required information details are complete.",
+            "candidate": serialize_candidate(candidate, email_clean)
+        }
+
+    field = payload.field if payload.field in PROFILE_REQUIRED_FIELDS else missing[0]["field"]
+    value = (payload.message or "").strip()
+    if len(value) < 2:
+        raise HTTPException(status_code=400, detail=f"Please provide a valid {PROFILE_REQUIRED_FIELDS[field].lower()}.")
+    if field == "age" and not re.match(r"^(1[6-9]|[2-9][0-9])$", value):
+        raise HTTPException(status_code=400, detail="Please enter a valid age as a number.")
+    if field == "phone" and len(re.sub(r"\D", "", value)) < 7:
+        raise HTTPException(status_code=400, detail="Please enter a valid reachable phone number.")
+
+    profile_data[field] = value
+    candidate["profile_data"] = normalize_profile_details(profile_data)
+    candidate["name"] = candidate["profile_data"].get("name") or candidate.get("name")
+    candidate["profile_verified"] = not get_missing_profile_fields(candidate["profile_data"])
+    remaining = get_missing_profile_fields(candidate["profile_data"])
+    next_field = remaining[0] if remaining else None
+    save_db(db)
+    return {
+        "is_complete": not remaining,
+        "accepted": True,
+        "field": field,
+        "question": f"What is your {next_field['label'].lower()}?" if next_field else "",
+        "message": "Thanks. I saved that detail." if remaining else "Thanks. Your required information details are now complete and saved.",
+        "candidate": serialize_candidate(candidate, email_clean)
+    }
+
+@router.post("/{email}/profile-picture")
+async def upload_candidate_profile_picture(email: str, image: UploadFile = File(...)):
+    db = load_db()
+    email_clean = normalize_candidate_email(email)
+    candidate = db.setdefault("candidates", {}).get(email_clean)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate account not found.")
+    contents = await image.read()
+    candidate["profile_picture_url"] = save_profile_picture_file(email_clean, image, contents)
+    save_db(db)
+    return serialize_candidate(candidate, email_clean)
+
+@router.post("/{email}/resume")
+async def replace_candidate_resume(email: str, resume: UploadFile = File(...)):
+    db = load_db()
+    email_clean = normalize_candidate_email(email)
+    candidate = db.setdefault("candidates", {}).get(email_clean)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate account not found.")
+
+    resume_text, contents = await read_resume_text(resume)
+    validate_resume_text_for_agent(resume_text)
+    try:
+        profile_data = run_resume_agent(resume_text, prestige_neutralize=False)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Resume Agent failed while validating the new resume: {e}")
+    validate_resume_agent_profile(profile_data, candidate.get("name", ""))
+    profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
+    candidate["profile_data"] = {**candidate.get("profile_data", {}), **profile_data}
+    candidate["name"] = candidate["profile_data"].get("name") or candidate.get("name")
+    candidate["resume_filename"] = resume.filename
+    candidate["resume_path"] = save_resume_file(email_clean, resume.filename or "resume.pdf", contents)
+    candidate["resume_url"] = f"/api/v1/candidates/{email_clean}/resume"
+    candidate["resume_text"] = resume_text
+    candidate["resume_summary"] = get_resume_summary(candidate["profile_data"], resume_text)
+    extracted_picture = extract_profile_picture(email_clean, contents)
+    if extracted_picture and not candidate.get("profile_picture_url"):
+        candidate["profile_picture_url"] = extracted_picture
+    candidate["profile_verified"] = not get_missing_profile_fields(candidate["profile_data"])
+    add_notification(candidate, "Resume updated", "Your resume and profile details were updated.", "profile")
     save_db(db)
     return serialize_candidate(candidate, email_clean)
 
@@ -776,11 +1035,13 @@ def build_interview_for_position(db: Dict[str, Any], candidate: Dict[str, Any], 
         raise HTTPException(status_code=409, detail="You have already applied for this position.")
 
     profile_data = candidate.get("profile_data", {})
+    agent_warnings: List[str] = []
 
     try:
         match_results = run_matching_agent(job, profile_data)
     except Exception as e:
         print(f"Error running matching agent: {e}")
+        agent_warnings.append("Matching Agent failed, so a basic position-fit assessment was used.")
         match_results = {
             "debate": {"critical_recruiter_cons": ["Stack verification required."], "talent_advocate_pros": ["Strong interest in the position."]},
             "scores": {"technical": 75, "domain": 70, "culture": 80, "trajectory_slope": 75}
@@ -790,6 +1051,7 @@ def build_interview_for_position(db: Dict[str, Any], candidate: Dict[str, Any], 
         custom_questions = run_interview_agent_phase_a(profile_data, match_results, job)
     except Exception as e:
         print(f"Error generating screening questions: {e}")
+        agent_warnings.append("Interview Agent question generation failed, so standard role-focused screening questions were used.")
         custom_questions = [
             "What technical challenge on your resume was the most architecturally complex, and how did you approach it?",
             "How do you ensure code scalability and high performance when designing REST endpoints?",
@@ -806,9 +1068,12 @@ def build_interview_for_position(db: Dict[str, Any], candidate: Dict[str, Any], 
         "custom_questions": custom_questions,
         "answers": [],
         "evaluation": {},
+        "agent_warnings": agent_warnings,
         "sourcing_pitch": "Inbound applicant with verified profile details.",
         "outreach_email": candidate.get("outreach_email", "")
     }
+    if agent_warnings:
+        candidate.setdefault("agent_warnings", []).extend(agent_warnings)
     normalize_candidate_applications(candidate).append(application)
     sync_current_application(candidate, application)
     return application
@@ -826,14 +1091,16 @@ async def signup_candidate(
     if email_clean in db.setdefault("candidates", {}):
         raise HTTPException(status_code=409, detail="Candidate account already exists. Please log in.")
 
+    require_pending_email_verified(db, email_clean)
     resume_text, contents = await read_resume_text(resume)
-    if not resume_text:
-        resume_text = "PDF text extraction did not find readable text. Review the original uploaded resume file."
+    validate_resume_text_for_agent(resume_text)
+    agent_warnings: List[str] = []
 
     try:
         profile_data = run_resume_agent(resume_text, prestige_neutralize=False)
     except Exception as e:
         print(f"Error running resume agent: {e}")
+        agent_warnings.append("Resume Agent failed, so a rule-based resume parser was used. Please review the extracted profile before applying.")
         profile_data = {
             "name": name,
             "headline": "Candidate Profile",
@@ -842,6 +1109,7 @@ async def signup_candidate(
             "experiences": [],
             "education": []
         }
+    validate_resume_agent_profile(profile_data, name)
     profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
 
     resume_path = save_resume_file(email_clean, resume.filename or "resume.pdf", contents)
@@ -856,6 +1124,8 @@ async def signup_candidate(
         "status": "profile",
         "position_id": None,
         "is_sourced": False,
+        "source_type": "inbound",
+        "source_method": "resume",
         "linkedin_url": "",
         "profile_data": profile_data,
         "resume_filename": resume.filename,
@@ -870,20 +1140,21 @@ async def signup_candidate(
         "custom_questions": [],
         "answers": [],
         "evaluation": {},
+        "agent_warnings": agent_warnings,
         "applications": [],
+        "notifications": [],
+        "outreach_history": [],
         "hiring_manager_feedback": "",
         "profile_verified": not get_missing_profile_fields(profile_data),
-        "email_verified": False,
+        "email_verified": True,
+        "email_verified_at": datetime.now().isoformat(timespec="seconds"),
         "password_hash": hash_password(password)
     }
 
-    verification_code = create_email_verification(candidate_record)
-    verification_sent = send_or_log_verification_email(email_clean, verification_code)
     db.setdefault("candidates", {})[email_clean] = candidate_record
+    db.setdefault("pending_email_verifications", {}).pop(email_clean, None)
     save_db(db)
     response = serialize_candidate(candidate_record, email_clean)
-    response["verification_sent"] = verification_sent
-    response["prototype_verification_code"] = verification_code
     return response
 
 @router.post("/{email}/apply-position")
@@ -897,8 +1168,40 @@ def apply_candidate_to_position(email: str, payload: CandidateApplyPositionPaylo
         raise HTTPException(status_code=403, detail="Please verify your email address before applying.")
 
     application = build_interview_for_position(db, candidate, payload.position_id)
+    add_notification(candidate, "Application started", "Your personalized interview questions are ready.", "application", payload.position_id)
     save_db(db)
     return serialize_application_candidate(candidate, email_clean, application)
+
+@router.patch("/{email}/draft-answers")
+def save_candidate_draft_answers(email: str, payload: DraftAnswersPayload):
+    db = load_db()
+    email_clean = normalize_candidate_email(email)
+    candidate = db.setdefault("candidates", {}).get(email_clean)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate account not found.")
+    application = find_application(candidate, payload.position_id)
+    if not application:
+        raise HTTPException(status_code=404, detail="Candidate application not found.")
+    if application.get("answers"):
+        raise HTTPException(status_code=409, detail="This position already has submitted interview answers.")
+    application["draft_answers"] = payload.answers
+    candidate.setdefault("draft_answers", {})[str(application.get("position_id"))] = payload.answers
+    sync_current_application(candidate, application)
+    save_db(db)
+    return serialize_application_candidate(candidate, email_clean, application)
+
+@router.patch("/{email}/notifications/read")
+def mark_candidate_notifications_read(email: str, payload: NotificationReadPayload):
+    db = load_db()
+    email_clean = normalize_candidate_email(email)
+    candidate = db.setdefault("candidates", {}).get(email_clean)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate account not found.")
+    for notification in candidate.get("notifications", []):
+        if payload.notification_id is None or notification.get("id") == payload.notification_id:
+            notification["read"] = True
+    save_db(db)
+    return serialize_candidate(candidate, email_clean)
 
 @router.patch("/{email}/status")
 def update_candidate_status(email: str, payload: CandidateStatusPayload):
@@ -920,11 +1223,15 @@ def update_candidate_status(email: str, payload: CandidateStatusPayload):
         application["progress"] = get_application_progress(payload.status)
         if payload.status == "hired":
             application["hired_at"] = datetime.now().isoformat(timespec="seconds")
+            add_notification(candidate, "Application decision", "Congratulations. You have been hired for this position.", "success", payload.position_id)
+            send_decision_email(email_clean, "Application update - hired", "Congratulations. The hiring team has marked your application as hired. Please check the candidate portal for details.")
         sync_current_application(candidate, application)
     else:
         candidate["status"] = payload.status
         if payload.status == "hired":
             candidate["hired_at"] = datetime.now().isoformat(timespec="seconds")
+            add_notification(candidate, "Application decision", "Congratulations. You have been hired.", "success")
+            send_decision_email(email_clean, "Application update - hired", "Congratulations. The hiring team has marked your application as hired. Please check the candidate portal for details.")
     save_db(db)
     return serialize_candidate(candidate, email_clean)
 
@@ -953,7 +1260,8 @@ def get_candidate_resume(email: str):
     return FileResponse(
         resume_path,
         media_type="application/pdf",
-        filename=candidate.get("resume_filename") or "resume.pdf"
+        filename=candidate.get("resume_filename") or "resume.pdf",
+        headers={"Content-Disposition": f"inline; filename=\"{candidate.get('resume_filename') or 'resume.pdf'}\""}
     )
 
 @router.post("/apply")
@@ -969,16 +1277,18 @@ async def apply_inbound(
     existing_candidate = db.setdefault("candidates", {}).get(email_clean)
     if existing_candidate and find_application(existing_candidate, position_id):
         raise HTTPException(status_code=409, detail="You have already applied for this position.")
+    if not existing_candidate:
+        require_pending_email_verified(db, email_clean)
     resume_text, contents = await read_resume_text(resume)
-        
-    if not resume_text:
-        resume_text = "PDF text extraction did not find readable text. Review the original uploaded resume file."
+    validate_resume_text_for_agent(resume_text)
+    agent_warnings: List[str] = []
         
     # 1. Invoke Resume Agent (Ingest and profile)
     try:
         profile_data = run_resume_agent(resume_text, prestige_neutralize=False)
     except Exception as e:
         print(f"Error running resume agent: {e}")
+        agent_warnings.append("Resume Agent failed, so a rule-based resume parser was used. Please review the extracted profile before continuing.")
         profile_data = {
             "name": name,
             "headline": "Full-Stack Developer",
@@ -987,6 +1297,7 @@ async def apply_inbound(
             "experiences": [],
             "education": []
         }
+    validate_resume_agent_profile(profile_data, name)
     profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
         
     # Fetch job requirements
@@ -1001,6 +1312,7 @@ async def apply_inbound(
         match_results = run_matching_agent(job, profile_data)
     except Exception as e:
         print(f"Error running matching agent: {e}")
+        agent_warnings.append("Matching Agent failed, so a basic position-fit assessment was used.")
         match_results = {
             "debate": {"critical_recruiter_cons": ["Stack verification required."], "talent_advocate_pros": ["Strong interest in the position."]},
             "scores": {"technical": 75, "domain": 70, "culture": 80, "trajectory_slope": 75}
@@ -1011,6 +1323,7 @@ async def apply_inbound(
         custom_questions = run_interview_agent_phase_a(profile_data, match_results, job)
     except Exception as e:
         print(f"Error generating screening questions: {e}")
+        agent_warnings.append("Interview Agent question generation failed, so standard role-focused screening questions were used.")
         custom_questions = [
             "What technical challenge on your resume was the most architecturally complex, and how did you approach it?",
             "How do you ensure code scalability and high performance when designing REST endpoints?",
@@ -1044,6 +1357,8 @@ async def apply_inbound(
         "position_id": position_id,
         "applied_at": applied_at,
         "is_sourced": False,
+        "source_type": "inbound",
+        "source_method": "resume",
         "linkedin_url": "",
         "profile_data": profile_data,
         "resume_filename": resume.filename,
@@ -1058,19 +1373,20 @@ async def apply_inbound(
         "custom_questions": custom_questions,
         "answers": [],
         "evaluation": {},
+        "agent_warnings": agent_warnings,
         "applications": [application],
+        "notifications": [],
+        "outreach_history": [],
         "profile_verified": not get_missing_profile_fields(profile_data),
-        "email_verified": False,
+        "email_verified": True if not existing_candidate else bool(existing_candidate.get("email_verified", True)),
+        "email_verified_at": datetime.now().isoformat(timespec="seconds") if not existing_candidate else existing_candidate.get("email_verified_at"),
         "password_hash": hash_password(password)
     }
 
-    verification_code = create_email_verification(candidate_record)
-    verification_sent = send_or_log_verification_email(email_clean, verification_code)
     db.setdefault("candidates", {})[email_clean] = candidate_record
+    db.setdefault("pending_email_verifications", {}).pop(email_clean, None)
     save_db(db)
     response = serialize_candidate(candidate_record, email_clean)
-    response["verification_sent"] = verification_sent
-    response["prototype_verification_code"] = verification_code
     return response
 
 @router.post("/{email}/sandbox")
@@ -1084,26 +1400,60 @@ def submit_sandbox(email: str, payload: SandboxAnswers):
     application = find_application(candidate, payload.position_id)
     if not application:
         raise HTTPException(status_code=404, detail="Candidate application not found.")
-    if application.get("status") == "completed":
-        raise HTTPException(status_code=409, detail="This position's screening has already been completed.")
+    if application.get("answers"):
+        raise HTTPException(status_code=409, detail="This position's interview has already been submitted.")
         
     # Validate answers length
     for idx, ans in enumerate(payload.answers):
         if len(ans.strip()) < 10:
             raise HTTPException(status_code=400, detail=f"Answer for Question {idx+1} is too short. (Minimum 10 characters)")
             
+    application["answers"] = payload.answers
+    application["draft_answers"] = payload.answers
+    application["screening_submitted_at"] = datetime.now().isoformat(timespec="seconds")
+    candidate.setdefault("draft_answers", {})[str(application.get("position_id"))] = payload.answers
+
     # Fetch job requirements
     job_id = application.get("position_id")
     job = db.get("positions", {}).get(str(job_id), {})
     
     # Invoke Candidate Interview Agent (Phase B Evaluation)
+    agent_warnings: List[str] = []
     try:
         evaluation = run_interview_agent_phase_b(application.get("custom_questions", []), payload.answers, job)
     except Exception as e:
         print(f"Error evaluating sandbox answers: {e}")
+        agent_warnings.append("Interview Agent evaluation failed, so a basic response review was used.")
         evaluation = {
             "screening_score": 80,
-            "critiques": [{"question": q, "critique": "Solid response."} for q in application.get("custom_questions", [])]
+            "position_fit_verdict": "Moderate fit for the current position",
+            "hiring_recommendation": "hold",
+            "role_alignment_summary": (
+                "The fallback review could not access the full Interview Agent, so this score should be treated as provisional. "
+                "The candidate submitted answers for the required screening prompts, which is positive process evidence, but the hiring manager should still verify depth directly. "
+                "Use the next interview to ask for project context, the candidate's own contribution, trade-offs, failure handling, and measurable impact. "
+                "Do not treat this fallback score as a final hiring signal without a human review of the answer text."
+            ),
+            "critiques": [
+                {
+                    "question": q,
+                    "candidate_answer_excerpt": payload.answers[idx] if idx < len(payload.answers) else "",
+                    "candidate_answer": payload.answers[idx] if idx < len(payload.answers) else "",
+                    "per_answer_score": 80,
+                    "requirement_focus": "Current-position evidence",
+                    "critique": (
+                        "The answer was received and appears usable for human review, but the Interview Agent was unavailable for detailed scoring. "
+                        "My opinion is that the hiring manager should read this answer as preliminary evidence only. "
+                        "Look for whether the candidate names a real situation, explains their own decision-making, and connects the example to the current position. "
+                        "If those pieces are not explicit, the next interview should request specifics before moving the candidate forward."
+                    ),
+                    "strengths": ["Submitted a response to the role-specific screening prompt."],
+                    "weaknesses": ["Automated detailed evaluation was unavailable, so evidence quality still needs human verification."],
+                    "suggested_improvement": "Ask the candidate to add concrete project details, trade-offs, and measurable outcomes.",
+                    "hiring_manager_note": "Use this as a prompt for a follow-up interview question, not as a standalone evaluation."
+                }
+                for idx, q in enumerate(application.get("custom_questions", []))
+            ]
         }
         
     # Invoke Report Agent to generate upskilling roadmap
@@ -1112,16 +1462,22 @@ def submit_sandbox(email: str, payload: SandboxAnswers):
         roadmap = report_data.get("upskilling_roadmap", {})
     except Exception as e:
         print(f"Error compiling upskilling roadmap: {e}")
-        roadmap = {
-            "week_1": "Standard codebase structural setup.",
-            "week_2": "Detailed system configuration setup.",
-            "week_3": "Automated verification setup."
-        }
+        message = "Report Agent failed after your answers were saved. Please wait for the hiring manager to review or retry after the agent is available."
+        application["status"] = "screening"
+        application["progress"] = get_application_progress("screening")
+        application["last_agent_error"] = message
+        application.setdefault("agent_warnings", []).append(message)
+        candidate["last_agent_error"] = message
+        candidate.setdefault("agent_warnings", []).append(message)
+        add_notification(candidate, "Interview answers saved", message, "warning", job_id)
+        sync_current_application(candidate, application)
+        save_db(db)
+        raise HTTPException(status_code=502, detail=message)
         
     application["status"] = "screening"
     application["progress"] = get_application_progress("screening")
-    application["answers"] = payload.answers
-    application["screening_submitted_at"] = datetime.now().isoformat(timespec="seconds")
+    application.pop("last_agent_error", None)
+    candidate.pop("last_agent_error", None)
     application["evaluation"] = {
         "screening_score": evaluation.get("screening_score", 80),
         "critiques": evaluation.get("critiques", []),
@@ -1131,6 +1487,9 @@ def submit_sandbox(email: str, payload: SandboxAnswers):
         "role_alignment_summary": evaluation.get("role_alignment_summary", ""),
         "upskilling_roadmap": roadmap
     }
+    if agent_warnings:
+        application.setdefault("agent_warnings", []).extend(agent_warnings)
+        candidate.setdefault("agent_warnings", []).extend(agent_warnings)
     sync_current_application(candidate, application)
     
     save_db(db)
@@ -1189,6 +1548,8 @@ def scrape_profile(payload: ScrapePayload):
         "status": "staged",
         "position_id": payload.position_id,
         "is_sourced": True,
+        "source_type": "linkedin",
+        "source_method": profile_data.get("source_method", "manual_public"),
         "linkedin_url": payload.linkedin_url,
         "profile_data": profile_data,
         "sourcing_pitch": sourcing_pitch,
@@ -1196,7 +1557,9 @@ def scrape_profile(payload: ScrapePayload):
         "match_results": match_results,
         "custom_questions": custom_questions,
         "answers": [],
-        "evaluation": {}
+        "evaluation": {},
+        "notifications": [],
+        "outreach_history": []
     }
     
     # Store staged candidate in database staging state
@@ -1213,86 +1576,11 @@ def auto_source_candidates(payload: AutoSourcePayload):
         raise HTTPException(status_code=404, detail="Selected position not found.")
 
     generated = []
-    role_text = f"{job.get('title', '')} {job.get('department', '')} {' '.join(job.get('requirements', []))}".lower()
-    if any(term in role_text for term in ("baker", "bakery", "pastry", "chef", "cook", "kitchen", "food")):
-        sample_profiles = [
-            {
-                "name": "Nadia Lim",
-                "email": "nadia.lim@example.com",
-                "headline": "Bakery assistant experienced with breads, pastries, and food hygiene",
-                "location": "Kuala Lumpur, MY",
-                "about": "Prototype sourced profile for bakery roles. Verify employment history before outreach.",
-                "experiences": [
-                    {"title": "Bakery Assistant", "company": "Neighborhood Bakery", "duration": "2022 - Present", "description": "Prepared dough, monitored oven timing, and followed hygiene routines."}
-                ],
-                "education": [{"school": "Culinary Training Centre", "degree": "Certificate in Baking"}],
-                "scrape_status": "prototype_auto_source",
-                "scrape_warning": "Automatically generated prototype candidate; not scraped from LinkedIn."
-            },
-            {
-                "name": "Hafiz Rahman",
-                "email": "hafiz.rahman@example.com",
-                "headline": "Pastry cook focused on recipe consistency and production timing",
-                "location": "Selangor, MY",
-                "about": "Prototype sourced profile for food service screening. Verify details before outreach.",
-                "experiences": [
-                    {"title": "Pastry Cook", "company": "Hotel Kitchen", "duration": "2020 - Present", "description": "Produced pastries, checked freshness, and managed early shift prep."}
-                ],
-                "education": [{"school": "Hospitality Academy", "degree": "Diploma in Culinary Arts"}],
-                "scrape_status": "prototype_auto_source",
-                "scrape_warning": "Automatically generated prototype candidate; not scraped from LinkedIn."
-            }
-        ]
-    else:
-        sample_profiles = [
-            {
-                "name": "Maya Tan",
-                "email": "maya.tan@example.com",
-                "headline": "Senior Frontend Engineer specializing in React performance",
-                "location": "Kuala Lumpur, MY",
-                "about": "Prototype sourced profile for technical roles. Verify employment history before outreach.",
-                "experiences": [
-                    {"title": "Senior Frontend Engineer", "company": "Regional SaaS Platform", "duration": "2021 - Present"},
-                    {"title": "Software Engineer", "company": "Fintech Product Studio", "duration": "2018 - 2021"}
-                ],
-                "education": [{"school": "Asia Pacific University", "degree": "BS Software Engineering"}],
-                "scrape_status": "prototype_auto_source",
-                "scrape_warning": "Automatically generated prototype candidate; not scraped from LinkedIn."
-            },
-            {
-                "name": "Daniel Lim",
-                "email": "daniel.lim@example.com",
-                "headline": "Backend Engineer focused on Node.js services and distributed queues",
-                "location": "Singapore",
-                "about": "Prototype sourced profile for technical roles. Verify employment history before outreach.",
-                "experiences": [
-                    {"title": "Backend Engineer", "company": "Cloud Operations Company", "duration": "2020 - Present"},
-                    {"title": "Full-Stack Developer", "company": "Logistics Startup", "duration": "2017 - 2020"}
-                ],
-                "education": [{"school": "National University", "degree": "Computer Science"}],
-                "scrape_status": "prototype_auto_source",
-                "scrape_warning": "Automatically generated prototype candidate; not scraped from LinkedIn."
-            },
-            {
-                "name": "Aisha Rahman",
-                "email": "aisha.rahman@example.com",
-                "headline": "Full-stack product engineer with analytics and platform experience",
-                "location": "Penang, MY",
-                "about": "Prototype sourced profile for technical roles. Verify employment history before outreach.",
-                "experiences": [
-                    {"title": "Product Engineer", "company": "Analytics Platform", "duration": "2022 - Present"},
-                    {"title": "Software Developer", "company": "E-commerce Company", "duration": "2019 - 2022"}
-                ],
-                "education": [{"school": "University of Malaya", "degree": "Information Systems"}],
-                "scrape_status": "prototype_auto_source",
-                "scrape_warning": "Automatically generated prototype candidate; not scraped from LinkedIn."
-            }
-        ]
-    sample_profiles = sample_profiles[: max(1, min(payload.count, 5))]
+    sample_profiles = build_auto_source_profiles(job, max(1, min(payload.count, 10)))
 
-    for profile_data in sample_profiles:
+    for index, profile_data in enumerate(sample_profiles):
         candidate_email = profile_data["email"]
-        match_results = build_fast_match_results(job, profile_data)
+        match_results = calibrate_auto_source_match(build_fast_match_results(job, profile_data), profile_data, job, index)
         custom_questions = [
             f"Describe your most relevant experience for the {job.get('title', 'selected')} role.",
             f"What evidence shows you can meet the main requirements for {job.get('title', 'this position')}?",
@@ -1308,6 +1596,8 @@ def auto_source_candidates(payload: AutoSourcePayload):
             "status": "staged",
             "position_id": payload.position_id,
             "is_sourced": True,
+            "source_type": "linkedin",
+            "source_method": "prototype_auto_source",
             "linkedin_url": f"https://www.linkedin.com/in/{profile_data['name'].lower().replace(' ', '-')}",
             "profile_data": profile_data,
             "sourcing_pitch": sourcing_pitch,
@@ -1315,7 +1605,9 @@ def auto_source_candidates(payload: AutoSourcePayload):
             "match_results": match_results,
             "custom_questions": custom_questions,
             "answers": [],
-            "evaluation": {}
+            "evaluation": {},
+            "notifications": [],
+            "outreach_history": []
         }
         db.setdefault("candidates", {})[candidate_email] = candidate_record
         generated.append(serialize_candidate(candidate_record, candidate_email))
@@ -1349,6 +1641,14 @@ def invite_candidate(payload: InvitePayload):
     except Exception as e:
         print(f"SMTP dispatch failure: {e}")
         email_sent = False
+    record_outreach_history(
+        candidate,
+        candidate.get("outreach_email", ""),
+        "sent" if email_sent else "failed",
+        "SMTP dispatch completed." if email_sent else "SMTP was not configured or delivery failed.",
+        candidate.get("position_id")
+    )
+    add_notification(candidate, "Recruitment invitation", "A hiring manager sent you an outreach invitation.", "application", candidate.get("position_id"))
 
     save_db(db)
     return {
@@ -1376,13 +1676,16 @@ def reject_candidate(email: str, payload: RejectCandidatePayload):
         application["hr_feedback"] = payload.hr_feedback or ""
         application["rejection_message"] = rejection_message
         application["rejected_at"] = datetime.now().isoformat(timespec="seconds")
+        add_notification(candidate, "Application update", rejection_message, "decision", payload.position_id)
         sync_current_application(candidate, application)
     else:
         candidate["status"] = "rejected"
         candidate["hr_feedback"] = payload.hr_feedback or ""
         candidate["rejection_message"] = rejection_message
         candidate["rejected_at"] = datetime.now().isoformat(timespec="seconds")
+        add_notification(candidate, "Application update", rejection_message, "decision")
 
+    send_decision_email(email_clean, "Application update", rejection_message)
     save_db(db)
     if application:
         return serialize_application_candidate(candidate, email_clean, application)
@@ -1397,6 +1700,7 @@ def schedule_interview(email: str, payload: InterviewSlotPayload):
         raise HTTPException(status_code=404, detail="Candidate not found.")
 
     application = find_application(candidate, payload.position_id)
+    existing_slot = application.get("interview_slot") if application else candidate.get("interview_slot")
     interview_slot = {
         "date": payload.interview_date,
         "time": payload.interview_time,
@@ -1408,10 +1712,23 @@ def schedule_interview(email: str, payload: InterviewSlotPayload):
         application["progress"] = get_application_progress("interview_scheduled")
         application["interview_slot"] = interview_slot
         application["interview_scheduled_at"] = datetime.now().isoformat(timespec="seconds")
+        add_notification(
+            candidate,
+            "Interview updated" if existing_slot else "Interview scheduled",
+            f"Your interview is set for {payload.interview_date} at {payload.interview_time}.",
+            "interview",
+            payload.position_id
+        )
         sync_current_application(candidate, application)
     else:
         candidate["status"] = "interview_scheduled"
         candidate["interview_slot"] = interview_slot
+        add_notification(
+            candidate,
+            "Interview updated" if existing_slot else "Interview scheduled",
+            f"Your interview is set for {payload.interview_date} at {payload.interview_time}.",
+            "interview"
+        )
 
     # Send SMTP notification email to candidate
     candidate_name = candidate.get("name", "Candidate")
@@ -1443,6 +1760,154 @@ def schedule_interview(email: str, payload: InterviewSlotPayload):
     result = serialize_application_candidate(candidate, email_clean, application) if application else serialize_candidate(candidate, email_clean)
     result["interview_email_sent"] = email_sent
     return result
+
+def role_search_terms(job: Dict[str, Any], limit: int = 8) -> List[str]:
+    criteria = job.get("sourcing_criteria") or {}
+    raw_values: List[Any] = [
+        job.get("title", ""),
+        job.get("department", ""),
+        job.get("requirements", []),
+        criteria.get("generated_requirements", []),
+        criteria.get("must_have_signals", []),
+        criteria.get("must_have_skills", ""),
+        criteria.get("candidate_profile", ""),
+        criteria.get("domain_context", ""),
+        criteria.get("success_signals", ""),
+        criteria.get("search_keywords", "")
+    ]
+    terms: List[str] = []
+    for value in raw_values:
+        values = value if isinstance(value, list) else re.split(r"[,;\n]| and | or ", str(value or ""))
+        for item in values:
+            cleaned = re.sub(r"\s+", " ", str(item)).strip(" .:-")
+            if cleaned and len(cleaned) <= 70 and cleaned.lower() not in {term.lower() for term in terms}:
+                terms.append(cleaned)
+            if len(terms) >= limit:
+                return terms
+    return terms
+
+def infer_auto_source_family(role_text: str) -> str:
+    role_text = role_text.lower()
+    if any(term in role_text for term in ("baker", "bakery", "pastry", "chef", "cook", "kitchen", "food")):
+        return "culinary"
+    if any(term in role_text for term in ("sales", "account executive", "business development", "customer")):
+        return "sales"
+    if any(term in role_text for term in ("marketing", "campaign", "content", "seo", "brand")):
+        return "marketing"
+    if any(term in role_text for term in ("designer", "design", "ux", "ui", "figma")):
+        return "design"
+    if any(term in role_text for term in ("engineer", "developer", "software", "data", "python", "react", "node", "api")):
+        return "technical"
+    return "general"
+
+def build_auto_source_profiles(job: Dict[str, Any], count: int) -> List[Dict[str, Any]]:
+    title = job.get("title", "Open Role")
+    department = job.get("department", "Hiring Team")
+    role_text = f"{title} {department} {' '.join(job.get('requirements', []))}"
+    family = infer_auto_source_family(role_text)
+    terms = role_search_terms(job, limit=8)
+    primary = terms[0] if terms else title
+    secondary = terms[1] if len(terms) > 1 else department
+    tertiary = terms[2] if len(terms) > 2 else "role-specific delivery"
+    skills = list(dict.fromkeys([*terms, title, department]))[:12]
+
+    templates = {
+        "culinary": [
+            ("Nadia Lim", "Bakery Production Lead", "Prepared dough, managed oven timing, monitored freshness, and followed hygiene routines."),
+            ("Hafiz Rahman", "Pastry Cook", "Produced pastries, maintained recipe consistency, checked storage standards, and handled early shift preparation."),
+            ("Mei Wong", "Kitchen Quality Assistant", "Supported batch preparation, ingredient handling, food safety checks, and customer-ready presentation.")
+        ],
+        "sales": [
+            ("Maya Tan", "Sales Development Specialist", "Owned prospect research, customer qualification, pipeline follow-up, and conversion tracking."),
+            ("Daniel Lim", "Account Executive", "Managed client conversations, negotiated requirements, handled objections, and delivered quota outcomes."),
+            ("Aisha Rahman", "Business Development Associate", "Built lead lists, ran outreach, qualified accounts, and summarized customer needs for the team.")
+        ],
+        "marketing": [
+            ("Maya Tan", "Campaign Marketing Specialist", "Planned content calendars, reviewed campaign analytics, optimized audience targeting, and reported performance."),
+            ("Daniel Lim", "Growth Marketing Analyst", "Worked across SEO, paid campaigns, conversion tracking, and landing-page experiments."),
+            ("Aisha Rahman", "Brand Content Strategist", "Produced social content, managed brand messaging, measured engagement, and coordinated campaign launches.")
+        ],
+        "design": [
+            ("Maya Tan", "Product Designer", "Created wireframes, Figma prototypes, user flows, visual systems, and handoff documentation."),
+            ("Daniel Lim", "UX Designer", "Ran user research synthesis, mapped journeys, tested prototypes, and improved form conversion."),
+            ("Aisha Rahman", "UI Designer", "Built responsive interface components, interaction states, design specs, and brand-consistent layouts.")
+        ],
+        "technical": [
+            ("Maya Tan", "Senior Frontend Engineer", "Built React interfaces, improved performance, integrated APIs, and maintained testable component systems."),
+            ("Daniel Lim", "Backend Engineer", "Designed Node.js services, SQL schemas, API integrations, queues, and deployment workflows."),
+            ("Aisha Rahman", "Full-Stack Product Engineer", "Delivered frontend features, backend endpoints, analytics workflows, and production support.")
+        ],
+        "general": [
+            ("Maya Tan", f"{title} Specialist", "Handled role-specific operations, stakeholder coordination, quality checks, and measurable delivery."),
+            ("Daniel Lim", f"{title} Associate", "Supported daily execution, documentation, team communication, and practical problem solving."),
+            ("Aisha Rahman", f"{title} Coordinator", "Managed task follow-through, service standards, reporting, and continuous improvement.")
+        ]
+    }
+
+    profiles = []
+    selected_templates = templates.get(family, templates["general"])
+    for index in range(count):
+        name, headline, description = selected_templates[index % len(selected_templates)]
+        if index >= len(selected_templates):
+            name = f"{name} {index + 1}"
+        email_slug = re.sub(r"[^a-z0-9]+", ".", name.lower()).strip(".")
+        matched_terms = ", ".join(terms[:5]) or primary
+        profiles.append({
+            "name": name,
+            "email": f"{email_slug}@example.com",
+            "headline": f"{headline} aligned with {title}",
+            "location": "Kuala Lumpur, MY" if index != 1 else "Selangor, MY",
+            "about": (
+                f"Prototype sourced profile for {title}. This candidate profile intentionally includes evidence for "
+                f"{matched_terms} so hiring managers can test the automatic sourcing workflow."
+            ),
+            "work_experience": f"Hands-on experience with {matched_terms}.",
+            "skills": skills,
+            "experiences": [
+                {
+                    "title": headline,
+                    "company": "Verified Prototype Talent Pool",
+                    "duration": "2021 - Present",
+                    "description": f"{description} Recent work demonstrates {primary}, {secondary}, and {tertiary}."
+                }
+            ],
+            "education": [{"school": "Professional Training Institute", "degree": f"Certificate related to {primary}"}],
+            "scrape_status": "prototype_auto_source",
+            "scrape_warning": "Automatically generated prototype candidate; not scraped from LinkedIn. Verify manually before outreach.",
+            "source_type": "linkedin",
+            "source_method": "prototype_auto_source"
+        })
+    return profiles
+
+def calibrate_auto_source_match(match_results: Dict[str, Any], profile_data: Dict[str, Any], job: Dict[str, Any], rank: int) -> Dict[str, Any]:
+    calibrated = dict(match_results or {})
+    scores = dict(calibrated.get("scores", {}))
+    target_scores = [
+        {"technical": 88, "domain": 85, "culture": 82, "trajectory_slope": 86, "overall_position_fit": 86},
+        {"technical": 82, "domain": 80, "culture": 78, "trajectory_slope": 83, "overall_position_fit": 81},
+        {"technical": 76, "domain": 75, "culture": 74, "trajectory_slope": 80, "overall_position_fit": 76},
+    ]
+    floor_scores = target_scores[min(rank, len(target_scores) - 1)]
+    for key, floor_value in floor_scores.items():
+        scores[key] = max(int(scores.get(key, 0) or 0), floor_value)
+    calibrated["scores"] = scores
+    title = job.get("title", "this role")
+    evidence = ", ".join(role_search_terms(job, limit=4)) or title
+    calibrated["position_fit_summary"] = (
+        f"{profile_data.get('name', 'Candidate')} is a prototype auto-source match for {title}. "
+        f"The generated profile includes direct evidence around {evidence}, so the score is calibrated for demo sourcing rather than live LinkedIn verification."
+    )
+    debate = calibrated.setdefault("debate", {})
+    debate["talent_advocate_pros"] = [
+        f"Prototype profile includes direct signals for {evidence}.",
+        f"Experience summary is intentionally aligned to the {title} requirements for sourcing workflow testing.",
+        *(debate.get("talent_advocate_pros") or [])[:1]
+    ]
+    debate["critical_recruiter_cons"] = [
+        "This is an automatically generated prototype candidate, so employment history must be verified before outreach.",
+        *(debate.get("critical_recruiter_cons") or [])[:2]
+    ]
+    return calibrated
 
 @router.get("/interview-calendar")
 def get_interview_calendar():
@@ -1480,6 +1945,7 @@ def update_candidate_outreach_notes(email: str, payload: UpdateCandidateOutreach
     
     if payload.outreach_email is not None:
         candidate["outreach_email"] = payload.outreach_email
+        record_outreach_history(candidate, payload.outreach_email, "draft", "Draft saved by hiring manager.", payload.position_id)
         if application:
             application["outreach_email"] = payload.outreach_email
             

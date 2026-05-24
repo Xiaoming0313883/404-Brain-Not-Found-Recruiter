@@ -1,20 +1,55 @@
 import html
+import asyncio
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict
+from ..config import settings
 from .agents.matching_agent import build_position_fit_assessment
 
 
+def normalize_linkedin_profile_url(linkedin_url: str) -> str:
+    raw_url = (linkedin_url or "").strip()
+    if not raw_url:
+        raise ValueError("Please enter a LinkedIn profile URL.")
+    if not re.match(r"^https?://", raw_url, flags=re.IGNORECASE):
+        raw_url = f"https://{raw_url}"
+
+    parsed = urllib.parse.urlparse(raw_url)
+    host = (parsed.netloc or "").lower().split(":")[0]
+    if not host.endswith("linkedin.com"):
+        raise ValueError("Please enter a valid LinkedIn profile URL such as https://www.linkedin.com/in/username.")
+
+    path_parts = [urllib.parse.unquote(part) for part in parsed.path.split("/") if part]
+    profile_prefixes = {"in", "pub"}
+    slug = ""
+    for index, part in enumerate(path_parts):
+        if part.lower() in profile_prefixes and index + 1 < len(path_parts):
+            slug = path_parts[index + 1].strip()
+            break
+    if not slug:
+        raise ValueError("Please enter a LinkedIn profile URL containing /in/username or /pub/username.")
+
+    safe_slug = urllib.parse.quote(slug.strip("/"), safe="-_%")
+    return f"https://www.linkedin.com/in/{safe_slug}"
+
+
 def _name_from_url(linkedin_url: str) -> str:
-    if "linkedin.com/in/" not in linkedin_url.lower():
+    try:
+        linkedin_url = normalize_linkedin_profile_url(linkedin_url)
+    except ValueError:
         return "Alex Mercer"
-    slug = linkedin_url.split("linkedin.com/in/")[-1].split("/")[0].split("?")[0]
+    slug = urllib.parse.urlparse(linkedin_url).path.split("/in/")[-1].strip("/")
     return slug.replace("-", " ").replace("_", " ").strip().title() or "Alex Mercer"
 
 
 def _is_linkedin_profile_url(linkedin_url: str) -> bool:
-    return bool(re.match(r"^https?://([a-z]{2,3}\.)?www\.linkedin\.com/in/[^/?#]+", linkedin_url.strip(), flags=re.IGNORECASE))
+    try:
+        normalize_linkedin_profile_url(linkedin_url)
+        return True
+    except ValueError:
+        return False
 
 
 def _extract_meta(html_text: str, property_name: str) -> str:
@@ -47,15 +82,111 @@ def _fetch_public_metadata(linkedin_url: str) -> Dict[str, str]:
     }
 
 
-def scrape_linkedin_profile(linkedin_url: str) -> Dict[str, Any]:
-    """Best-effort LinkedIn profile read from public metadata.
+def _model_dump(value: Any) -> Dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    if hasattr(value, "dict"):
+        return value.dict()
+    return dict(value or {})
 
-    LinkedIn frequently blocks unauthenticated scraping, so this function never
-    fabricates work history. If public metadata is unavailable, it returns only
-    URL-derived identity with an explicit verification warning.
+
+def _date_range(item: Dict[str, Any]) -> str:
+    start = item.get("from_date") or ""
+    end = item.get("to_date") or ""
+    duration = item.get("duration") or ""
+    if start or end:
+        return f"{start} - {end or 'Present'}".strip()
+    return duration
+
+
+async def _scrape_authenticated_profile(linkedin_url: str) -> Dict[str, Any]:
+    from linkedin_scraper import BrowserManager, PersonScraper, login_with_cookie
+
+    async with BrowserManager(headless=settings.LINKEDIN_HEADLESS) as browser:
+        page = browser.page
+        await login_with_cookie(page, settings.LINKEDIN_LI_AT_COOKIE.strip())
+        person = await PersonScraper(page).scrape(linkedin_url)
+
+    person_data = _model_dump(person)
+    experiences = []
+    for item in person_data.get("experiences", []) or []:
+        exp = _model_dump(item)
+        experiences.append({
+            "title": exp.get("position_title") or "",
+            "company": exp.get("institution_name") or "",
+            "duration": _date_range(exp),
+            "description": exp.get("description") or ""
+        })
+
+    education = []
+    for item in person_data.get("educations", []) or []:
+        edu = _model_dump(item)
+        education.append({
+            "school": edu.get("institution_name") or "",
+            "degree": edu.get("degree") or "",
+            "duration": _date_range(edu),
+            "description": edu.get("description") or ""
+        })
+
+    contact_email = ""
+    for item in person_data.get("contacts", []) or []:
+        contact = _model_dump(item)
+        if contact.get("type") == "email" and contact.get("value"):
+            contact_email = contact["value"]
+            break
+
+    name = person_data.get("name") or _name_from_url(linkedin_url)
+    slug = re.sub(r"[^a-z0-9]+", ".", name.lower()).strip(".") or "candidate"
+    return {
+        "name": name,
+        "email": contact_email or f"{slug}@email.com",
+        "headline": (experiences[0].get("title") if experiences else "LinkedIn profile"),
+        "location": person_data.get("location") or "Pending manual verification",
+        "about": person_data.get("about") or "",
+        "experiences": experiences,
+        "education": education,
+        "profile_image_url": "",
+        "scrape_status": "linkedin_authenticated",
+        "scrape_warning": "LinkedIn profile details were captured with the authenticated linkedin-scraper session. Verify before outreach.",
+        "source_url": linkedin_url,
+        "source_type": "linkedin",
+        "source_method": "manual_authenticated"
+    }
+
+
+def _scrape_with_optional_cookie(linkedin_url: str) -> Dict[str, Any]:
+    if not settings.LINKEDIN_LI_AT_COOKIE.strip():
+        return {}
+    try:
+        return asyncio.run(_scrape_authenticated_profile(linkedin_url))
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_scrape_authenticated_profile(linkedin_url))
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("LinkedIn authenticated scrape failed, falling back to public metadata: %s", e)
+            return {}
+        finally:
+            loop.close()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("LinkedIn authenticated scrape failed, falling back to public metadata: %s", e)
+        return {}
+
+
+def scrape_linkedin_profile(linkedin_url: str) -> Dict[str, Any]:
+    """Best-effort LinkedIn profile read.
+
+    When LINKEDIN_LI_AT_COOKIE is configured, linkedin-scraper is used with that
+    authenticated browser cookie. Without it, the app keeps the original public
+    metadata path and marks the record for manual verification.
     """
-    if not _is_linkedin_profile_url(linkedin_url):
-        raise ValueError("Please enter a valid LinkedIn profile URL such as https://www.linkedin.com/in/username.")
+    linkedin_url = normalize_linkedin_profile_url(linkedin_url)
+
+    authenticated_profile = _scrape_with_optional_cookie(linkedin_url)
+    if authenticated_profile:
+        return authenticated_profile
 
     candidate_name = _name_from_url(linkedin_url)
     headline = "LinkedIn profile pending verification"
@@ -98,7 +229,9 @@ def scrape_linkedin_profile(linkedin_url: str) -> Dict[str, Any]:
         "profile_image_url": profile_image_url,
         "scrape_status": scrape_status,
         "scrape_warning": scrape_warning,
-        "source_url": linkedin_url
+        "source_url": linkedin_url,
+        "source_type": "linkedin",
+        "source_method": "manual_public"
     }
 
 

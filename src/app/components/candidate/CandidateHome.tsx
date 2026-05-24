@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import * as Progress from '@radix-ui/react-progress';
-import { ArrowLeft, BarChart3, Briefcase, CheckCircle2, FileText, Loader2, LogOut, MessageSquare, PlayCircle, Send, Users } from 'lucide-react';
+import { ArrowLeft, BarChart3, Bell, Briefcase, CheckCircle2, FileText, Loader2, LogOut, MessageSquare, PlayCircle, Send, User, Users, X } from 'lucide-react';
 import { CandidateData } from '../CandidatePortal';
 
 interface Props {
@@ -58,6 +58,14 @@ const normalizeApplicationStatus = (status: string): CandidateData['status'] =>
                 ? 'profile'
                 : 'applied';
 
+const PAGE_SIZE = 10;
+const getVisiblePages = (currentPage: number, totalPages: number) => {
+  const pages = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+  return Array.from(pages)
+    .filter(page => page >= 1 && page <= totalPages)
+    .sort((a, b) => a - b);
+};
+
 export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: Props) {
   const navigate = useNavigate();
   const [positions, setPositions] = useState<any[]>([]);
@@ -66,6 +74,25 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [profileChatInput, setProfileChatInput] = useState('');
+  const profileChatEndRef = useRef<HTMLDivElement | null>(null);
+  const [applicationPage, setApplicationPage] = useState(1);
+  const [positionPage, setPositionPage] = useState(1);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const notifRef = useRef<HTMLDivElement | null>(null);
+
+  const unreadCount = (candidateData.notifications || []).filter(n => !n.read).length;
+
+  const openPdfInBrowser = async (url: string) => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const win = window.open(blobUrl, '_blank');
+      if (!win) window.open(url, '_blank');
+    } catch {
+      window.open(url, '_blank');
+    }
+  };
   const [profileForm, setProfileForm] = useState({
     name: candidateData.name || '',
     age: candidateData.age || '',
@@ -120,9 +147,65 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
   );
   const selectedEvaluation = selectedApplication?.evaluation || candidateData.evaluation;
   const selectedScore = selectedEvaluation?.screening_score ?? candidateData.score;
-  const canReview = selectedStatus === 'completed' || selectedStatus === 'hired' || selectedStatus === 'interview_scheduled' || selectedStatus === 'rejected';
-  const canContinue = selectedStatus !== 'completed' && selectedStatus !== 'hired' && selectedStatus !== 'rejected' && selectedStatus !== 'interview_scheduled' && selectedStatus !== 'profile' && Boolean(selectedApplication);
+  const selectedAgentError = selectedApplication?.last_agent_error || candidateData.lastAgentError;
+  const canReview = selectedStatus === 'screening' || selectedStatus === 'completed' || selectedStatus === 'hired' || selectedStatus === 'interview_scheduled' || selectedStatus === 'rejected';
+  const canContinue = selectedStatus !== 'completed' && selectedStatus !== 'hired' && selectedStatus !== 'rejected' && selectedStatus !== 'interview_scheduled' && selectedStatus !== 'profile' && Boolean(selectedApplication) && !selectedAgentError && !(selectedApplication?.answers?.length);
   const appliedPositionIds = new Set(applications.map(application => application.position_id));
+  const applicationTotalPages = Math.max(1, Math.ceil(applications.length / PAGE_SIZE));
+  const applicationPageSafe = Math.min(applicationPage, applicationTotalPages);
+  const paginatedApplications = applications.slice((applicationPageSafe - 1) * PAGE_SIZE, applicationPageSafe * PAGE_SIZE);
+  const positionTotalPages = Math.max(1, Math.ceil(positions.length / PAGE_SIZE));
+  const positionPageSafe = Math.min(positionPage, positionTotalPages);
+  const paginatedPositions = positions.slice((positionPageSafe - 1) * PAGE_SIZE, positionPageSafe * PAGE_SIZE);
+
+  const renderPagination = (
+    currentPage: number,
+    totalPages: number,
+    totalItems: number,
+    itemLabel: string,
+    setPage: (page: number | ((previous: number) => number)) => void
+  ) => {
+    if (totalPages <= 1) return null;
+    const visiblePages = getVisiblePages(currentPage, totalPages);
+    return (
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-[#e4e1da] pt-4 mt-4">
+        <span className="text-xs text-[#6b7063]">
+          Showing {Math.min(totalItems, (currentPage - 1) * PAGE_SIZE + 1)} to {Math.min(totalItems, currentPage * PAGE_SIZE)} of {totalItems} {itemLabel}
+        </span>
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            disabled={currentPage === 1}
+            onClick={() => setPage(previous => Math.max(1, previous - 1))}
+            className="px-3 py-1.5 border border-[#e4e1da] bg-white rounded-lg text-xs font-semibold text-[#6b7063] hover:bg-[#f7f6f3] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            Previous
+          </button>
+          {visiblePages.map((page, index) => (
+            <span key={page} className="inline-flex items-center gap-1.5">
+              {index > 0 && page - visiblePages[index - 1] > 1 && <span className="px-1 text-xs text-[#a8a49d]">...</span>}
+              <button
+                onClick={() => setPage(page)}
+                className={`min-w-8 px-2.5 py-1.5 border rounded-lg text-xs font-semibold transition-colors ${
+                  page === currentPage
+                    ? 'border-[#2d6a55] bg-[#e8f2ee] text-[#2d6a55]'
+                    : 'border-[#e4e1da] bg-white text-[#6b7063] hover:bg-[#f7f6f3]'
+                }`}
+              >
+                {page}
+              </button>
+            </span>
+          ))}
+          <button
+            disabled={currentPage === totalPages}
+            onClick={() => setPage(previous => Math.min(totalPages, previous + 1))}
+            className="px-3 py-1.5 border border-[#e4e1da] bg-white rounded-lg text-xs font-semibold text-[#6b7063] hover:bg-[#f7f6f3] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/jobs`)
@@ -135,6 +218,20 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
         setAllPositions([]);
         setPositions([]);
       });
+  }, []);
+
+  useEffect(() => {
+    profileChatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [profileChatMessages, isSavingProfile]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setShowNotifications(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   const mapCandidateFromApi = (data: any, positionTitle = ''): CandidateData => {
@@ -239,7 +336,12 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
       rejectionMessage: activeApp?.rejection_message || data.rejection_message || '',
       rejectedAt: activeApp?.rejected_at || data.rejected_at,
       hiredAt: activeApp?.hired_at || data.hired_at,
-      interviewSlot: activeApp?.interview_slot || data.interview_slot
+      interviewSlot: activeApp?.interview_slot || data.interview_slot,
+      agentWarnings: data.agent_warnings || activeApp?.agent_warnings || candidateData.agentWarnings || [],
+      notifications: data.notifications || candidateData.notifications || [],
+      sourceType: data.source_type || candidateData.sourceType,
+      sourceMethod: data.source_method || candidateData.sourceMethod,
+      lastAgentError: activeApp?.last_agent_error || data.last_agent_error || ''
     };
   };
 
@@ -259,20 +361,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
     setIsApplying(position.id);
     setErrorMessage('');
     try {
-      const response = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(candidateData.email)}/apply-position`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ position_id: position.id })
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to apply for position.');
-      }
-      const data = await response.json();
-      const mapped = mapCandidateFromApi(data, position.title);
-      onUpdateCandidate(mapped);
-      setSelectedApplicationId(mapped.selectedApplicationId || `position-${position.id}`);
-      navigate('/candidate/sandbox');
+      navigate('/candidate/apply-loading', { state: { position } });
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to apply for position.');
     } finally {
@@ -339,7 +428,8 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
         phone: data.profile_data?.phone || form.phone,
         skills: updatedSkills,
         experiences: data.profile_data?.experiences || candidateData.experiences,
-        education: data.profile_data?.education || candidateData.education
+        education: data.profile_data?.education || candidateData.education,
+        agentWarnings: data.agent_warnings || candidateData.agentWarnings || []
       });
       return data;
     } catch (err: any) {
@@ -354,21 +444,60 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
     const answer = profileChatInput.trim();
     if (!answer || !nextMissingField || isSavingProfile) return;
 
-    const nextForm = { ...profileForm, [nextMissingField.field]: answer };
-    const remaining = getMissingFields(nextForm);
-    setProfileForm(nextForm);
     setProfileChatInput('');
     setProfileChatMessages(current => [
       ...current,
-      { role: 'candidate', content: answer },
-      {
-        role: 'agent',
-        content: remaining.length
-          ? `Thanks. Next missing detail: ${remaining[0].question}`
-          : 'Thanks. Your required information details are now complete and saved.'
-      }
+      { role: 'candidate', content: answer }
     ]);
-    await saveProfileDetails(nextForm);
+    setIsSavingProfile(true);
+    setErrorMessage('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(candidateData.email)}/profile-assistant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field: nextMissingField.field, message: answer })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Missing Information Assistant failed.');
+      const updated = data.candidate;
+      const nextForm = {
+        ...profileForm,
+        name: updated.profile_data?.name || updated.name || profileForm.name,
+        age: updated.profile_data?.age || profileForm.age,
+        phone: updated.profile_data?.phone || profileForm.phone,
+        address: updated.profile_data?.address || profileForm.address,
+        cameFrom: updated.profile_data?.came_from || profileForm.cameFrom,
+        location: updated.profile_data?.location || profileForm.location,
+        headline: updated.profile_data?.headline || profileForm.headline,
+        workExperience: updated.profile_data?.work_experience || profileForm.workExperience,
+        qualification: updated.profile_data?.qualification || profileForm.qualification,
+        gradeResults: updated.profile_data?.grade_results || profileForm.gradeResults,
+        awards: (updated.profile_data?.awards || []).join(', '),
+        skills: (updated.profile_data?.skills || []).join(', ')
+      };
+      setProfileForm(nextForm);
+      onUpdateCandidate({
+        ...candidateData,
+        name: updated.name,
+        profileVerified: updated.profile_verified,
+        profileMissingFields: updated.profile_missing_fields || [],
+        profileCompletion: updated.profile_completion,
+        age: updated.profile_data?.age || '',
+        address: updated.profile_data?.address || '',
+        cameFrom: updated.profile_data?.came_from || '',
+        phone: updated.profile_data?.phone || '',
+        workExperience: updated.profile_data?.work_experience || '',
+        qualification: updated.profile_data?.qualification || '',
+        gradeResults: updated.profile_data?.grade_results || '',
+        notifications: updated.notifications || candidateData.notifications || []
+      });
+      setProfileChatMessages(current => [...current, { role: 'agent', content: data.question || data.message }]);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Missing Information Assistant failed.');
+      setProfileChatMessages(current => [...current, { role: 'agent', content: err.message || 'I could not validate that answer. Please try again.' }]);
+    } finally {
+      setIsSavingProfile(false);
+    }
   };
 
   return (
@@ -379,13 +508,77 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
             <ArrowLeft className="w-4 h-4" />
             All Portals
           </Link>
-          <button
-            onClick={onSignOut}
-            className="inline-flex items-center gap-2 text-sm text-[#6b7063] hover:text-[#c25a2a] transition-colors"
-          >
-            <LogOut className="w-4 h-4" />
-            Sign Out
-          </button>
+          <div className="flex items-center gap-3">
+            <div className="relative" ref={notifRef}>
+              <button
+                onClick={() => setShowNotifications(prev => !prev)}
+                className="relative inline-flex items-center justify-center w-9 h-9 rounded-xl border border-[#e4e1da] bg-white hover:bg-[#f7f6f3] transition-colors"
+                title="Notifications"
+              >
+                <Bell className="w-4 h-4 text-[#6b7063]" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#2d6a55] text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+              {showNotifications && (
+                <div className="absolute right-0 top-11 z-50 w-80 bg-white border border-[#e4e1da] rounded-2xl shadow-xl overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-[#e4e1da] bg-[#f7f6f3]">
+                    <div className="flex items-center gap-2">
+                      <Bell className="w-4 h-4 text-[#2d6a55]" />
+                      <span className="text-sm font-semibold text-[#1c1c1a]">Notifications</span>
+                      {unreadCount > 0 && (
+                        <span className="px-2 py-0.5 bg-[#2d6a55] text-white text-[10px] font-bold rounded-full">
+                          {unreadCount} new
+                        </span>
+                      )}
+                    </div>
+                    <button onClick={() => setShowNotifications(false)} className="text-[#a8a49d] hover:text-[#1c1c1a] transition-colors">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="max-h-96 overflow-y-auto">
+                    {(candidateData.notifications || []).length === 0 ? (
+                      <div className="px-4 py-8 text-center">
+                        <Bell className="w-8 h-8 text-[#e4e1da] mx-auto mb-2" />
+                        <p className="text-sm text-[#a8a49d]">No notifications yet</p>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-[#f0ede8]">
+                        {(candidateData.notifications || []).map(notification => (
+                          <div
+                            key={notification.id}
+                            className={`px-4 py-3 ${notification.read ? 'bg-white' : 'bg-[#f0f9f4]'}`}
+                          >
+                            <div className="flex items-start gap-2">
+                              {!notification.read && (
+                                <span className="mt-1.5 w-2 h-2 rounded-full bg-[#2d6a55] flex-shrink-0" />
+                              )}
+                              <div className={!notification.read ? '' : 'ml-4'}>
+                                <p className="text-xs font-semibold text-[#1c1c1a]">{notification.title}</p>
+                                <p className="text-xs text-[#6b7063] mt-0.5 leading-relaxed">{notification.message}</p>
+                                <p className="text-[10px] text-[#a8a49d] mt-1">
+                                  {new Date(notification.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={onSignOut}
+              className="inline-flex items-center gap-2 text-sm text-[#6b7063] hover:text-[#c25a2a] transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign Out
+            </button>
+          </div>
         </div>
 
         <div className="bg-white border border-[#e4e1da] rounded-2xl p-8 shadow-sm mb-5">
@@ -394,7 +587,10 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
             <div>
               <h1 className="text-[#1c1c1a] text-2xl font-semibold mb-1">Welcome back, {candidateData.name}</h1>
               <p className="text-sm text-[#6b7063]">{candidateData.email}</p>
-              <p className="text-sm text-[#1c1c1a] mt-3 font-medium">{selectedPosition?.title || candidateData.position || 'Candidate profile ready'}</p>
+              <Link to="/candidate/information" className="inline-flex items-center gap-2 mt-3 text-sm text-[#2d6a55] font-semibold hover:underline">
+                <User className="w-4 h-4" />
+                Edit information
+              </Link>
             </div>
             {candidateData.profilePictureUrl ? (
               <img src={`${API_ORIGIN}${candidateData.profilePictureUrl}`} alt={candidateData.name} className="w-14 h-14 rounded-2xl object-cover border border-[#e4e1da] flex-shrink-0" />
@@ -405,6 +601,8 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
             )}
           </div>
         </div>
+
+
 
         {selectedStatus === 'rejected' && (
           <div className="mb-6 rounded-2xl border border-[#f5c2c2] bg-[#fff8f8] p-6 shadow-sm">
@@ -448,41 +646,6 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
           </div>
         )}
 
-        {selectedStatus === 'interview_scheduled' && candidateData.interviewSlot && (
-          <div className="mb-6 rounded-2xl border border-[#c5cbf7] bg-[#f5f7ff] p-6 shadow-sm">
-            <div className="flex items-start gap-4">
-              <div className="w-10 h-10 bg-[#eef2ff] rounded-xl flex items-center justify-center flex-shrink-0">
-                <span className="text-[#3730a3] text-lg font-bold">📅</span>
-              </div>
-              <div className="flex-1">
-                <p className="text-xs tracking-wider uppercase text-[#3730a3] mb-1 font-semibold">Interview Scheduled</p>
-                <h2 className="text-[#1c1c1a] mb-2 font-semibold text-lg">Congratulations! Your interview has been scheduled</h2>
-                <p className="text-sm text-[#52574e] leading-relaxed mb-4">
-                  We are excited to discuss this opportunity with you further. Please review the interview slot details below:
-                </p>
-                <div className="bg-white rounded-xl p-4 border border-[#c5cbf7]/40 space-y-3">
-                  <div className="grid sm:grid-cols-2 gap-3 text-sm text-[#1c1c1a]">
-                    <div>
-                      <span className="block text-xs text-[#a8a49d] font-medium">Date & Time</span>
-                      <span className="font-semibold">{candidateData.interviewSlot.date} at {candidateData.interviewSlot.time}</span>
-                    </div>
-                    <div>
-                      <span className="block text-xs text-[#a8a49d] font-medium">Location / Link</span>
-                      <span className="font-semibold">{candidateData.interviewSlot.location}</span>
-                    </div>
-                  </div>
-                  {candidateData.interviewSlot.notes && (
-                    <div className="border-t border-[#e4e1da] pt-3">
-                      <span className="block text-xs text-[#a8a49d] font-medium mb-1">Additional Instructions</span>
-                      <p className="text-xs text-[#6b7063] leading-relaxed">{candidateData.interviewSlot.notes}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
         {candidateData.emailVerified === false && (
           <div className="mb-5 rounded-xl border border-[#f2d3a4] bg-[#fff8ed] px-4 py-3 text-sm text-[#8a5a14]">
             Email verification is required before applying to a position. Sign out and complete the verification step from the Candidate Portal.
@@ -502,6 +665,13 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
               {candidateData.profileExtractionWarning}
             </div>
           )}
+          {candidateData.agentWarnings?.length ? (
+            <div className="mb-4 rounded-xl border border-[#f5c2c2] bg-[#fdf2f2] px-4 py-3 text-sm text-[#b91c1c] space-y-1">
+              {candidateData.agentWarnings.map((warning, index) => (
+                <p key={index}>{warning}</p>
+              ))}
+            </div>
+          ) : null}
           <div className="flex items-center justify-between gap-3 rounded-xl border border-[#e4e1da] bg-[#f7f6f3] px-4 py-3 mb-4">
             <div>
               <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Profile Completion</p>
@@ -630,6 +800,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
                     </div>
                   </div>
                 ))}
+                <div ref={profileChatEndRef} />
                 {isSavingProfile && (
                   <div className="flex justify-start">
                     <div className="rounded-xl px-3 py-2 text-xs bg-[#f0ede8] text-[#6b7063] inline-flex items-center gap-2">
@@ -714,18 +885,16 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
                 <p className="text-xs text-[#6b7063]">Choose an applied position to continue, review feedback, or track progress.</p>
               </div>
               {candidateData.resumeUrl && (
-                <a
-                  href={`${API_ORIGIN}${candidateData.resumeUrl}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex mt-4 text-xs text-[#2d6a55] font-semibold hover:underline"
+                <button
+                  onClick={() => openPdfInBrowser(`${API_ORIGIN}${candidateData.resumeUrl!}`)}
+                  className="inline-flex mt-4 text-xs text-[#2d6a55] font-semibold hover:underline cursor-pointer"
                 >
                   View uploaded resume PDF
-                </a>
+                </button>
               )}
             </div>
             <div className="space-y-2">
-              {applications.map(application => {
+              {paginatedApplications.map(application => {
                 const position = allPositions.find(item => item.id === application.position_id);
                 const isSelected = application.application_id === selectedApplication?.application_id;
                 const applicationStatus = normalizeApplicationStatus(application.status);
@@ -750,14 +919,16 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
                         ),
                         appliedAt: application.applied_at,
                         customQuestions: application.custom_questions,
-                        sandboxAnswers: application.answers,
+                        sandboxAnswers: application.answers?.length ? application.answers : application.draft_answers,
                         score: application.evaluation?.screening_score,
                         evaluation: application.evaluation,
                         hrFeedback: application.hr_feedback || '',
                         rejectionMessage: application.rejection_message || '',
                         rejectedAt: application.rejected_at,
                         hiredAt: application.hired_at,
-                        interviewSlot: application.interview_slot
+                        interviewSlot: application.interview_slot,
+                        agentWarnings: application.agent_warnings || candidateData.agentWarnings || [],
+                        lastAgentError: application.last_agent_error || ''
                       });
                     }}
                     className={`w-full text-left border rounded-xl p-4 transition-colors ${isSelected ? 'border-[#2d6a55]/40 bg-[#f0f9f4]' : 'border-[#e4e1da] hover:bg-[#f7f6f3]'}`}
@@ -776,10 +947,52 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
                 );
               })}
             </div>
+            {renderPagination(applicationPageSafe, applicationTotalPages, applications.length, 'applications', setApplicationPage)}
+          </div>
+        )}
+
+        {/* Interview Scheduled Card — below Application History */}
+        {selectedStatus === 'interview_scheduled' && candidateData.interviewSlot && (
+          <div className="mb-5 rounded-2xl border border-[#c5cbf7] bg-[#f5f7ff] p-6 shadow-sm">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 bg-[#eef2ff] rounded-xl flex items-center justify-center flex-shrink-0">
+                <span className="text-[#3730a3] text-lg font-bold">📅</span>
+              </div>
+              <div className="flex-1">
+                <p className="text-xs tracking-wider uppercase text-[#3730a3] mb-1 font-semibold">Interview Scheduled</p>
+                <h2 className="text-[#1c1c1a] mb-2 font-semibold text-lg">Congratulations! Your interview has been scheduled</h2>
+                <p className="text-sm text-[#52574e] leading-relaxed mb-4">
+                  We are excited to discuss this opportunity with you further. Please review the interview slot details below:
+                </p>
+                <div className="bg-white rounded-xl p-4 border border-[#c5cbf7]/40 space-y-3">
+                  <div className="grid sm:grid-cols-2 gap-3 text-sm text-[#1c1c1a]">
+                    <div>
+                      <span className="block text-xs text-[#a8a49d] font-medium">Date &amp; Time</span>
+                      <span className="font-semibold">{candidateData.interviewSlot.date} at {candidateData.interviewSlot.time}</span>
+                    </div>
+                    <div>
+                      <span className="block text-xs text-[#a8a49d] font-medium">Location / Link</span>
+                      <span className="font-semibold">{candidateData.interviewSlot.location}</span>
+                    </div>
+                  </div>
+                  {candidateData.interviewSlot.notes && (
+                    <div className="border-t border-[#e4e1da] pt-3">
+                      <span className="block text-xs text-[#a8a49d] font-medium mb-1">Additional Instructions</span>
+                      <p className="text-xs text-[#6b7063] leading-relaxed">{candidateData.interviewSlot.notes}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
         <div className="grid sm:grid-cols-3 gap-3">
+          {selectedAgentError && (
+            <div className="sm:col-span-3 rounded-xl border border-[#f5c2c2] bg-[#fdf2f2] p-4 text-sm text-[#b91c1c]">
+              {selectedAgentError}
+            </div>
+          )}
           {canContinue && (
             <Link
               to="/candidate/sandbox"
@@ -825,13 +1038,23 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
           </div>
 
           <div className="space-y-3">
-            {positions.map(position => (
+            {paginatedPositions.map(position => (
               <div key={position.id} className="border border-[#e4e1da] rounded-xl p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="text-sm text-[#1c1c1a] font-semibold">{position.title}</p>
                     <p className="text-xs text-[#6b7063] mb-2">{position.department}</p>
                     <p className="text-xs text-[#6b7063] leading-relaxed">{position.description}</p>
+                    {position.address && (
+                      <div className="mt-3 overflow-hidden rounded-xl border border-[#e4e1da]">
+                        <iframe
+                          title={`${position.title} map`}
+                          src={`https://www.google.com/maps?q=${encodeURIComponent(position.address)}&output=embed`}
+                          className="w-full h-40"
+                          loading="lazy"
+                        />
+                      </div>
+                    )}
                     <p className="text-xs text-[#a8a49d] mt-2">
                       Open: {formatDateTime(position.open_time)} to {formatDateTime(position.end_time)}
                       <span className="ml-2 text-[#2d6a55] font-semibold">{position.application_count || 0} applied</span>
@@ -859,6 +1082,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
               <p className="text-sm text-[#6b7063] py-6 text-center">No active positions are available right now.</p>
             )}
           </div>
+          {renderPagination(positionPageSafe, positionTotalPages, positions.length, 'positions', setPositionPage)}
         </div>
 
         <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mt-5">
@@ -866,9 +1090,12 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
             <MessageSquare className="w-4 h-4 text-[#2d6a55]" />
             <h2 className="text-[#1c1c1a] font-semibold">Agent & Hiring Manager Feedback</h2>
           </div>
-          {candidateData.evaluation?.critiques?.length ? (
+          <p className="text-xs text-[#6b7063] mb-4">
+            Selected position: {selectedPosition?.title || (selectedApplication ? `Position #${selectedPositionId}` : 'Choose an application above')}
+          </p>
+          {selectedEvaluation?.critiques?.length ? (
             <div className="space-y-3">
-              {candidateData.evaluation.critiques.map((item: any, index: number) => (
+              {selectedEvaluation.critiques.map((item: any, index: number) => (
                 <div key={index} className="border-l-2 border-[#2d6a55] bg-[#f7f6f3] rounded-r-xl p-3">
                   <p className="text-xs text-[#2d6a55] font-semibold mb-1">Question {index + 1}</p>
                   <p className="text-xs text-[#6b7063]">{item.critique}</p>

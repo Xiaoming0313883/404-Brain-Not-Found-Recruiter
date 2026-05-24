@@ -4,6 +4,8 @@ import { CandidateLogin } from './candidate/CandidateLogin';
 import { CandidateHome } from './candidate/CandidateHome';
 import { CandidateSandbox } from './candidate/CandidateSandbox';
 import { CandidateFeedback } from './candidate/CandidateFeedback';
+import { CandidateInformation } from './candidate/CandidateInformation';
+import { CandidateApplyLoading } from './candidate/CandidateApplyLoading';
 
 export interface CandidateData {
   email: string;
@@ -26,6 +28,9 @@ export interface CandidateData {
     rejected_at?: string;
     hired_at?: string;
     interview_slot?: any;
+    agent_warnings?: string[];
+    draft_answers?: string[];
+    last_agent_error?: string;
   }>;
   status: 'profile' | 'sourced' | 'applied' | 'screening' | 'completed' | 'hired' | 'rejected' | 'interview_scheduled';
   progress: number;
@@ -73,6 +78,12 @@ export interface CandidateData {
   rejectedAt?: string;
   hiredAt?: string;
   interviewSlot?: any;
+  agentWarnings?: string[];
+  notifications?: Array<{ id: string; title: string; message: string; kind: string; position_id?: number; created_at: string; read: boolean }>;
+  sourceType?: string;
+  sourceMethod?: string;
+  draftAnswers?: Record<string, string[]>;
+  lastAgentError?: string;
 }
 
 const CANDIDATE_SESSION_KEY = 'candidateSessionV3';
@@ -121,6 +132,33 @@ export function CandidatePortal() {
           }
         />
         <Route
+          path="/information"
+          element={
+            candidateData ? (
+              <CandidateInformation
+                candidateData={candidateData}
+                onUpdateCandidate={setCandidateData}
+                onSignOut={handleSignOut}
+              />
+            ) : (
+              <Navigate to="/candidate" replace />
+            )
+          }
+        />
+        <Route
+          path="/apply-loading"
+          element={
+            candidateData ? (
+              <CandidateApplyLoading
+                candidateData={candidateData}
+                onUpdateCandidate={setCandidateData}
+              />
+            ) : (
+              <Navigate to="/candidate" replace />
+            )
+          }
+        />
+        <Route
           path="/new"
           element={
             candidateData ? (
@@ -137,22 +175,39 @@ export function CandidatePortal() {
         <Route
           path="/sandbox"
           element={
-            candidateData?.jobId && candidateData.status !== 'completed' && candidateData.status !== 'hired' && candidateData.status !== 'rejected' && candidateData.status !== 'interview_scheduled' ? (
+            candidateData?.jobId && candidateData.status !== 'completed' && candidateData.status !== 'hired' && candidateData.status !== 'rejected' && candidateData.status !== 'interview_scheduled' && !candidateData.lastAgentError ? (
               <CandidateSandbox
                 candidateData={candidateData}
-                onComplete={(answers, score, evaluation) => {
+                onComplete={(answers, score, evaluation, agentWarnings = []) => {
                   const selectedPositionId = candidateData.jobId;
                   const selectedApplicationId = candidateData.selectedApplicationId;
                   setCandidateData({
                     ...candidateData,
                     sandboxAnswers: answers,
                     score,
-                    status: 'completed',
-                    progress: 100,
+                    status: 'screening',
+                    progress: 70,
                     evaluation,
+                    agentWarnings: [...(candidateData.agentWarnings || []), ...agentWarnings],
                     applications: candidateData.applications?.map(application =>
                       application.application_id === selectedApplicationId || application.position_id === selectedPositionId
-                        ? { ...application, status: 'completed', progress: 100, answers, evaluation }
+                        ? { ...application, status: 'screening', progress: 70, answers, evaluation, agent_warnings: agentWarnings }
+                        : application
+                    )
+                  });
+                }}
+                onAgentError={(answers, message) => {
+                  const selectedPositionId = candidateData.jobId;
+                  const selectedApplicationId = candidateData.selectedApplicationId;
+                  setCandidateData({
+                    ...candidateData,
+                    sandboxAnswers: answers,
+                    status: 'screening',
+                    progress: 70,
+                    lastAgentError: message,
+                    applications: candidateData.applications?.map(application =>
+                      application.application_id === selectedApplicationId || application.position_id === selectedPositionId
+                        ? { ...application, status: 'screening', progress: 70, answers, draft_answers: answers, last_agent_error: message }
                         : application
                     )
                   });
@@ -166,7 +221,7 @@ export function CandidatePortal() {
         <Route
           path="/feedback"
           element={
-            candidateData && (candidateData.status === 'completed' || candidateData.status === 'hired') ? (
+            candidateData && (candidateData.status === 'screening' || candidateData.status === 'completed' || candidateData.status === 'hired' || candidateData.status === 'rejected' || candidateData.status === 'interview_scheduled') ? (
               <CandidateFeedback candidateData={candidateData} />
             ) : (
               <Navigate to="/candidate" replace />

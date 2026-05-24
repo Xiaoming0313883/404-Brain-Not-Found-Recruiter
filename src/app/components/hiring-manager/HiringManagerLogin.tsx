@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { ArrowLeft, Eye, EyeOff, Loader2, Briefcase } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { BrandLogo } from '../BrandLogo';
 
 interface Props {
   onAuthenticate: (user: { name: string; email: string; role: string }) => void;
@@ -59,11 +60,9 @@ export function HiringManagerLogin({ onAuthenticate }: Props) {
       <div className="w-full max-w-sm">
         {/* Brand */}
         <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center w-12 h-12 bg-[#2d6a55] rounded-xl mb-5">
-            <Briefcase className="w-5 h-5 text-white" />
-          </div>
+          <BrandLogo className="justify-center mb-5" imageClassName="h-16" />
           <p className="text-xs tracking-[0.2em] uppercase text-[#2d6a55] mb-2">Hiring Manager Portal</p>
-          <h1 className="text-[#1c1c1a]">Sign In</h1>
+          <h1 className="text-[#1c1c1a]">Sign In to 404Hire</h1>
           <p className="text-sm text-[#6b7063] mt-2">Access your recruitment workspace</p>
         </div>
 

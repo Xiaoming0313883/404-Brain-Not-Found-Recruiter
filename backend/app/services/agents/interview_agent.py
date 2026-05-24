@@ -32,7 +32,7 @@ Return ONLY valid JSON.
                     {"role": "user", "content": f"Current Position: {json.dumps(job_requirements or {})}\nCandidate Profile: {json.dumps(candidate_profile)}\nRecruiter Concerns: {json.dumps(critical_cons)}"}
                 ]
             )
-            return parse_llm_json(response.choices[0].message.content)
+            return normalize_screening_questions(parse_llm_json(response.choices[0].message.content))
         except Exception as e:
             print(f"Interview Agent Phase A API error: {e}. Falling back to default generator.")
 
@@ -49,17 +49,31 @@ Return ONLY valid JSON.
         primary = focus_terms[0]
         secondary = focus_terms[1] if len(focus_terms) > 1 else title
         tertiary = focus_terms[2] if len(focus_terms) > 2 else "the role's success metrics"
-        return [
+        return normalize_screening_questions([
             f"For the {title} position, describe a specific project where you used {primary}. What trade-offs did you make and what measurable result did you achieve?",
             f"This role requires strength in {secondary}. Walk through how you would solve a realistic problem in our context, including design decisions and failure handling.",
             f"What evidence from your past work shows you can deliver against {tertiary} for this position, and what gap would you close first after joining?"
-        ]
+        ])
 
-    return [
+    return normalize_screening_questions([
         f"For the {title} position, describe the most relevant project from your background and the measurable impact you delivered.",
         f"What part of the {title} role would be highest risk for you, and how would you close that gap in your first month?",
         f"Walk through a technical decision you made that best proves your fit for {title}."
-    ]
+    ])
+
+def normalize_screening_questions(value: Any) -> List[str]:
+    raw_items = value if isinstance(value, list) else []
+    questions: List[str] = []
+    for item in raw_items:
+        question = str(item or "").strip().strip('"')
+        question = re.sub(r"^(question\s*\d*|content|contents)\s*[:\-]\s*", "", question, flags=re.IGNORECASE).strip()
+        if question:
+            if not question.endswith("?"):
+                question = question.rstrip(".") + "?"
+            questions.append(question)
+    if len(questions) != 3:
+        raise ValueError("Interview Agent must return exactly 3 valid questions.")
+    return questions
 
 def run_interview_agent_phase_b(questions: List[str], answers: List[str], job_requirements: Dict[str, Any]) -> Dict[str, Any]:
     """Phase B: Evaluate answers against job requirements with detailed structured critique."""
@@ -84,7 +98,7 @@ Output JSON Format:
   "screening_score": 82,
   "position_fit_verdict": "Strong / Moderate / Weak fit for the current position",
   "hiring_recommendation": "advance / hold / reject",
-  "role_alignment_summary": "2-3 sentences explaining the score for this exact position.",
+  "role_alignment_summary": "4-6 sentences explaining the score for this exact position, written for a hiring manager who needs to decide what to do next.",
   "score_breakdown": {
     "role_requirement_alignment": 28,
     "technical_correctness_depth": 20,
@@ -98,16 +112,18 @@ Output JSON Format:
       "candidate_answer_excerpt": "Short excerpt or faithful summary from the candidate's actual answer",
       "per_answer_score": 82,
       "requirement_focus": "The role requirement or gap this answer was judged against.",
-      "critique": "Overall 1-2 sentence summary of the answer quality.",
+      "critique": "A detailed 4-6 sentence hiring-manager opinion. Explain what the answer proves, what it does not prove, why the score is justified, and how confident the evaluator should be.",
       "strengths": ["Specific strength 1", "Specific strength 2"],
       "weaknesses": ["Specific gap or weakness 1", "Area needing improvement 2"],
-      "suggested_improvement": "A concrete, actionable suggestion the candidate can act on to improve their answer or skill."
+      "suggested_improvement": "A concrete, actionable suggestion the candidate can act on to improve their answer or skill.",
+      "hiring_manager_note": "A practical recommendation for the hiring manager, including follow-up evidence to request or interview probes to use."
     }
   ]
 }
 - strengths: list of 1-3 concrete positives from the answer
 - weaknesses: list of 1-3 specific gaps, omissions, or weak points
 - suggested_improvement: one clear, specific actionable tip
+- hiring_manager_note: 2-3 sentences describing the evaluator's opinion and what the hiring manager should verify next
 Return ONLY valid JSON. No markdown code fences.
 """
 
@@ -238,11 +254,15 @@ def build_position_specific_evaluation(questions: List[str], answers: List[str],
         critiques.append({
             "question": q,
             "candidate_answer_excerpt": _answer_excerpt(a),
+            "candidate_answer": a,
             "per_answer_score": per_answer_score,
             "requirement_focus": requirement_focus,
             "critique": (
                 f"The answer scored {per_answer_score}/100 for {title}. "
-                f"It {'connects to role evidence around ' + ', '.join(matched_terms[:2]) if matched_terms else 'does not clearly connect to the current position requirements'} based on the candidate's response: \"{_answer_excerpt(a, 120)}\""
+                f"My opinion is that it {'provides useful role evidence around ' + ', '.join(matched_terms[:2]) if matched_terms else 'does not yet provide enough direct evidence for the current position requirements'}. "
+                f"The candidate's answer was reviewed against the actual prompt and the excerpt: \"{_answer_excerpt(a, 140)}\". "
+                f"The strongest part of the response is its connection to {', '.join(matched_terms[:2]) if matched_terms else 'the question at a basic level'}, while the main concern is {', '.join(missing_terms[:2]) if missing_terms else 'whether the example transfers cleanly to the role context'}. "
+                f"For a hiring manager, this should be treated as {'supporting evidence' if per_answer_score >= 70 else 'a verification risk'} rather than a final decision by itself."
             ),
             "strengths": [
                 f"Mentions role-relevant evidence: {', '.join(matched_terms[:3])}." if matched_terms else "Addresses the question at a basic level.",
@@ -254,6 +274,10 @@ def build_position_specific_evaluation(questions: List[str], answers: List[str],
             ],
             "suggested_improvement": (
                 f"Revise this answer by naming one project that used {requirement_focus}, then explain your decision, trade-offs, and measurable impact for the {title} role."
+            ),
+            "hiring_manager_note": (
+                f"Use this answer to probe for concrete evidence of {requirement_focus}. "
+                f"Ask the candidate to walk through one implementation choice, one constraint, and one measurable result so you can separate confidence from demonstrated fit."
             )
         })
 
@@ -276,7 +300,10 @@ def build_position_specific_evaluation(questions: List[str], answers: List[str],
         "hiring_recommendation": recommendation,
         "role_alignment_summary": (
             f"The score is based on how directly the answers prove readiness for {title}. "
-            f"Role alignment contributed {score_breakdown['role_requirement_alignment']}/35 and evidence specificity contributed {score_breakdown['evidence_specificity']}/20."
+            f"Role alignment contributed {score_breakdown['role_requirement_alignment']}/35 and evidence specificity contributed {score_breakdown['evidence_specificity']}/20. "
+            f"My evaluator opinion is that the candidate should be judged by the depth of the examples, not by general confidence or length. "
+            f"Where the answers name role-relevant methods or outcomes, they create useful evidence for the hiring manager. "
+            f"Where the answers stay broad, the next interview should request implementation detail, constraints, trade-offs, and measurable impact before making a final decision."
         ),
         "score_breakdown": score_breakdown,
         "critiques": critiques
@@ -303,12 +330,14 @@ def normalize_interview_evaluation(parsed: Dict[str, Any], questions: List[str],
         normalized_critiques.append({
             "question": item.get("question") or question,
             "candidate_answer_excerpt": excerpt,
+            "candidate_answer": item.get("candidate_answer") or answer,
             "per_answer_score": item.get("per_answer_score", fallback_item.get("per_answer_score", 0)),
             "requirement_focus": item.get("requirement_focus") or fallback_item.get("requirement_focus", ""),
             "critique": critique_text,
             "strengths": item.get("strengths") if isinstance(item.get("strengths"), list) and item.get("strengths") else fallback_item.get("strengths", []),
             "weaknesses": item.get("weaknesses") if isinstance(item.get("weaknesses"), list) and item.get("weaknesses") else fallback_item.get("weaknesses", []),
-            "suggested_improvement": item.get("suggested_improvement") or fallback_item.get("suggested_improvement", "")
+            "suggested_improvement": item.get("suggested_improvement") or fallback_item.get("suggested_improvement", ""),
+            "hiring_manager_note": item.get("hiring_manager_note") or fallback_item.get("hiring_manager_note", "")
         })
 
     score_breakdown = parsed.get("score_breakdown") if isinstance(parsed.get("score_breakdown"), dict) else fallback.get("score_breakdown", {})

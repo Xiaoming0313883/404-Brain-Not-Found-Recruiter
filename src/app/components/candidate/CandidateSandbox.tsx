@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { CandidateData } from '../CandidatePortal';
 import * as Progress from '@radix-ui/react-progress';
@@ -6,7 +6,8 @@ import { CheckCircle2, AlertCircle, Loader2, Mic, MicOff } from 'lucide-react';
 
 interface Props {
   candidateData: CandidateData;
-  onComplete: (answers: string[], score: number, evaluation: any) => void;
+  onComplete: (answers: string[], score: number, evaluation: any, agentWarnings?: string[]) => void;
+  onAgentError?: (answers: string[], message: string) => void;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -17,9 +18,14 @@ const defaultQuestions = [
   "What is your approach to handling database replication lag in a high-throughput, globally distributed application?"
 ];
 
-export function CandidateSandbox({ candidateData, onComplete }: Props) {
+export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Props) {
   const navigate = useNavigate();
-  const [answers, setAnswers] = useState<string[]>(['', '', '']);
+  const initialAnswers = useMemo(() => {
+    const currentDraft = candidateData.applications?.find(application => application.position_id === candidateData.jobId)?.draft_answers;
+    const storedAnswers = candidateData.sandboxAnswers || currentDraft || [];
+    return [storedAnswers[0] || '', storedAnswers[1] || '', storedAnswers[2] || ''];
+  }, [candidateData]);
+  const [answers, setAnswers] = useState<string[]>(initialAnswers);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState<boolean[]>([false, false, false]);
   const [errorMessage, setErrorMessage] = useState('');
@@ -48,6 +54,18 @@ export function CandidateSandbox({ candidateData, onComplete }: Props) {
     }
   };
 
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      if (!candidateData.jobId || answers.every(answer => !answer.trim())) return;
+      fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(candidateData.email)}/draft-answers`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answers, position_id: candidateData.jobId })
+      }).catch(() => undefined);
+    }, 500);
+    return () => window.clearTimeout(handle);
+  }, [answers, candidateData.email, candidateData.jobId]);
+
   const handleSubmit = async () => {
     setErrorMessage('');
     const errors = answers.map(answer => answer.trim().length < 10);
@@ -57,6 +75,11 @@ export function CandidateSandbox({ candidateData, onComplete }: Props) {
     setIsSubmitting(true);
 
     try {
+      await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(candidateData.email)}/draft-answers`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answers, position_id: candidateData.jobId })
+      }).catch(() => undefined);
       const response = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(candidateData.email)}/sandbox`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -71,30 +94,13 @@ export function CandidateSandbox({ candidateData, onComplete }: Props) {
       const data = await response.json();
       
       const score = data.evaluation?.screening_score || 80;
-      onComplete(answers, score, data.evaluation);
+      onComplete(answers, score, data.evaluation, data.agent_warnings || []);
       navigate('/candidate/feedback');
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(err.message || 'API connection failed. Simulating local evaluation.');
-      
-      // Fallback evaluation for seamless offline prototyping
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      const avgLength = answers.reduce((sum, ans) => sum + ans.length, 0) / answers.length;
-      const fallbackScore = Math.min(100, Math.round(40 + (avgLength / 10)));
-      const mockEvaluation = {
-        screening_score: fallbackScore,
-        critiques: rawQuestions.map((q, idx) => ({
-          question: q,
-          critique: "Simulated review: Clear explanation demonstrating domain competency."
-        })),
-        upskilling_roadmap: {
-          week_1: "Explore basic component caching strategies and backend architecture structures.",
-          week_2: "Build simple modular units and wire them into testing validation blocks.",
-          week_3: "Implement real-time notification components and secure environment configurations."
-        }
-      };
-      onComplete(answers, fallbackScore, mockEvaluation);
-      navigate('/candidate/feedback');
+      const message = err.message || 'Unable to evaluate your answers. Please try again when the API is available.';
+      setErrorMessage(message);
+      onAgentError?.(answers, message);
     } finally {
       setIsSubmitting(false);
     }

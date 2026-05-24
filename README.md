@@ -1,67 +1,102 @@
-# 404 Brain Not Found Recruiter
+# 404Hire
 
-An AI-assisted dual-portal recruitment workspace for hiring managers and candidates. The system helps hiring managers define roles through an adaptive Requirement Agent, source and review candidates, store uploaded resumes, analyze candidate-role fit, and run candidate screening sessions. Candidates can register, upload a resume, verify extracted profile details, apply to open positions, and complete AI-generated interview questions.
+404Hire is an AI-assisted recruitment workspace built for hiring managers and candidates. It combines job intake, LinkedIn-style sourcing, resume validation, candidate account management, profile completion, screening questions, match scoring, and hiring-manager feedback in one local-first prototype.
+
+The project was built for coursework, demos, and rapid product validation. It uses a React/Vite frontend, a FastAPI backend, OpenAI-compatible agent services, local JSON storage, and local file uploads.
+
+![404Hire logo](src/assets/404hire-logo.jpeg)
 
 ## Table Of Contents
 
-- [What This Project Does](#what-this-project-does)
-- [Core Features](#core-features)
+- [Product Overview](#product-overview)
+- [Core Capabilities](#core-capabilities)
+- [User Roles](#user-roles)
 - [System Architecture](#system-architecture)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
-- [Environment Setup](#environment-setup)
-- [Install From Zero](#install-from-zero)
-- [Run The Project](#run-the-project)
-- [Login And Demo Data](#login-and-demo-data)
-- [Main Workflows](#main-workflows)
-- [AI Agents](#ai-agents)
-- [Resume Upload And OCR Notes](#resume-upload-and-ocr-notes)
+- [Environment Variables](#environment-variables)
+- [Installation](#installation)
+- [Running Locally](#running-locally)
+- [Demo Accounts](#demo-accounts)
+- [Key Workflows](#key-workflows)
+- [AI Agent Design](#ai-agent-design)
 - [API Reference](#api-reference)
-- [Data Storage](#data-storage)
+- [Data And Upload Storage](#data-and-upload-storage)
+- [Validation And Safety Rules](#validation-and-safety-rules)
 - [Useful Commands](#useful-commands)
 - [Troubleshooting](#troubleshooting)
-- [Production Notes](#production-notes)
+- [Production Readiness Notes](#production-readiness-notes)
 
-## What This Project Does
+## Product Overview
 
-This project simulates a modern recruitment platform with two portals:
+404Hire provides two coordinated portals:
 
-1. **Hiring Manager Portal**
-   - Build job positions with an adaptive AI intake.
-   - Generate job descriptions and requirements from manager answers.
-   - Source candidates through the LinkedIn sourcing simulator.
-   - Review candidate dashboards by position.
-   - View uploaded resumes, resume text, extracted basic information, scores, and AI analysis.
+1. Hiring Manager Portal
+   - Build and manage job positions.
+   - Use an adaptive Requirement Agent to gather role context.
+   - Run automatic prototype candidate sourcing.
+   - Analyze manual LinkedIn profile URLs.
+   - Review candidates by position and pipeline status.
+   - Manage candidate accounts on a dedicated account page.
+   - Schedule interviews, reject candidates, complete screening, and mark hires.
 
-2. **Candidate Portal**
-   - Register or log in with email and password.
-   - Upload a PDF resume.
-   - Let the Resume Agent extract profile details.
-   - Verify or complete required details before applying.
-   - Apply once per position.
-   - Complete an AI-generated screening sandbox.
-   - View results, feedback, and upskilling roadmap.
+2. Candidate Portal
+   - Enter an email and verify it before profile creation.
+   - Upload a valid PDF resume.
+   - Let the Resume Agent extract structured profile details.
+   - Complete missing required information.
+   - Apply to open positions.
+   - Complete AI-generated screening questions.
+   - Review score, feedback, and upskilling guidance.
 
-The project is intentionally local-first and uses a JSON file as the database, making it easy to run for demos, coursework, and prototyping.
+The system is intentionally transparent in prototype mode. When SMTP is not configured, 404Hire shows the prototype email verification code directly on the page so the flow remains testable.
 
-## Core Features
+## Core Capabilities
 
-- Dual portal routing for hiring managers and candidates.
-- Adaptive Requirement Agent for job builder intake.
-- AI-generated job descriptions, requirements, sourcing summaries, and Boolean search profiles.
-- Candidate resume upload and storage.
-- Resume PDF viewing from the hiring manager dashboard.
-- Resume Agent profile extraction.
-- Candidate information verification before applications.
-- Per-position candidate application tracking.
-- Duplicate application prevention.
-- Candidate screening sandbox with generated questions.
-- Screening score, critique, and roadmap generation.
-- Hiring manager candidate analytics by position.
-- Scatter chart for match score vs trajectory score.
-- Bias mitigation controls and anonymized review mode.
-- Local JSON database with thread-safe file access.
+- Dual-portal React application.
+- Hiring manager login with demo accounts.
+- Candidate email lookup, account creation, login, and password setup.
+- Prototype-first email verification before candidate profile creation.
+- Resume upload with PDF validation and text extraction.
+- Resume Agent profile extraction with manual completion flow.
+- Required candidate information verification before applications.
+- Position creation with open and close application windows.
+- Adaptive job intake using the Requirement Agent.
+- LinkedIn URL normalization for common profile link formats.
+- Automatic prototype candidate sourcing based on selected job requirements.
+- Matching Agent scoring and debate-style analysis.
+- Interview Agent screening question generation and answer evaluation.
+- Detailed AI feedback for hiring managers, including evidence, risks, notes, and follow-up probes.
+- Candidate account management on a separate hiring-manager page.
+- Pagination for candidate pipeline, candidate accounts, candidate application history, and candidate positions.
+- Bias mitigation and neutralized candidate review.
+- Local JSON database and upload directory for simple development.
+
+## User Roles
+
+### Hiring Manager
+
+Hiring managers create jobs, source candidates, inspect candidate records, review match analysis, and manage candidate progress through the recruiting funnel.
+
+Main pages:
+
+- Job Builder
+- LinkedIn Sourcing
+- Candidate Pipeline
+- Candidate Accounts
+- Interview Calendar
+
+### Candidate
+
+Candidates verify their email, upload resumes, complete profile details, apply to available positions, answer screening questions, and review feedback.
+
+Main pages:
+
+- Candidate Login
+- Candidate Home
+- Candidate Screening Sandbox
+- Candidate Feedback
 
 ## System Architecture
 
@@ -76,15 +111,15 @@ src/app
   v
 FastAPI backend
   |
-  | Routes
+  | /api/v1 routes
   v
 backend/app/routes
   |
-  | Agent orchestration + storage helpers
+  | service orchestration
   v
 backend/app/services
   |
-  | JSON data + uploaded files
+  | agents, mailer, LinkedIn helpers, job windows
   v
 backend/data/recruiting_db.json
 backend/uploads/
@@ -92,20 +127,20 @@ backend/uploads/
 
 ### Frontend
 
-The frontend is a Vite React app. It uses React Router for portal routing, Tailwind-style utility classes for styling, Radix UI primitives for controls, Lucide icons, and Recharts for charts.
+The frontend is a Vite React application. It uses React Router for portal routing, utility CSS classes for styling, Radix UI primitives for interaction controls, Lucide React for icons, Recharts for charts, and Motion for small UI transitions.
 
 ### Backend
 
-The backend is a FastAPI app. It exposes REST endpoints under `/api/v1`, stores data in `backend/data/recruiting_db.json`, stores uploaded resumes in `backend/uploads/resumes`, and runs local/LLM-powered agent functions.
+The backend is a FastAPI application. It exposes REST routes under `/api/v1`, stores candidate and job data in a local JSON database, stores uploaded resumes on disk, and calls agent services for resume parsing, requirement intake, matching, interview evaluation, and reporting.
 
 ## Tech Stack
 
 ### Frontend
 
 - React
-- Vite
 - TypeScript
-- Tailwind CSS
+- Vite
+- Tailwind-style utility classes
 - Radix UI
 - Lucide React
 - Recharts
@@ -119,90 +154,88 @@ The backend is a FastAPI app. It exposes REST endpoints under `/api/v1`, stores 
 - Pydantic
 - OpenAI-compatible chat completions client
 - pypdf
-- Pillow
-- pytesseract
-- python-multipart
+- PyMuPDF and pdfminer fallbacks when available
+- Pillow, pytesseract, and RapidOCR when available
 
 ### Storage
 
-- JSON flat-file database: `backend/data/recruiting_db.json`
-- Uploaded files: `backend/uploads/`
+- Local JSON file: `backend/data/recruiting_db.json`
+- Uploaded resumes: `backend/uploads/resumes/`
+- Extracted profile images: `backend/uploads/profile_pictures/`
 
 ## Project Structure
 
 ```text
 .
-├── backend/
-│   ├── app/
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   ├── routes/
-│   │   │   ├── candidates.py
-│   │   │   ├── jobs.py
-│   │   │   └── settings.py
-│   │   └── services/
-│   │       ├── agents/
-│   │       │   ├── base_agent.py
-│   │       │   ├── requirement_agent.py
-│   │       │   ├── resume_agent.py
-│   │       │   ├── matching_agent.py
-│   │       │   ├── interview_agent.py
-│   │       │   └── report_agent.py
-│   │       ├── job_windows.py
-│   │       ├── linkedin_profiles.py
-│   │       └── mailer.py
-│   ├── data/
-│   │   └── recruiting_db.json
-│   ├── uploads/
-│   │   ├── resumes/
-│   │   └── profile_pictures/
-│   ├── main.py
-│   ├── requirements.txt
-│   └── .env.example
-├── docs/
-├── guidelines/
-├── src/
-│   ├── app/
-│   │   ├── App.tsx
-│   │   └── components/
-│   │       ├── CandidatePortal.tsx
-│   │       ├── HiringManagerPortal.tsx
-│   │       ├── PortalSelector.tsx
-│   │       ├── candidate/
-│   │       └── hiring-manager/
-│   ├── main.tsx
-│   └── styles/
-├── package.json
-├── vite.config.ts
-└── README.md
+|-- backend/
+|   |-- app/
+|   |   |-- config.py
+|   |   |-- database.py
+|   |   |-- routes/
+|   |   |   |-- candidates.py
+|   |   |   |-- jobs.py
+|   |   |   `-- settings.py
+|   |   `-- services/
+|   |       |-- agents/
+|   |       |   |-- base_agent.py
+|   |       |   |-- requirement_agent.py
+|   |       |   |-- resume_agent.py
+|   |       |   |-- matching_agent.py
+|   |       |   |-- interview_agent.py
+|   |       |   `-- report_agent.py
+|   |       |-- job_windows.py
+|   |       |-- linkedin_profiles.py
+|   |       `-- mailer.py
+|   |-- main.py
+|   |-- requirements.txt
+|   `-- .env.example
+|-- src/
+|   |-- assets/
+|   |   `-- 404hire-logo.jpeg
+|   |-- app/
+|   |   |-- App.tsx
+|   |   `-- components/
+|   |       |-- BrandLogo.tsx
+|   |       |-- CandidatePortal.tsx
+|   |       |-- HiringManagerPortal.tsx
+|   |       |-- PortalSelector.tsx
+|   |       |-- candidate/
+|   |       `-- hiring-manager/
+|   |-- main.tsx
+|   `-- styles/
+|-- index.html
+|-- package.json
+|-- vite.config.ts
+`-- README.md
 ```
 
 ## Prerequisites
 
-Install these first:
+Install the following:
 
 - Node.js 18 or newer
 - npm
 - Python 3.10 or newer
 - pip
 
-Optional but recommended for image-only resume PDFs:
+Optional for scanned or image-only resumes:
 
-- Tesseract OCR executable installed and available in `PATH`
+- Tesseract OCR executable in `PATH`
+- Python OCR dependencies from `backend/requirements.txt`
 
-The Python packages `Pillow` and `pytesseract` are listed in `backend/requirements.txt`, but `pytesseract` still needs the external Tesseract program for local OCR. Without Tesseract, normal text PDFs still work; image-only PDFs may require manual verification unless your configured AI model supports vision.
+Text-based PDF resumes work best. Image-only PDFs may require OCR or manual candidate profile completion.
 
-## Environment Setup
+## Environment Variables
 
-### Backend Environment
+### Backend
 
-Create `backend/.env` from `backend/.env.example`.
+Create `backend/.env` from the example file:
 
 ```powershell
 Copy-Item backend\.env.example backend\.env
 ```
 
-Example:
+Example backend configuration:
 
 ```env
 HOST=0.0.0.0
@@ -223,12 +256,12 @@ REPORT_AGENT_TEMP=0.3
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your_email@gmail.com
-SMTP_PASSWORD=your_app_specific_password
+SMTP_PASSWORD=your_app_password
 ```
 
 Do not commit real API keys, SMTP passwords, or personal secrets.
 
-### Frontend Environment
+### Frontend
 
 Create `.env.local` in the project root:
 
@@ -236,48 +269,47 @@ Create `.env.local` in the project root:
 VITE_API_URL=http://localhost:8000/api/v1
 ```
 
-The frontend reads this value when calling FastAPI.
+## Installation
 
-## Install From Zero
-
-From the project root:
+Install frontend dependencies:
 
 ```powershell
 npm install
 ```
 
-Then install backend dependencies:
+Install backend dependencies:
 
 ```powershell
 python -m pip install -r backend\requirements.txt
 ```
 
-If Playwright is needed for future browser automation:
+If browser automation dependencies are needed later:
 
 ```powershell
 python -m playwright install
 ```
 
-## Run The Project
+## Running Locally
 
-You need two terminals.
-
-### Terminal 1: Backend
-
-From the project root:
+Run the backend in one terminal:
 
 ```powershell
 python -m uvicorn main:app --app-dir backend --host 0.0.0.0 --port 8000 --reload
 ```
 
-Alternative:
+Run the frontend in another terminal:
 
 ```powershell
-cd backend
-python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+npm run dev
 ```
 
-Health check:
+Open the Vite URL shown in the terminal, usually:
+
+```text
+http://localhost:5173/
+```
+
+Backend health check:
 
 ```powershell
 Invoke-WebRequest http://localhost:8000/ -UseBasicParsing
@@ -293,25 +325,9 @@ Expected response:
 }
 ```
 
-### Terminal 2: Frontend
+## Demo Accounts
 
-From the project root:
-
-```powershell
-npm run dev
-```
-
-Open the Vite URL shown in the terminal, usually:
-
-```text
-http://localhost:5173/
-```
-
-## Login And Demo Data
-
-### Hiring Manager Demo Accounts
-
-Use either account:
+Hiring manager demo accounts:
 
 ```text
 admin@company.com
@@ -323,125 +339,93 @@ hiring@company.com
 password
 ```
 
-### Candidate Accounts
-
 Candidates are created through the Candidate Portal.
 
-Flow:
-
-1. Open Candidate Portal.
-2. Enter a valid email address.
-3. Create a password.
-4. Upload a PDF resume.
-5. Enter the prototype email verification code.
-6. Verify extracted information.
-7. Apply to an open position.
-
-## Main Workflows
+## Key Workflows
 
 ### Hiring Manager: Create A Position
 
-1. Sign in to Hiring Manager Portal.
-2. Open **Job Builder**.
-3. Click **New Position**.
-4. Enter:
-   - job title
-   - department
-   - open time
-   - end time
-   - status
-5. Continue to AI Intake.
-6. The Requirement Agent asks adaptive follow-up questions.
-7. Once the agent has enough context, publish the position.
-8. The backend generates:
-   - job description
-   - requirements
-   - sourcing criteria
-   - Boolean query
-   - skill pillars
-   - behavioral/domain pillars
+1. Sign in to the Hiring Manager Portal.
+2. Open Job Builder.
+3. Create a new position.
+4. Enter title, department, application window, and status.
+5. Continue to Requirement Agent intake.
+6. Answer adaptive follow-up questions.
+7. Review generated description and requirements.
+8. Publish the position.
 
-The frontend does not use fixed intake questions. It calls:
+The Requirement Agent generates:
 
-```text
-POST /api/v1/jobs/intake
-```
-
-The Requirement Agent decides the next question based on previous answers.
+- Candidate-facing job description
+- Requirements
+- Skill or domain pillars
+- Behavioral signals
+- Boolean sourcing query
+- Sourcing criteria used by matching and auto-source
 
 ### Hiring Manager: Source Candidates
 
-1. Open **LinkedIn Sourcing**.
-2. Select a position.
-3. Use auto-source or LinkedIn URL scraping.
-4. Review staged candidate details.
-5. Send invitation.
+1. Open LinkedIn Sourcing.
+2. Select a target position.
+3. Choose Automatic Agent Search or Manual URL Scrape.
+4. Review staged candidate analysis.
+5. Edit outreach email if needed.
+6. Send invitation.
 
-### Hiring Manager: Review Candidate Pipeline
+Manual LinkedIn URLs support common copied formats, including:
 
-1. Open **Candidate Pipeline**.
-2. Select all positions or one position dashboard.
-3. Review:
-   - total candidates
-   - completed screenings
-   - average match score
-   - scatter chart
-   - candidate resume
-   - extracted profile fields
-   - AI committee analysis
-   - screening score
+- `linkedin.com/in/name`
+- `https://linkedin.com/in/name?utm_source=share`
+- `https://my.linkedin.com/in/name/`
+- old `/pub/name/...` links
 
-### Candidate: Register And Verify Profile
+LinkedIn often blocks unauthenticated scraping, so 404Hire stores source warnings and asks hiring managers to verify profile details before outreach.
+
+### Hiring Manager: Review Pipeline
+
+1. Open Candidate Pipeline.
+2. Scope the dashboard to all positions or a selected position.
+3. Review KPIs, charting, fit scores, and candidate rows.
+4. Open a candidate to inspect resume, profile details, match debate, and screening feedback.
+5. Mark screening, schedule interview, reject, complete, or hire.
+
+Candidate lists include pagination to keep large datasets usable.
+
+### Hiring Manager: Manage Candidate Accounts
+
+1. Open Candidate Accounts.
+2. Search by name or email.
+3. Filter by verification or password state.
+4. Verify/unverify email.
+5. Verify/pending profile.
+6. Reset password.
+7. Delete account if needed.
+
+This page is separate from the pipeline so account administration does not clutter position review.
+
+### Candidate: Create Profile
 
 1. Open Candidate Portal.
-2. Enter a valid email address.
-3. Create a password and upload a PDF resume.
-4. The backend creates a prototype email verification code and attempts SMTP delivery.
-5. Candidate enters the verification code before continuing.
-6. Resume Agent extracts:
-   - name
-   - age, if visible
-   - address
-   - came from
-   - phone number
-   - working experience
-   - qualification
-   - grade/results
-   - awards
-   - skills
-7. Candidate reviews and completes missing fields.
-8. Candidate saves details.
-9. Candidate can apply to an open position.
+2. Enter email.
+3. Verify the prototype code shown on the page.
+4. Create password.
+5. Upload a valid PDF resume.
+6. Review extracted profile details.
+7. Complete missing required fields.
+8. Apply to available positions.
 
-The candidate cannot apply until email verification and required profile information are completed. In prototype mode, the backend returns `prototype_verification_code` so the flow can be tested locally before real email delivery is implemented.
+The candidate cannot continue profile creation until email verification is complete.
 
-### Candidate: Apply And Complete Screening
+### Candidate: Complete Screening
 
-1. Choose an available position.
-2. Click Apply.
-3. Complete generated screening questions.
-4. Submit answers.
-5. View result, critique, and upskilling roadmap.
+1. Apply to an open position.
+2. Answer generated screening questions.
+3. Submit answers.
+4. Review feedback and roadmap.
 
-Candidates cannot apply to the same position twice.
+The backend evaluates answers against the selected position, not against generic interview criteria.
 
-## AI Agents
-
-### Resume Agent
-
-File:
-
-```text
-backend/app/services/agents/resume_agent.py
-```
-
-Responsibilities:
-
-- Parse raw resume text into structured profile data.
-- Extract candidate basics and qualifications.
-- Avoid inventing fake schools, employers, or experience.
-- Apply prestige neutralization when requested.
-- Provide fallback parsing when LLM access is unavailable.
+## AI Agent Design
 
 ### Requirement Agent
 
@@ -451,13 +435,28 @@ File:
 backend/app/services/agents/requirement_agent.py
 ```
 
-Responsibilities:
+Purpose:
 
-- Ask adaptive job-builder questions.
-- Decide when enough role context has been collected.
-- Generate job description and requirements.
-- Generate Boolean sourcing search strings.
-- Extract skill and behavioral pillars.
+- Conduct adaptive hiring-manager intake.
+- Ask one relevant question at a time.
+- Avoid fixed scripts and repeated questions.
+- Generate job requirements that match the actual role family.
+- Avoid inventing technical requirements for non-technical roles.
+
+### Resume Agent
+
+File:
+
+```text
+backend/app/services/agents/resume_agent.py
+```
+
+Purpose:
+
+- Convert resume text into structured candidate profile data.
+- Extract name, email, phone, location, education, work experience, skills, awards, and qualifications.
+- Fall back to rule-based parsing when LLM access is unavailable.
+- Support prestige neutralization when requested.
 
 ### Matching Agent
 
@@ -467,13 +466,11 @@ File:
 backend/app/services/agents/matching_agent.py
 ```
 
-Responsibilities:
+Purpose:
 
-- Compare candidate profile with job requirements.
-- Generate score categories.
-- Produce a debate-style analysis:
-  - Talent Advocate
-  - Critical Recruiter
+- Compare candidate profile against the selected job.
+- Score technical/domain evidence, success signals, culture, and trajectory.
+- Produce Talent Advocate and Critical Recruiter perspectives.
 
 ### Interview Agent
 
@@ -483,11 +480,12 @@ File:
 backend/app/services/agents/interview_agent.py
 ```
 
-Responsibilities:
+Purpose:
 
-- Generate screening questions.
-- Evaluate answers.
-- Score candidate screening performance.
+- Generate role-specific screening questions.
+- Evaluate candidate answers.
+- Provide score breakdowns.
+- Produce detailed hiring-manager feedback, including evidence, risks, opinion, and suggested follow-up probes.
 
 ### Report Agent
 
@@ -497,39 +495,11 @@ File:
 backend/app/services/agents/report_agent.py
 ```
 
-Responsibilities:
+Purpose:
 
 - Generate sourcing pitch.
 - Generate outreach email.
-- Generate candidate roadmap after screening.
-
-## Resume Upload And OCR Notes
-
-Resume uploads use:
-
-```text
-POST /api/v1/candidates/signup
-```
-
-Uploaded files are saved under:
-
-```text
-backend/uploads/resumes/
-```
-
-The backend first tries normal PDF text extraction with `pypdf`. If the PDF is image-only, it attempts image extraction. Local OCR needs:
-
-- `Pillow`
-- `pytesseract`
-- Tesseract executable installed on the machine
-
-If Tesseract is not installed and the configured AI model does not support vision input, image-only resumes may not fully prefill. The candidate can still manually verify details on the Information Details page.
-
-Recommended resume formats for best extraction:
-
-- Text-based PDF exported from Word, Google Docs, Canva, or LaTeX.
-- Avoid scanned screenshots if OCR is not configured.
-- Keep contact and education fields visible as selectable text.
+- Generate candidate upskilling roadmap.
 
 ## API Reference
 
@@ -543,72 +513,87 @@ http://localhost:8000/api/v1
 
 ```text
 GET /jobs
-```
-
-Returns all positions.
-
-```text
 GET /jobs?active_only=true
-```
-
-Returns currently open positions.
-
-```text
 POST /jobs/intake
+POST /jobs
+PATCH /jobs/{job_id}
+DELETE /jobs/{job_id}
 ```
 
-Gets the next adaptive Requirement Agent question or final generated role context.
-
-Body:
+Example intake body:
 
 ```json
 {
-  "title": "Chef",
-  "department": "Product",
+  "title": "Bakery Assistant",
+  "department": "Kitchen",
   "chat_messages": [
-    { "role": "agent", "content": "What outcomes should this role own?" },
-    { "role": "manager", "content": "Prepare Sichuan dishes for a Chinese restaurant." }
+    { "role": "agent", "content": "What products or duties will this person handle most often?" },
+    { "role": "manager", "content": "Bread preparation, oven timing, food hygiene, and early shift prep." }
   ]
 }
 ```
-
-```text
-POST /jobs
-```
-
-Creates a position.
-
-```text
-PATCH /jobs/{job_id}
-```
-
-Updates a position.
 
 ### Candidates
 
 ```text
 GET /candidates
-```
-
-Returns candidate/application rows.
-
-```text
 GET /candidates?neutralize=true
+GET /candidates/lookup?email={email}
+POST /candidates/start-email-verification
+POST /candidates/verify-pending-email
+POST /candidates/signup
+POST /candidates/login
+POST /candidates/{email}/password
+POST /candidates/{email}/reset-password
+POST /candidates/{email}/verify-email
+POST /candidates/{email}/resend-verification
+PATCH /candidates/{email}/profile
+PATCH /candidates/{email}/account
+POST /candidates/{email}/apply-position
+POST /candidates/{email}/sandbox
+GET /candidates/{email}/resume
+POST /candidates/scrape
+POST /candidates/auto-source
+POST /candidates/invite
+PATCH /candidates/{email}/status
+POST /candidates/{email}/reject
+POST /candidates/{email}/schedule-interview
+GET /candidates/interview-calendar
+DELETE /candidates/{email}
 ```
 
-Returns neutralized candidate data.
+### Candidate Email Verification
+
+Start verification:
 
 ```text
-GET /candidates/lookup?email={email}
+POST /candidates/start-email-verification
 ```
 
-Finds a candidate by email.
+```json
+{
+  "email": "candidate@example.com"
+}
+```
+
+Verify pending email:
+
+```text
+POST /candidates/verify-pending-email
+```
+
+```json
+{
+  "email": "candidate@example.com",
+  "code": "123456"
+}
+```
+
+### Candidate Signup
 
 ```text
 POST /candidates/signup
 ```
-
-Creates a candidate profile with resume upload, validates the email address, creates a verification code, and attempts to send a verification email.
 
 Form fields:
 
@@ -617,266 +602,191 @@ Form fields:
 - `password`
 - `resume`
 
-Prototype response fields include:
+Rules:
 
-- `email_verified`
-- `verification_sent`
-- `prototype_verification_code`
+- Email must already be verified through pending verification.
+- Resume must be a valid PDF.
+- Resume text must look like a readable resume.
+- Existing candidate accounts are rejected with a conflict response.
 
-```text
-POST /candidates/{email}/verify-email
-```
+### LinkedIn Sourcing
 
-Verifies the candidate email address.
-
-Body:
-
-```json
-{
-  "code": "123456"
-}
-```
-
-```text
-POST /candidates/{email}/resend-verification
-```
-
-Generates and sends a new prototype verification code.
-
-```text
-PATCH /candidates/{email}/profile
-```
-
-Saves verified candidate profile details.
-
-```text
-POST /candidates/{email}/apply-position
-```
-
-Applies a candidate to a position.
-
-```text
-POST /candidates/{email}/sandbox
-```
-
-Submits screening answers.
-
-```text
-GET /candidates/{email}/resume
-```
-
-Downloads or views the original uploaded resume.
+Manual URL scrape:
 
 ```text
 POST /candidates/scrape
 ```
 
-Creates a staged candidate from a LinkedIn URL/profile simulator.
+```json
+{
+  "position_id": 1,
+  "linkedin_url": "https://www.linkedin.com/in/example-profile"
+}
+```
+
+Automatic prototype sourcing:
 
 ```text
 POST /candidates/auto-source
 ```
 
-Generates sample sourced candidates for a position.
-
-```text
-POST /candidates/invite
+```json
+{
+  "position_id": 1,
+  "count": 3
+}
 ```
 
-Marks a candidate as invited and attempts email delivery.
+Auto-source profiles are generated from the selected job context and calibrated for prototype demonstration. They are not real LinkedIn profiles.
 
-```text
-PATCH /candidates/{email}/status
-```
+## Data And Upload Storage
 
-Updates candidate/application status.
-
-```text
-DELETE /candidates/{email}
-```
-
-Deletes a candidate.
-
-## Data Storage
-
-The project uses a local JSON file:
+The local database is:
 
 ```text
 backend/data/recruiting_db.json
 ```
 
-The database stores:
-
-- positions
-- candidate profiles
-- applications
-- match results
-- screening answers
-- evaluations
-- resume paths
-
-Database access is protected by a Python thread lock in:
+Uploaded resumes are stored in:
 
 ```text
-backend/app/database.py
+backend/uploads/resumes/
 ```
 
-This is suitable for demos and coursework, not high-concurrency production.
+Profile pictures extracted from PDFs are stored in:
+
+```text
+backend/uploads/profile_pictures/
+```
+
+This storage model is easy to inspect during development, but it is not intended for production-scale use.
+
+## Validation And Safety Rules
+
+404Hire includes several validation controls:
+
+- Email format validation.
+- Prototype email verification before candidate profile creation.
+- Password minimum length enforcement.
+- PDF-only resume upload.
+- Resume file size limit.
+- Resume text validity check before Resume Agent processing.
+- Duplicate candidate account prevention.
+- Duplicate application prevention per position.
+- Required candidate profile fields before applying.
+- Agent fallback warnings shown to users when fallback logic is used.
+- Hiring-manager action lock to prevent accidental double-click status changes.
 
 ## Useful Commands
 
-### Start backend from root
+Start backend:
 
 ```powershell
 python -m uvicorn main:app --app-dir backend --host 0.0.0.0 --port 8000 --reload
 ```
 
-### Start backend from backend folder
-
-```powershell
-cd backend
-python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### Start frontend
+Start frontend:
 
 ```powershell
 npm run dev
 ```
 
-### Build frontend
+Build frontend:
 
 ```powershell
 npm run build
 ```
 
-### Compile-check backend
+Compile-check backend:
 
 ```powershell
 python -m compileall backend\app
 ```
 
-### Install backend dependencies
+Check backend health:
+
+```powershell
+Invoke-WebRequest http://localhost:8000/ -UseBasicParsing
+```
+
+Install backend packages:
 
 ```powershell
 python -m pip install -r backend\requirements.txt
 ```
 
-### Check backend health
-
-```powershell
-Invoke-WebRequest http://localhost:8000/ -UseBasicParsing
-```
-
 ## Troubleshooting
 
-### Uvicorn says: Could not import module `main`
+### Backend cannot import `main`
 
-You are probably running Uvicorn from the project root without telling it where `backend/main.py` lives.
-
-Use:
+Use the root command with `--app-dir backend`:
 
 ```powershell
 python -m uvicorn main:app --app-dir backend --host 0.0.0.0 --port 8000 --reload
 ```
 
-Or:
+### Frontend shows API connection errors
 
-```powershell
-cd backend
-python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### Frontend says `Failed to fetch`
-
-The backend is not reachable.
-
-Check:
+Check that the backend is running:
 
 ```powershell
 Invoke-WebRequest http://localhost:8000/ -UseBasicParsing
 ```
 
-If it times out, start the backend.
+Confirm `.env.local` contains:
 
-### Job Builder cannot ask AI intake questions
-
-Check:
-
-```powershell
-Invoke-WebRequest http://localhost:8000/api/v1/jobs/intake `
-  -Method Post `
-  -ContentType "application/json" `
-  -Body '{"title":"Software Engineer","department":"Engineering","chat_messages":[]}' `
-  -UseBasicParsing
+```env
+VITE_API_URL=http://localhost:8000/api/v1
 ```
 
-If this fails, the backend is not running or the route import failed.
+### Resume upload fails validation
 
-### Resume fields do not prefill
+The uploaded PDF may not contain readable resume text.
 
-Possible causes:
+Recommended fixes:
 
-- The PDF is image-only.
-- Tesseract OCR is not installed.
-- The configured AI model does not support vision.
-- The resume has unusual formatting.
-
-Fixes:
-
-- Upload a text-based PDF.
-- Install Tesseract and ensure it is available in `PATH`.
-- Manually complete the Information Details form.
+- Export the resume as a text-based PDF.
+- Avoid screenshots or scanned-only PDFs.
+- Install Tesseract OCR if scanned resumes must be supported.
+- Confirm the file is below the upload limit.
 
 ### Candidate cannot apply
 
-Candidates must verify required fields first:
+Check:
 
-- name
-- age
-- address
-- came from
-- phone number
-- working experience
-- qualification
-- grade/results
+- Email is verified.
+- Required profile fields are complete.
+- The position is open for applications.
+- The candidate has not already applied to the same position.
 
-Candidates also cannot apply to the same position more than once.
+### LinkedIn profile URL is rejected
 
-### Port 8000 is already in use
+Use a profile URL containing `/in/username` or `/pub/username`. The backend normalizes common copied formats, but it does not accept company pages, job pages, feed posts, or search result URLs.
 
-Find the owning process:
+### Automatic sourcing returns prototype profiles
 
-```powershell
-Get-NetTCPConnection -LocalPort 8000
-```
-
-Stop a Python/Uvicorn process if needed:
-
-```powershell
-Get-Process python
-Stop-Process -Id <process_id>
-```
+This is expected. Auto-source is a prototype search simulation. It builds sample profiles from the selected job requirements so hiring managers can test sourcing, scoring, outreach, and invitation workflows without live LinkedIn access.
 
 ### Large Vite chunk warning
 
-`npm run build` may warn that one JS chunk is larger than 500 kB. This is a build optimization warning, not a failure. Future improvements could split routes with dynamic imports.
+`npm run build` may warn that a JavaScript chunk is larger than 500 kB. This is a build optimization warning, not a build failure. Route-level code splitting can reduce the warning later.
 
-## Production Notes
+## Production Readiness Notes
 
-Before production:
+Before production, replace or improve the following:
 
-- Replace mock hiring-manager login with real authentication.
+- Replace demo hiring-manager login with real authentication.
 - Move JSON storage to PostgreSQL, MySQL, or another database.
-- Store uploads in managed object storage.
-- Add access controls for resume files.
+- Store resumes in managed object storage.
+- Add signed URLs or authorization checks for resume downloads.
 - Restrict CORS origins in `backend/main.py`.
-- Remove demo credentials.
+- Remove prototype verification-code display.
+- Configure reliable SMTP or transactional email.
 - Add audit logs for candidate status changes.
-- Add server-side validation for all candidate profile fields.
-- Use a production WSGI/ASGI deployment strategy.
-- Add test coverage for routes and agents.
-- Configure a reliable OCR service for scanned resumes.
+- Add route-level automated tests.
+- Add rate limits for signup, login, and email verification.
+- Add production OCR or document parsing service.
+- Add monitoring and structured logging.
 
 ## Verification Checklist
 
@@ -884,16 +794,20 @@ After setup, verify:
 
 - Backend health check returns online status.
 - Frontend opens at the Vite dev URL.
+- 404Hire logo appears on the landing page and portal login screens.
 - Hiring manager can sign in.
-- Requirement Agent asks a dynamic question in Job Builder.
-- A new position can be published.
-- Candidate can register and upload a resume.
-- Candidate information page is populated or manually editable.
-- Candidate can verify details.
+- Requirement Agent asks an adaptive question.
+- Position can be created and published.
+- Automatic sourcing returns candidates with position-relevant scores.
+- LinkedIn URL scrape accepts common profile URL formats.
+- Candidate can verify email before signup.
+- Candidate can upload a valid resume.
+- Candidate can complete missing profile details.
 - Candidate can apply to an open position.
-- Hiring manager can see the candidate in the position dashboard.
-- Hiring manager can open the candidate resume.
+- Candidate can submit screening answers.
+- Hiring manager can review detailed AI feedback.
+- Candidate accounts page supports account administration.
 
 ## License
 
-This project is intended for coursework, demos, and prototype use. Add your chosen license before public release.
+This project is intended for coursework, demos, and prototype use. Add a formal license before public release.

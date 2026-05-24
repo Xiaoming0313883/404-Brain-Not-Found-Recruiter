@@ -219,6 +219,7 @@ When complete, return:
             parsed = parse_llm_json(response.choices[0].message.content)
             if "context" not in parsed:
                 parsed["context"] = {}
+            parsed["question"] = clean_agent_question(parsed.get("question", ""))
             if parsed.get("is_complete"):
                 context = parsed.get("context", {})
                 normalized = normalize_requirement_output(
@@ -239,9 +240,21 @@ When complete, return:
                 parsed["context"] = context
             return parsed
         except Exception as e:
-            print(f"Requirement Intake Agent API error: {e}. Falling back to adaptive local intake.")
+            print(f"Requirement Intake Agent API error: {e}.")
+            raise RuntimeError(f"Requirement Intake Agent API error: {e}")
 
     return build_fallback_intake_turn(job_title, department, chat_messages)
+
+def clean_agent_question(value: str) -> str:
+    question = str(value or "").strip().strip('"')
+    question = re.sub(r"^(question|content|contents|agent|assistant)\s*[:\-]\s*", "", question, flags=re.IGNORECASE).strip()
+    lines = [line.strip() for line in question.splitlines() if line.strip()]
+    if len(lines) > 1:
+        question_lines = [line for line in lines if "?" in line]
+        question = question_lines[0] if question_lines else lines[0]
+    if question and not question.endswith("?"):
+        question = question.rstrip(".") + "?"
+    return question
 
 def build_fallback_intake_turn(job_title: str, department: str, chat_messages: List[Dict[str, str]]) -> Dict[str, Any]:
     manager_answers = [m.get("content", "").strip() for m in chat_messages if m.get("role") == "manager" and m.get("content")]
@@ -331,6 +344,7 @@ def generate_dynamic_question(
                 ]
             )
             question = (response.choices[0].message.content or "").strip().strip('"')
+            question = clean_agent_question(question)
             if question:
                 return question
         except Exception as e:

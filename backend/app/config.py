@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 587
     SMTP_USER: str = "recruiter-bot@company.com"
     SMTP_PASSWORD: str = "your-app-specific-password"
+    LINKEDIN_LI_AT_COOKIE: str = ""
+    LINKEDIN_HEADLESS: bool = True
 
     @field_validator("DEBUG", mode="before")
     @classmethod

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Job, ScrapedCandidate } from '../HiringManagerPortal';
-import { Link2, Play, Send, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { Link2, Play, Send, CheckCircle2, AlertCircle, Loader2, ChevronDown } from 'lucide-react';
 
 interface Props {
   jobs: Job[];
@@ -16,10 +16,12 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
   const [selectedJobId, setSelectedJobId] = useState<number | ''>('');
   const [linkedinUrl, setLinkedinUrl] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [stagedCandidate, setStagedCandidate] = useState<Omit<ScrapedCandidate, 'id'> | null>(null);
+  const [stagedCandidates, setStagedCandidates] = useState<Array<Omit<ScrapedCandidate, 'id'>>>([]);
+  const [expandedIndices, setExpandedIndices] = useState<Record<number, boolean>>({});
+  const [emailDrafts, setEmailDrafts] = useState<Record<string, string>>({});
   const [processingLogs, setProcessingLogs] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
-  const [emailDraft, setEmailDraft] = useState('');
+  const [autoSourceCount, setAutoSourceCount] = useState(3);
 
   const mapCandidate = (data: any): Omit<ScrapedCandidate, 'id'> => ({
     name: data.name,
@@ -37,6 +39,8 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
     fitBreakdown: data.match_results?.fit_breakdown,
     sourceStatus: data.profile_data?.scrape_status || '',
     sourceWarning: data.profile_data?.scrape_warning || '',
+    sourceType: data.source_type || data.profile_data?.source_type || 'linkedin',
+    sourceMethod: data.source_method || data.profile_data?.source_method || '',
     status: data.status,
     recruitmentEmail: data.outreach_email,
     sourcingPitch: data.sourcing_pitch,
@@ -49,7 +53,9 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
 
     setIsProcessing(true);
     setProcessingLogs([]);
-    setStagedCandidate(null);
+    setStagedCandidates([]);
+    setExpandedIndices({});
+    setEmailDrafts({});
     setErrorMessage('');
 
     try {
@@ -69,7 +75,7 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
       const response = await fetch(`${API_BASE_URL}/candidates/auto-source`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ position_id: Number(selectedJobId), count: 3 })
+        body: JSON.stringify({ position_id: Number(selectedJobId), count: autoSourceCount })
       });
 
       if (!response.ok) {
@@ -78,11 +84,17 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
       }
 
       const data = await response.json();
-      const topCandidate = data[0];
-      const mappedCandidate = mapCandidate(topCandidate);
-      setStagedCandidate(mappedCandidate);
-      setEmailDraft(mappedCandidate.recruitmentEmail || '');
-      setProcessingLogs(prev => [...prev, `Auto-source found ${data.length} candidate profiles.`, `Top candidate: ${topCandidate.name}`]);
+      const mapped = data.map(mapCandidate);
+      setStagedCandidates(mapped);
+      
+      const drafts: Record<string, string> = {};
+      mapped.forEach((c: any) => {
+        drafts[c.email] = c.recruitmentEmail || '';
+      });
+      setEmailDrafts(drafts);
+      setExpandedIndices({ 0: true });
+
+      setProcessingLogs(prev => [...prev, `Auto-source found ${data.length} candidate profiles.`]);
       data.forEach((candidate: any, index: number) => onAddCandidate({ ...mapCandidate(candidate), id: candidates.length + index + 1 } as ScrapedCandidate));
     } catch (err: any) {
       setErrorMessage(err.message || 'Automatic sourcing failed.');
@@ -96,7 +108,9 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
 
     setIsProcessing(true);
     setProcessingLogs([]);
-    setStagedCandidate(null);
+    setStagedCandidates([]);
+    setExpandedIndices({});
+    setEmailDrafts({});
     setErrorMessage('');
 
     const initialLogs = [
@@ -143,8 +157,9 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
 
       const mappedCandidate = mapCandidate(data);
 
-      setStagedCandidate(mappedCandidate);
-      setEmailDraft(mappedCandidate.recruitmentEmail || '');
+      setStagedCandidates([mappedCandidate]);
+      setEmailDrafts({ [mappedCandidate.email]: mappedCandidate.recruitmentEmail || '' });
+      setExpandedIndices({ 0: true });
     } catch (err: any) {
       console.error(err);
       setErrorMessage(err.message || 'LinkedIn profile extraction failed. No candidate was staged because unverified fallback data would be misleading.');
@@ -154,18 +169,18 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
     }
   };
 
-  const handleSendInvitation = async () => {
-    if (!stagedCandidate) return;
+  const handleSendInvitation = async (candidate: Omit<ScrapedCandidate, 'id'>) => {
     setIsProcessing(true);
     setErrorMessage('');
+    const draft = emailDrafts[candidate.email] || '';
 
     try {
       const response = await fetch(`${API_BASE_URL}/candidates/invite`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: stagedCandidate.managementEmail || stagedCandidate.email,
-          outreach_email: emailDraft
+          email: candidate.managementEmail || candidate.email,
+          outreach_email: draft
         })
       });
 
@@ -175,7 +190,6 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
 
       const data = await response.json();
       
-      // Backend returns full invited candidate object
       const fullCandidate: ScrapedCandidate = {
         id: data.candidate.id || candidates.length + 1,
         name: data.candidate.name,
@@ -193,6 +207,8 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
         fitBreakdown: data.candidate.match_results?.fit_breakdown,
         sourceStatus: data.candidate.profile_data?.scrape_status || '',
         sourceWarning: data.candidate.profile_data?.scrape_warning || '',
+        sourceType: data.candidate.source_type || data.candidate.profile_data?.source_type || 'linkedin',
+        sourceMethod: data.candidate.source_method || data.candidate.profile_data?.source_method || '',
         status: 'invited',
         recruitmentEmail: data.candidate.outreach_email,
         sourcingPitch: data.candidate.sourcing_pitch,
@@ -202,19 +218,19 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
 
       onAddCandidate(fullCandidate);
       setLinkedinUrl('');
-      setStagedCandidate(null);
+      setStagedCandidates(prev => prev.filter(c => c.email !== candidate.email));
       setProcessingLogs([]);
     } catch (err: any) {
       console.error(err);
       setErrorMessage(err.message || 'Connection failed. Dispatching invitation locally.');
       // Local fallback
       onAddCandidate({
-        ...stagedCandidate,
+        ...candidate,
         id: candidates.length + 1,
         status: 'invited'
       } as ScrapedCandidate);
       setLinkedinUrl('');
-      setStagedCandidate(null);
+      setStagedCandidates(prev => prev.filter(c => c.email !== candidate.email));
       setProcessingLogs([]);
     } finally {
       setIsProcessing(false);
@@ -317,14 +333,28 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
         )}
 
         {mode === 'auto' && (
-          <button
-            onClick={handleAutoSource}
-            disabled={!selectedJobId || isProcessing}
-            className="w-full px-5 py-3 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 text-sm font-medium shadow-sm cursor-pointer"
-          >
-            {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            {isProcessing ? 'Searching...' : 'Run Automatic Agent Search'}
-          </button>
+          <div className="space-y-3">
+            <div>
+              <label className="block mb-1.5 text-sm text-[#1c1c1a] font-medium">Candidates to search</label>
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={autoSourceCount}
+                onChange={(event) => setAutoSourceCount(Math.max(1, Math.min(10, Number(event.target.value) || 1)))}
+                disabled={isProcessing}
+                className={inputClass}
+              />
+            </div>
+            <button
+              onClick={handleAutoSource}
+              disabled={!selectedJobId || isProcessing}
+              className="w-full px-5 py-3 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 text-sm font-medium shadow-sm cursor-pointer"
+            >
+              {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              {isProcessing ? 'Searching...' : 'Run Automatic Agent Search'}
+            </button>
+          </div>
         )}
 
         {/* Processing Terminal */}
@@ -352,117 +382,143 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
         )}
       </div>
 
-      {/* Staged Profile Card */}
-      {stagedCandidate && (
-        <div className="bg-white border border-[#e4e1da] rounded-2xl overflow-hidden shadow-sm">
-          <div className="bg-[#2d6a55] px-6 py-4">
-            <p className="text-xs tracking-[0.15em] uppercase text-white/70 mb-0.5 font-semibold">Sourced Profile</p>
-            <h3 className="text-white text-lg font-semibold">Ready for Review</h3>
+      {/* Staged Profiles Collapsible Accordion List */}
+      {stagedCandidates.length > 0 && (
+        <div className="space-y-4">
+          <div className="bg-[#2d6a55] px-6 py-4 rounded-t-2xl">
+            <p className="text-xs tracking-[0.15em] uppercase text-white/70 mb-0.5 font-semibold">Sourced Profiles</p>
+            <h3 className="text-white text-lg font-semibold">{stagedCandidates.length} Candidates Sourced</h3>
           </div>
+          
+          <div className="space-y-3">
+            {stagedCandidates.map((candidate, idx) => {
+              const isExpanded = expandedIndices[idx] ?? false;
+              const draft = emailDrafts[candidate.email] ?? '';
+              
+              return (
+                <div key={candidate.email} className="bg-white border border-[#e4e1da] rounded-xl overflow-hidden shadow-sm">
+                  {/* Collapsed Header */}
+                  <div
+                    onClick={() => setExpandedIndices(prev => ({ ...prev, [idx]: !isExpanded }))}
+                    className="cursor-pointer px-6 py-4 hover:bg-[#f7f6f3] transition-colors flex items-center justify-between gap-4 select-none"
+                  >
+                    <div className="flex items-center gap-4 min-w-0">
+                      <div className="w-10 h-10 bg-[#e8f2ee] rounded-lg flex items-center justify-center text-[#2d6a55] font-semibold flex-shrink-0">
+                        {candidate.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="text-sm font-semibold text-[#1c1c1a] truncate">{candidate.name}</h4>
+                        <p className="text-xs text-[#6b7063] truncate">{candidate.headline}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-6 flex-shrink-0">
+                      <div className="text-right hidden sm:block">
+                        <p className="text-xs text-[#6b7063]"><span className="text-[#2d6a55] font-semibold">{candidate.matchScore}%</span> Fit · <span className="text-[#c9a84c] font-semibold">{candidate.trajectoryScore}%</span> Traj</p>
+                        <p className="text-[10px] text-[#a8a49d]">{candidate.location}</p>
+                      </div>
+                      <ChevronDown className={`w-4 h-4 text-[#a8a49d] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                    </div>
+                  </div>
 
-          <div className="p-6 space-y-6">
-            {/* Candidate Header */}
-            <div className="flex items-start justify-between">
-              <div className="flex items-start gap-4">
-                <div className="w-14 h-14 bg-[#e8f2ee] rounded-xl flex items-center justify-center text-[#2d6a55] text-xl font-medium flex-shrink-0">
-                  {stagedCandidate.name.charAt(0)}
+                  {/* Expanded Content */}
+                  {isExpanded && (
+                    <div className="p-6 border-t border-[#e4e1da] space-y-6 bg-white">
+                      {/* Basic details for smaller screens */}
+                      <div className="sm:hidden grid grid-cols-2 gap-2 text-xs border-b border-[#e4e1da] pb-3 text-[#6b7063]">
+                        <div>
+                          <span className="font-semibold text-[#1c1c1a]">Match Fit:</span> {candidate.matchScore}%
+                        </div>
+                        <div>
+                          <span className="font-semibold text-[#1c1c1a]">Trajectory:</span> {candidate.trajectoryScore}%
+                        </div>
+                        <div className="col-span-2">
+                          <span className="font-semibold text-[#1c1c1a]">Location:</span> {candidate.location}
+                        </div>
+                      </div>
+
+                      {candidate.about && (
+                        <div>
+                          <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">About</p>
+                          <p className="text-sm text-[#6b7063] leading-relaxed">{candidate.about}</p>
+                        </div>
+                      )}
+
+                      {(candidate.sourceWarning || candidate.sourceStatus) && (
+                        <div className="bg-[#fff8ed] border border-[#f2d3a4] rounded-xl p-4">
+                          <p className="text-xs tracking-wider uppercase text-[#8a5a14] mb-1 font-semibold">Source Verification</p>
+                          <p className="text-sm text-[#6b7063] leading-relaxed">
+                            {candidate.sourceWarning || 'This sourced profile should be manually verified before outreach.'}
+                          </p>
+                          {candidate.sourceStatus && (
+                            <p className="text-xs text-[#a8a49d] mt-2">Extraction status: {candidate.sourceStatus}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* AI Analysis */}
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div className="bg-[#f0f9f4] border border-[#c8e6d8] rounded-xl p-4">
+                          <div className="flex items-center gap-2 mb-3">
+                            <CheckCircle2 className="w-4 h-4 text-[#2d6a55]" />
+                            <p className="text-xs tracking-wider uppercase text-[#2d6a55] font-semibold">Key Strengths</p>
+                          </div>
+                          <ul className="space-y-2">
+                            {candidate.advocatePros?.map((pro, idx) => (
+                              <li key={idx} className="text-sm text-[#3d5a4a] leading-relaxed pl-2 border-l-2 border-[#2d6a55]/20">
+                                {pro}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        <div className="bg-[#fdf8ee] border border-[#e8d8a0] rounded-xl p-4">
+                          <div className="flex items-center gap-2 mb-3">
+                            <AlertCircle className="w-4 h-4 text-[#c9a84c]" />
+                            <p className="text-xs tracking-wider uppercase text-[#c9a84c] font-semibold">Potential Gaps</p>
+                          </div>
+                          <ul className="space-y-2">
+                            {candidate.recruiterCons?.map((con, idx) => (
+                              <li key={idx} className="text-sm text-[#5a4d2a] leading-relaxed pl-2 border-l-2 border-[#c9a84c]/30">
+                                {con}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+
+                      {/* Recruitment Email Preview */}
+                      <div>
+                        <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Generated Outreach Email</p>
+                        <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-4">
+                          <textarea
+                            value={draft}
+                            onChange={(e) => setEmailDrafts(prev => ({ ...prev, [candidate.email]: e.target.value }))}
+                            className="w-full min-h-56 bg-transparent whitespace-pre-wrap text-sm text-[#6b7063] leading-relaxed font-sans focus:outline-none resize-y"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center justify-between pt-4 border-t border-[#e4e1da]">
+                        <button
+                          onClick={() => setStagedCandidates(prev => prev.filter(c => c.email !== candidate.email))}
+                          className="text-xs font-semibold text-[#b91c1c] hover:text-[#7f1d1d] transition-colors cursor-pointer"
+                        >
+                          Discard
+                        </button>
+                        <button
+                          onClick={() => handleSendInvitation(candidate)}
+                          className="flex items-center gap-2 px-4 py-2 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] transition-colors text-xs font-medium shadow-sm cursor-pointer"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          Send Invitation
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <h4 className="text-[#1c1c1a] mb-1 font-semibold">{stagedCandidate.name}</h4>
-                  <p className="text-sm text-[#6b7063]">{stagedCandidate.headline}</p>
-                  <p className="text-xs text-[#a8a49d] mt-0.5">{stagedCandidate.location}</p>
-                </div>
-              </div>
-              <div className="flex gap-6 text-right">
-                <div>
-                  <div className="text-2xl text-[#2d6a55] font-semibold">{stagedCandidate.matchScore}%</div>
-                  <div className="text-xs text-[#6b7063]">Match Fit</div>
-                </div>
-                <div>
-                  <div className="text-2xl text-[#c9a84c] font-semibold">{stagedCandidate.trajectoryScore}%</div>
-                  <div className="text-xs text-[#6b7063]">Trajectory</div>
-                </div>
-              </div>
-            </div>
-
-            {stagedCandidate.about && (
-              <div>
-                <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">About</p>
-                <p className="text-sm text-[#6b7063] leading-relaxed">{stagedCandidate.about}</p>
-              </div>
-            )}
-
-            {(stagedCandidate.sourceWarning || stagedCandidate.sourceStatus) && (
-              <div className="bg-[#fff8ed] border border-[#f2d3a4] rounded-xl p-4">
-                <p className="text-xs tracking-wider uppercase text-[#8a5a14] mb-1 font-semibold">Source Verification</p>
-                <p className="text-sm text-[#6b7063] leading-relaxed">
-                  {stagedCandidate.sourceWarning || 'This sourced profile should be manually verified before outreach.'}
-                </p>
-                {stagedCandidate.sourceStatus && (
-                  <p className="text-xs text-[#a8a49d] mt-2">Extraction status: {stagedCandidate.sourceStatus}</p>
-                )}
-              </div>
-            )}
-
-            {/* AI Analysis */}
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="bg-[#f0f9f4] border border-[#c8e6d8] rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <CheckCircle2 className="w-4 h-4 text-[#2d6a55]" />
-                  <p className="text-xs tracking-wider uppercase text-[#2d6a55] font-semibold">Key Strengths</p>
-                </div>
-                <ul className="space-y-2">
-                  {stagedCandidate.advocatePros?.map((pro, idx) => (
-                    <li key={idx} className="text-sm text-[#3d5a4a] leading-relaxed pl-2 border-l-2 border-[#2d6a55]/20">
-                      {pro}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="bg-[#fdf8ee] border border-[#e8d8a0] rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <AlertCircle className="w-4 h-4 text-[#c9a84c]" />
-                  <p className="text-xs tracking-wider uppercase text-[#c9a84c] font-semibold">Potential Gaps</p>
-                </div>
-                <ul className="space-y-2">
-                  {stagedCandidate.recruiterCons?.map((con, idx) => (
-                    <li key={idx} className="text-sm text-[#5a4d2a] leading-relaxed pl-2 border-l-2 border-[#c9a84c]/30">
-                      {con}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-
-            {/* Recruitment Email Preview */}
-            <div>
-              <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Generated Outreach Email</p>
-              <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-4">
-                <textarea
-                  value={emailDraft}
-                  onChange={(e) => setEmailDraft(e.target.value)}
-                  className="w-full min-h-56 bg-transparent whitespace-pre-wrap text-sm text-[#6b7063] leading-relaxed font-sans focus:outline-none resize-y"
-                />
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center justify-between pt-4 border-t border-[#e4e1da]">
-              <button
-                onClick={() => setStagedCandidate(null)}
-                className="text-sm text-[#6b7063] hover:text-[#1c1c1a] transition-colors cursor-pointer"
-              >
-                Discard
-              </button>
-              <button
-                onClick={handleSendInvitation}
-                className="flex items-center gap-2 px-5 py-2.5 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] transition-colors text-sm font-medium shadow-sm cursor-pointer"
-              >
-                <Send className="w-4 h-4" />
-                Send Invitation
-              </button>
-            </div>
+              );
+            })}
           </div>
         </div>
       )}
