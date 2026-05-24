@@ -45,6 +45,17 @@ const statusLabels: Record<string, string> = {
   inactive: 'Inactive'
 };
 
+const applicantStatuses = new Set([
+  'staged',
+  'invited',
+  'applied',
+  'screening',
+  'completed',
+  'interview_scheduled',
+  'hired',
+  'rejected'
+]);
+
 export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJob }: Props) {
   const [isCreating, setIsCreating] = useState(false);
   const [title, setTitle] = useState('');
@@ -314,7 +325,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
   const visibleJobs = editingId ? jobs.filter(job => job.id !== editingId) : jobs;
   const basicInfoReady = Boolean(title && department && openTime && endTime);
   const applicantsForJob = (jobId: number) =>
-    candidates.filter(candidate => candidate.jobId === jobId && ['applied', 'screening', 'completed'].includes(candidate.status));
+    candidates.filter(candidate => candidate.jobId === jobId && applicantStatuses.has(candidate.status));
 
   const getStatusClasses = (status?: string) => {
     if (status === 'open') return 'bg-[#e8f2ee] text-[#2d6a55]';
@@ -787,22 +798,9 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
               </div>
 
               <div className="mt-4 pt-4 border-t border-[#e4e1da]">
-                <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Current Applicants</p>
-                {applicants.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {applicants.slice(0, 4).map(candidate => (
-                      <span key={`${candidate.email}-${candidate.applicationId || candidate.jobId}`} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#f7f6f3] border border-[#e4e1da] rounded-full text-xs text-[#6b7063]">
-                        {candidate.name}
-                        <span className="text-[#a8a49d]">({candidate.status})</span>
-                      </span>
-                    ))}
-                    {applicants.length > 4 && (
-                      <span className="px-2.5 py-1 text-xs text-[#a8a49d]">+{applicants.length - 4} more</span>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-xs text-[#a8a49d]">No candidate has applied to this position yet.</p>
-                )}
+                <p className="text-xs text-[#a8a49d]">
+                  {applicants.length} {applicants.length === 1 ? 'candidate is' : 'candidates are'} linked to this position. Review candidate profiles in the Overview page.
+                </p>
               </div>
             </div>
           );

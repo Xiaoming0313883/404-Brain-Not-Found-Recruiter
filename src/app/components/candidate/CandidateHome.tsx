@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import * as Progress from '@radix-ui/react-progress';
-import { BarChart3, Bell, Briefcase, CheckCircle2, FileText, Loader2, MessageSquare, PlayCircle, Send, User, Users, X } from 'lucide-react';
+import { BarChart3, Bell, Briefcase, CheckCircle2, FileText, Loader2, MessageSquare, PlayCircle, Send, Target, User, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
 import { CandidateNav } from './CandidateNav';
@@ -179,6 +178,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
   );
   const selectedEvaluation = selectedApplication?.evaluation || candidateData.evaluation;
   const selectedScore = selectedEvaluation?.screening_score ?? candidateData.score;
+  const selectedScoreBreakdown = selectedEvaluation?.score_breakdown;
   const selectedAgentError = selectedApplication?.last_agent_error || candidateData.lastAgentError;
   const selectedHrFeedback = selectedApplication?.hr_feedback || candidateData.hrFeedback || '';
   const selectedRejectionMessage = selectedApplication?.rejection_message || candidateData.rejectionMessage || '';
@@ -595,6 +595,269 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
     }
   };
 
+  const renderApplicationProgress = () => (
+    <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mb-5">
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-xs text-[#6b7063] uppercase tracking-wider font-semibold">Application Progress</span>
+        <span className="text-xs text-[#2d6a55] font-bold bg-[#e8f2ee] px-2.5 py-0.5 rounded-full">
+          {getPhaseLabel(selectedStatus, Boolean(selectedApplication?.answers?.length))}
+        </span>
+      </div>
+
+      {(() => {
+        const steps = [
+          { label: 'Waiting for Screening', description: 'Complete warm-up sandbox' },
+          { label: 'Screening Completed', description: 'AI evaluation submitted' },
+          { label: 'Waiting for Interview', description: 'Screening passed, wait list' },
+          { label: 'Interview In Progress', description: 'Interview scheduled or active' },
+          {
+            label: selectedStatus === 'rejected' ? 'Rejected' : 'Hired',
+            description: selectedStatus === 'rejected' ? 'Application processed' : 'Offer extended!'
+          }
+        ];
+        const activeStepIndex = getActiveStepIndex(selectedStatus, Boolean(selectedApplication?.answers?.length));
+
+        return (
+          <div className="w-full py-5">
+            <div className="relative">
+              <div className="absolute left-[10%] right-[10%] top-4 h-1 rounded-full bg-[#f0ede8]" />
+              <div
+                className="absolute left-[10%] top-4 h-1 rounded-full bg-[#2d6a55] transition-all duration-500"
+                style={{ width: `calc(${(activeStepIndex / (steps.length - 1)) * 80}%)` }}
+              />
+              <div className="relative grid grid-cols-5 gap-1 sm:gap-2">
+                {steps.map((step, idx) => {
+                  const isActive = idx === activeStepIndex;
+                  const isCompleted = idx < activeStepIndex;
+                  const isTerminalRejected = idx === 4 && selectedStatus === 'rejected';
+                  const isTerminalHired = idx === 4 && selectedStatus === 'hired';
+
+                  let nodeStyles = 'bg-white border-2 border-[#e4e1da] text-[#a8a49d]';
+                  if (isActive) {
+                    if (isTerminalRejected) {
+                      nodeStyles = 'bg-[#b91c1c] border-[#b91c1c] text-white ring-4 ring-[#b91c1c]/20 shadow-lg';
+                    } else if (isTerminalHired) {
+                      nodeStyles = 'bg-[#2d6a55] border-[#2d6a55] text-white ring-4 ring-[#2d6a55]/20 shadow-lg';
+                    } else {
+                      nodeStyles = 'bg-[#2d6a55] border-[#2d6a55] text-white ring-4 ring-[#2d6a55]/20 shadow-lg';
+                    }
+                  } else if (isCompleted) {
+                    nodeStyles = 'bg-[#2d6a55] border-[#2d6a55] text-white';
+                  }
+
+                  let textStyles = 'text-[#6b7063]';
+                  if (isActive) {
+                    textStyles = isTerminalRejected ? 'text-[#b91c1c] font-bold' : 'text-[#2d6a55] font-bold';
+                  }
+
+                  return (
+                    <div key={idx} className="min-w-0 flex flex-col items-center">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-all duration-500 shadow-sm ${nodeStyles}`}>
+                        {isCompleted ? <CheckCircle2 className="w-4 h-4" /> : idx + 1}
+                      </div>
+                      <p className={`text-[10px] sm:text-[11px] font-semibold text-center mt-3 w-full max-w-[8.5rem] leading-tight transition-colors duration-300 break-words ${textStyles}`}>
+                        {step.label}
+                      </p>
+                      <p className="hidden md:block text-[9px] text-[#a8a49d] text-center max-w-[100px] mt-0.5 leading-normal">
+                        {step.description}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      <div className="grid grid-cols-3 gap-3 mt-5">
+        <div className="border border-[#e4e1da] rounded-xl p-4">
+          <FileText className="w-4 h-4 text-[#2d6a55] mb-2" />
+          <p className="text-xs text-[#a8a49d]">Profile</p>
+          <p className="text-sm text-[#1c1c1a] font-medium">{candidateData.resumeData ? 'Resume Uploaded' : 'Profile On File'}</p>
+        </div>
+        <div className="border border-[#e4e1da] rounded-xl p-4">
+          <PlayCircle className="w-4 h-4 text-[#2d6a55] mb-2" />
+          <p className="text-xs text-[#a8a49d]">Interview</p>
+          <p className="text-sm text-[#1c1c1a] font-medium">
+            {!selectedApplication
+              ? 'Waiting for Interview'
+              : selectedStatus === 'interview_scheduled'
+                ? 'Interview Scheduled'
+                : (selectedStatus === 'completed' || selectedStatus === 'screening' || selectedStatus === 'hired' || selectedStatus === 'rejected')
+                  ? 'Interview Completed'
+                  : 'Waiting for Interview'}
+          </p>
+        </div>
+        <div className="border border-[#e4e1da] rounded-xl p-4">
+          <BarChart3 className="w-4 h-4 text-[#2d6a55] mb-2" />
+          <p className="text-xs text-[#a8a49d]">Score</p>
+          <p className="text-sm text-[#1c1c1a] font-medium">{selectedScore ?? '--'} / 100</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderSelectedApplicationResults = () => {
+    if (!selectedApplication) {
+      return (
+        <div className="mt-3 rounded-xl border border-dashed border-[#e4e1da] bg-[#f7f6f3] p-4 text-sm text-[#6b7063]">
+          Choose an application to review its status and results.
+        </div>
+      );
+    }
+
+    const hasCritiques = Boolean(selectedEvaluation?.critiques?.length);
+    const hasResults = canReview || Boolean(selectedScore !== undefined || selectedHrFeedback || selectedRejectionMessage || selectedInterviewSlot || hasCritiques);
+
+    return (
+      <div className="mt-3 rounded-2xl border border-[#d7e8df] bg-white p-5 shadow-sm space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <div>
+            <p className="text-xs tracking-wider uppercase text-[#2d6a55] font-semibold">Application Result</p>
+            <h3 className="text-[#1c1c1a] font-semibold mt-1">
+              {selectedPosition?.title || `Position #${selectedPositionId}`}
+            </h3>
+            <p className="text-xs text-[#6b7063] mt-1">
+              {selectedEvaluation?.role_alignment_summary || selectedEvaluation?.position_fit_verdict || 'Result details update as the hiring team reviews this application.'}
+            </p>
+          </div>
+          <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] px-4 py-3 text-center min-w-24">
+            <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Score</p>
+            <p className="text-2xl text-[#1c1c1a] font-semibold">{selectedScore ?? '--'}</p>
+          </div>
+        </div>
+
+        {selectedStatus === 'rejected' && (
+          <div className="rounded-xl border border-[#f5c2c2] bg-[#fff8f8] p-4">
+            <p className="text-xs tracking-wider uppercase text-[#b91c1c] font-semibold mb-1">Not Selected</p>
+            <p className="text-sm text-[#52574e] leading-relaxed">
+              {selectedRejectionMessage || 'Thank you for applying. The hiring team has decided to move forward with other candidates for this position.'}
+            </p>
+          </div>
+        )}
+
+        {selectedStatus === 'hired' && (
+          <div className="rounded-xl border border-[#c8e6d8] bg-[#f0f9f4] p-4">
+            <div className="flex items-center gap-2 text-[#245747] font-semibold text-sm">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Congratulations, you have been hired for this position.</span>
+            </div>
+          </div>
+        )}
+
+        {selectedStatus === 'interview_scheduled' && selectedInterviewSlot && (
+          <div className="rounded-xl border border-[#c5cbf7] bg-[#f5f7ff] p-4">
+            <p className="text-xs tracking-wider uppercase text-[#3730a3] font-semibold mb-2">Interview Scheduled</p>
+            <div className="grid sm:grid-cols-2 gap-3 text-sm text-[#1c1c1a]">
+              <div>
+                <span className="block text-xs text-[#a8a49d] font-medium">Date &amp; Time</span>
+                <span className="font-semibold">{selectedInterviewSlot.date} at {selectedInterviewSlot.time}</span>
+              </div>
+              <div>
+                <span className="block text-xs text-[#a8a49d] font-medium">Location / Link</span>
+                <span className="font-semibold">{selectedInterviewSlot.location}</span>
+              </div>
+            </div>
+            {selectedInterviewSlot.notes && (
+              <p className="text-xs text-[#6b7063] leading-relaxed mt-3">{selectedInterviewSlot.notes}</p>
+            )}
+          </div>
+        )}
+
+        {selectedScoreBreakdown && (
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <Target className="w-4 h-4 text-[#2d6a55]" />
+              <p className="text-sm text-[#1c1c1a] font-semibold">Position-Focused Score Breakdown</p>
+            </div>
+            <div className="grid sm:grid-cols-5 gap-2">
+              {[
+                ['Role', selectedScoreBreakdown.role_requirement_alignment, 35],
+                ['Depth', selectedScoreBreakdown.technical_correctness_depth, 25],
+                ['Evidence', selectedScoreBreakdown.evidence_specificity, 20],
+                ['Impact', selectedScoreBreakdown.position_impact, 10],
+                ['Clarity', selectedScoreBreakdown.communication_clarity, 10]
+              ].map(([label, value, max]) => (
+                <div key={String(label)} className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-3 text-center">
+                  <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">{label}</p>
+                  <p className="text-sm text-[#1c1c1a] font-semibold mt-1">{value || 0}/{max}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {hasCritiques ? (
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <MessageSquare className="w-4 h-4 text-[#2d6a55]" />
+              <p className="text-sm text-[#1c1c1a] font-semibold">Question-by-Question Feedback</p>
+            </div>
+            <div className="space-y-3">
+              {selectedEvaluation.critiques.map((item: any, index: number) => (
+                <div key={index} className="border-l-2 border-[#2d6a55] bg-[#f8faf8] rounded-r-xl p-4 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs text-[#2d6a55] uppercase tracking-wider font-semibold">Question {index + 1}</p>
+                    {item.per_answer_score !== undefined && (
+                      <p className="text-xs text-[#2d6a55] font-semibold">{item.per_answer_score}/100</p>
+                    )}
+                  </div>
+                  {item.question && <p className="text-xs text-[#1c1c1a] font-medium leading-relaxed">{item.question}</p>}
+                  {(item.candidate_answer || item.candidate_answer_excerpt || selectedApplication.answers?.[index]) && (
+                    <p className="text-xs text-[#52574e] leading-relaxed">
+                      <span className="font-semibold text-[#1c1c1a]">Your answer:</span> {item.candidate_answer || selectedApplication.answers?.[index] || item.candidate_answer_excerpt}
+                    </p>
+                  )}
+                  {item.requirement_focus && (
+                    <p className="text-xs text-[#6b7063]"><span className="font-semibold text-[#1c1c1a]">Role focus:</span> {item.requirement_focus}</p>
+                  )}
+                  <p className="text-xs text-[#52574e] leading-relaxed">{getDisplayCritique(item, index)}</p>
+                  {(item.strengths?.length || item.weaknesses?.length || item.suggested_improvement) && (
+                    <div className="grid sm:grid-cols-2 gap-3 pt-2 border-t border-[#e4e1da]/60">
+                      {item.strengths?.length ? (
+                        <div>
+                          <p className="text-xs text-[#2d6a55] font-semibold mb-1">Strengths</p>
+                          <ul className="list-disc pl-4 space-y-1 text-xs text-[#52574e]">
+                            {item.strengths.map((strength: string, strengthIndex: number) => <li key={strengthIndex}>{strength}</li>)}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {item.weaknesses?.length ? (
+                        <div>
+                          <p className="text-xs text-[#c25a2a] font-semibold mb-1">Areas for Growth</p>
+                          <ul className="list-disc pl-4 space-y-1 text-xs text-[#52574e]">
+                            {item.weaknesses.map((weakness: string, weaknessIndex: number) => <li key={weaknessIndex}>{weakness}</li>)}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {item.suggested_improvement && (
+                        <p className="sm:col-span-2 text-xs text-[#52574e] leading-relaxed">
+                          <span className="font-semibold text-[#1c1c1a]">Suggested improvement:</span> {item.suggested_improvement}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-4 text-sm text-[#6b7063]">
+            {hasResults ? 'Detailed question feedback has not been generated for this application yet.' : 'Results will appear here after you complete the warm-up interview and the hiring team reviews your progress.'}
+          </div>
+        )}
+
+        {selectedHrFeedback && (
+          <div className="rounded-xl border border-[#e4e1da] bg-[#f8faf8] p-4">
+            <p className="text-xs tracking-wider uppercase text-[#2d6a55] font-semibold mb-2">Hiring Manager Feedback</p>
+            <p className="text-xs text-[#52574e] leading-relaxed">{selectedHrFeedback}</p>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen py-10 px-6 bg-[#f7f6f3]">
       <div className={`${view === 'overview' ? 'max-w-4xl' : 'max-w-5xl'} mx-auto`}>
@@ -693,7 +956,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
           <div className="mb-6 rounded-2xl border border-[#f5c2c2] bg-[#fff8f8] p-6 shadow-sm">
             <div className="flex items-start gap-4">
               <div className="w-10 h-10 bg-[#fdf2f2] rounded-xl flex items-center justify-center flex-shrink-0">
-                <span className="text-[#b91c1c] text-lg font-bold">✕</span>
+                <span className="text-[#b91c1c] text-lg font-bold">X</span>
               </div>
               <div className="flex-1">
                 <p className="text-xs tracking-wider uppercase text-[#b91c1c] mb-1 font-semibold">Application Update</p>
@@ -954,117 +1217,9 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
           </div>
         )}
 
-        {(view === 'overview' || view === 'applications') && (
-        <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mb-5">
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-xs text-[#6b7063] uppercase tracking-wider font-semibold">Application Progress</span>
-            <span className="text-xs text-[#2d6a55] font-bold bg-[#e8f2ee] px-2.5 py-0.5 rounded-full">
-              {getPhaseLabel(selectedStatus, Boolean(selectedApplication?.answers?.length))}
-            </span>
-          </div>
-          
-          {/* Custom Horizontal Workflow Stepper */}
-          {(() => {
-            const steps = [
-              { label: 'Waiting for Screening', description: 'Complete warm-up sandbox' },
-              { label: 'Screening Completed', description: 'AI evaluation submitted' },
-              { label: 'Waiting for Interview', description: 'Screening passed, wait list' },
-              { label: 'Interview In Progress', description: 'Interview scheduled or active' },
-              { 
-                label: selectedStatus === 'rejected' ? 'Rejected' : 'Hired', 
-                description: selectedStatus === 'rejected' ? 'Application processed' : 'Offer extended!' 
-              }
-            ];
-            const activeStepIndex = getActiveStepIndex(selectedStatus, Boolean(selectedApplication?.answers?.length));
+        {view === 'overview' && renderApplicationProgress()}
 
-            return (
-              <div className="w-full py-5 relative">
-                {/* Track lines wrapper */}
-                <div className="absolute left-6 right-6 top-[28px] h-1 -translate-y-1/2 z-0">
-                  {/* Background Gray Track */}
-                  <div className="absolute inset-0 bg-[#f0ede8] rounded-full" />
-                  {/* Completed Green Progress Track */}
-                  <div 
-                    className="absolute left-0 top-0 bottom-0 bg-[#2d6a55] rounded-full transition-all duration-500"
-                    style={{ width: `${(activeStepIndex / (steps.length - 1)) * 100}%` }}
-                  />
-                </div>
-                
-                {/* Node Grid */}
-                <div className="relative flex justify-between items-center w-full z-10">
-                  {steps.map((step, idx) => {
-                    const isActive = idx === activeStepIndex;
-                    const isCompleted = idx < activeStepIndex;
-                    const isTerminalRejected = idx === 4 && selectedStatus === 'rejected';
-                    const isTerminalHired = idx === 4 && selectedStatus === 'hired';
-
-                    let nodeStyles = 'bg-white border-2 border-[#e4e1da] text-[#a8a49d]';
-                    if (isActive) {
-                      if (isTerminalRejected) {
-                        nodeStyles = 'bg-[#b91c1c] text-white ring-4 ring-[#b91c1c]/20 scale-110 shadow-lg';
-                      } else if (isTerminalHired) {
-                        nodeStyles = 'bg-[#2d6a55] text-white ring-4 ring-[#2d6a55]/20 scale-110 shadow-lg animate-pulse';
-                      } else {
-                        nodeStyles = 'bg-[#2d6a55] text-white ring-4 ring-[#2d6a55]/20 scale-110 shadow-lg';
-                      }
-                    } else if (isCompleted) {
-                      nodeStyles = 'bg-[#2d6a55] text-white';
-                    }
-
-                    let textStyles = 'text-[#6b7063]';
-                    if (isActive) {
-                      textStyles = isTerminalRejected ? 'text-[#b91c1c] font-bold' : 'text-[#2d6a55] font-bold';
-                    }
-
-                    return (
-                      <div key={idx} className="flex flex-col items-center flex-1">
-                        {/* Circular node */}
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-all duration-500 shadow-sm ${nodeStyles}`}>
-                          {isCompleted ? '✓' : idx + 1}
-                        </div>
-                        {/* Node labels */}
-                        <p className={`text-[10px] sm:text-[11px] font-semibold text-center mt-3 max-w-[125px] leading-tight transition-colors duration-300 ${textStyles}`}>
-                          {step.label}
-                        </p>
-                        <p className="hidden md:block text-[9px] text-[#a8a49d] text-center max-w-[100px] mt-0.5 leading-normal">
-                          {step.description}
-                        </p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
-          <div className="grid grid-cols-3 gap-3 mt-5">
-            <div className="border border-[#e4e1da] rounded-xl p-4">
-              <FileText className="w-4 h-4 text-[#2d6a55] mb-2" />
-              <p className="text-xs text-[#a8a49d]">Profile</p>
-              <p className="text-sm text-[#1c1c1a] font-medium">{candidateData.resumeData ? 'Resume Uploaded' : 'Profile On File'}</p>
-            </div>
-            <div className="border border-[#e4e1da] rounded-xl p-4">
-              <PlayCircle className="w-4 h-4 text-[#2d6a55] mb-2" />
-              <p className="text-xs text-[#a8a49d]">Interview</p>
-              <p className="text-sm text-[#1c1c1a] font-medium">
-                {!selectedApplication
-                  ? 'Waiting for Interview'
-                  : selectedStatus === 'interview_scheduled'
-                    ? 'Interview Scheduled'
-                    : (selectedStatus === 'completed' || selectedStatus === 'screening' || selectedStatus === 'hired' || selectedStatus === 'rejected')
-                      ? 'Interview Completed'
-                      : 'Waiting for Interview'}
-              </p>
-            </div>
-            <div className="border border-[#e4e1da] rounded-xl p-4">
-              <BarChart3 className="w-4 h-4 text-[#2d6a55] mb-2" />
-              <p className="text-xs text-[#a8a49d]">Score</p>
-              <p className="text-sm text-[#1c1c1a] font-medium">{selectedScore ?? '--'} / 100</p>
-            </div>
-          </div>
-        </div>
-        )}
-
-        {view === 'applications' && applications.length > 0 && (
+        {view === 'applications' && (
           <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mb-5">
             <div className="flex items-center gap-3 mb-5">
               <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
@@ -1094,8 +1249,8 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
                 const isSelected = application.application_id === selectedApplication?.application_id;
                 const applicationStatus = normalizeApplicationStatus(application.status);
                 return (
+                  <div key={application.application_id}>
                   <button
-                    key={application.application_id}
                     onClick={() => syncSelectedApplication(application, position)}
                     className={`w-full text-left border rounded-xl p-4 transition-colors ${isSelected ? 'border-[#2d6a55]/40 bg-[#f0f9f4]' : 'border-[#e4e1da] hover:bg-[#f7f6f3]'}`}
                   >
@@ -1110,6 +1265,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
                       </span>
                     </div>
                   </button>
+                  </div>
                 );
               })}
             </div>
@@ -1117,40 +1273,11 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
           </div>
         )}
 
-        {/* Interview Scheduled Card — below Application History */}
-        {view === 'applications' && selectedStatus === 'interview_scheduled' && selectedInterviewSlot && (
-          <div className="mb-5 rounded-2xl border border-[#c5cbf7] bg-[#f5f7ff] p-6 shadow-sm">
-            <div className="flex items-start gap-4">
-              <div className="w-10 h-10 bg-[#eef2ff] rounded-xl flex items-center justify-center flex-shrink-0">
-                <span className="text-[#3730a3] text-lg font-bold">📅</span>
-              </div>
-              <div className="flex-1">
-                <p className="text-xs tracking-wider uppercase text-[#3730a3] mb-1 font-semibold">Interview Scheduled</p>
-                <h2 className="text-[#1c1c1a] mb-2 font-semibold text-lg">Congratulations! Your interview has been scheduled</h2>
-                <p className="text-sm text-[#52574e] leading-relaxed mb-4">
-                  We are excited to discuss this opportunity with you further. Please review the interview slot details below:
-                </p>
-                <div className="bg-white rounded-xl p-4 border border-[#c5cbf7]/40 space-y-3">
-                  <div className="grid sm:grid-cols-2 gap-3 text-sm text-[#1c1c1a]">
-                    <div>
-                      <span className="block text-xs text-[#a8a49d] font-medium">Date &amp; Time</span>
-                      <span className="font-semibold">{selectedInterviewSlot.date} at {selectedInterviewSlot.time}</span>
-                    </div>
-                    <div>
-                      <span className="block text-xs text-[#a8a49d] font-medium">Location / Link</span>
-                      <span className="font-semibold">{selectedInterviewSlot.location}</span>
-                    </div>
-                  </div>
-                  {selectedInterviewSlot.notes && (
-                    <div className="border-t border-[#e4e1da] pt-3">
-                      <span className="block text-xs text-[#a8a49d] font-medium mb-1">Additional Instructions</span>
-                      <p className="text-xs text-[#6b7063] leading-relaxed">{selectedInterviewSlot.notes}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
+        {view === 'applications' && (
+          <>
+            {renderApplicationProgress()}
+            {renderSelectedApplicationResults()}
+          </>
         )}
 
         {(view === 'overview' || view === 'applications') && (
@@ -1172,7 +1299,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
           )}
           {canReview ? (
             <Link
-              to="/candidate/feedback"
+              to="/candidate/applications"
               onClick={() => syncSelectedApplication()}
               className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-white border border-[#e4e1da] text-[#1c1c1a] rounded-xl hover:bg-[#f7f6f3] transition-colors text-sm font-medium shadow-sm"
             >
@@ -1212,7 +1339,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
           {(!candidateData.profileVerified || !candidateData.resumeUrl) && (
             <div className="mb-5 rounded-xl border border-[#c25a2a]/20 bg-[#fffaf5] p-4 text-sm text-[#c25a2a] space-y-2">
               <div className="flex items-center gap-2 font-semibold">
-                <span>⚠️</span>
+                <span>!</span>
                 <span>Application Prerequisites Incomplete</span>
               </div>
               <p className="text-xs text-[#6b7063] leading-relaxed">
@@ -1282,29 +1409,6 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
         </div>
         )}
 
-        {view === 'applications' && (
-        <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mt-5">
-          <div className="flex items-center gap-3 mb-4">
-            <MessageSquare className="w-4 h-4 text-[#2d6a55]" />
-            <h2 className="text-[#1c1c1a] font-semibold">Agent & Hiring Manager Feedback</h2>
-          </div>
-          <p className="text-xs text-[#6b7063] mb-4">
-            Selected position: {selectedPosition?.title || (selectedApplication ? `Position #${selectedPositionId}` : 'Choose an application above')}
-          </p>
-          {selectedEvaluation?.critiques?.length ? (
-            <div className="space-y-3">
-              {selectedEvaluation.critiques.map((item: any, index: number) => (
-                <div key={index} className="border-l-2 border-[#2d6a55] bg-[#f7f6f3] rounded-r-xl p-3">
-                  <p className="text-xs text-[#2d6a55] font-semibold mb-1">Question {index + 1}</p>
-                  <p className="text-xs text-[#6b7063]">{getDisplayCritique(item, index)}</p>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-[#6b7063]">Feedback will appear here after you complete an interview and the hiring manager reviews your progress.</p>
-          )}
-        </div>
-        )}
       </div>
     </div>
   );

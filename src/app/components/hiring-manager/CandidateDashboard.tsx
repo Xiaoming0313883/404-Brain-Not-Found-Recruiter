@@ -118,6 +118,7 @@ export function CandidateDashboard({
   const actionLocksRef = useRef<Set<string>>(new Set());
   const [actionError, setActionError] = useState('');
   const [selectedPositionId, setSelectedPositionId] = useState<number | 'all'>('all');
+  const [selectedTrajectoryCandidate, setSelectedTrajectoryCandidate] = useState<ScrapedCandidate | null>(null);
 
   const [lastActionCandidate, setLastActionCandidate] = useState<{ email: string; name: string; oldStatus: string; newStatus: string; jobId?: number } | null>(null);
 
@@ -376,6 +377,7 @@ export function CandidateDashboard({
               <span className="text-[#6b7063]">Trajectory</span>
               <span className="text-[#c9a84c]">{data.trajectoryScore}%</span>
             </div>
+            <p className="text-[10px] text-[#a8a49d] pt-1">Click to open candidate profile</p>
           </div>
         </div>
       );
@@ -661,6 +663,10 @@ export function CandidateDashboard({
                     data={scatterData}
                     fill="#2d6a55"
                     fillOpacity={0.75}
+                    cursor="pointer"
+                    onClick={(point: any) => {
+                      if (point?.candidate) setSelectedTrajectoryCandidate(point.candidate);
+                    }}
                   />
                 </ScatterChart>
               </ResponsiveContainer>
@@ -698,7 +704,7 @@ export function CandidateDashboard({
       )}
 
       {/* Active Pipeline */}
-      {view === 'candidates' && (
+      {(view === 'overview' || view === 'candidates') && (
       <>
       <motion.div
 initial={{ opacity: 0, y: 16 }}
@@ -1897,6 +1903,116 @@ initial={{ opacity: 0, y: 16 }}
               >
                 Confirm Schedule
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Trajectory Candidate Profile Modal */}
+      {selectedTrajectoryCandidate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl border border-[#e4e1da] max-h-[90vh] overflow-hidden">
+            <div className="flex items-start justify-between gap-4 p-5 border-b border-[#e4e1da] bg-[#f7f6f3]">
+              <div className="flex items-start gap-4 min-w-0">
+                {selectedTrajectoryCandidate.profilePictureUrl ? (
+                  <img
+                    src={`${API_ORIGIN}${selectedTrajectoryCandidate.profilePictureUrl}`}
+                    alt={getDisplayName(selectedTrajectoryCandidate)}
+                    className="w-14 h-14 rounded-xl object-cover border border-[#e4e1da] flex-shrink-0"
+                  />
+                ) : (
+                  <div className="w-14 h-14 bg-[#e8f2ee] rounded-xl flex items-center justify-center text-[#2d6a55] font-semibold text-xl flex-shrink-0">
+                    {getDisplayName(selectedTrajectoryCandidate).charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="text-xs tracking-wider uppercase text-[#2d6a55] font-semibold">Trajectory Candidate Profile</p>
+                  <h3 className="text-lg text-[#1c1c1a] font-semibold truncate">{getDisplayName(selectedTrajectoryCandidate)}</h3>
+                  <p className="text-sm text-[#6b7063] truncate">{getDisplayEmail(selectedTrajectoryCandidate)}</p>
+                  <p className="text-xs text-[#a8a49d] mt-1">
+                    {jobs.find(job => job.id === selectedTrajectoryCandidate.jobId)?.title || 'Sourced Position'} - {getCandidatePhase(selectedTrajectoryCandidate.status, selectedTrajectoryCandidate.answers)}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedTrajectoryCandidate(null)}
+                className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-[#a8a49d] hover:text-[#1c1c1a] hover:bg-white transition-colors flex-shrink-0"
+                title="Close profile"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto max-h-[calc(90vh-105px)] space-y-5">
+              <div className="grid sm:grid-cols-3 gap-3">
+                <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-4">
+                  <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Position Fit</p>
+                  <p className="text-2xl text-[#2d6a55] font-semibold mt-1">{selectedTrajectoryCandidate.matchScore}%</p>
+                </div>
+                <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-4">
+                  <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Trajectory</p>
+                  <p className="text-2xl text-[#c9a84c] font-semibold mt-1">{selectedTrajectoryCandidate.trajectoryScore}%</p>
+                </div>
+                <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-4">
+                  <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Screening</p>
+                  <p className="text-2xl text-[#1c1c1a] font-semibold mt-1">{selectedTrajectoryCandidate.screeningScore ?? '--'}</p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-[#e4e1da] p-4">
+                <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Profile Summary</p>
+                <p className="text-sm text-[#6b7063] leading-relaxed">
+                  {selectedTrajectoryCandidate.about || selectedTrajectoryCandidate.resumeSummary || selectedTrajectoryCandidate.positionFitSummary || 'No profile summary is available yet.'}
+                </p>
+              </div>
+
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div className="rounded-xl border border-[#e4e1da] p-4">
+                  <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Experience</p>
+                  {selectedTrajectoryCandidate.experiences?.length ? (
+                    <div className="space-y-2">
+                      {selectedTrajectoryCandidate.experiences.slice(0, 3).map((experience, index) => (
+                        <div key={`${experience.title}-${experience.company}-${index}`} className="rounded-lg bg-[#f7f6f3] border border-[#e4e1da] p-3">
+                          <p className="text-sm text-[#1c1c1a] font-semibold">{experience.title || 'Experience'}</p>
+                          <p className="text-xs text-[#6b7063] mt-0.5">{[experience.company, experience.duration].filter(Boolean).join(' - ') || 'Company details not found'}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-[#6b7063]">No experience details extracted.</p>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-[#e4e1da] p-4">
+                  <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Education & Skills</p>
+                  {selectedTrajectoryCandidate.education?.length ? (
+                    <div className="space-y-2 mb-3">
+                      {selectedTrajectoryCandidate.education.slice(0, 2).map((education, index) => (
+                        <div key={`${education.degree}-${education.school}-${index}`} className="rounded-lg bg-[#f7f6f3] border border-[#e4e1da] p-3">
+                          <p className="text-sm text-[#1c1c1a] font-semibold">{education.degree || 'Education'}</p>
+                          <p className="text-xs text-[#6b7063] mt-0.5">{education.school || 'School details not found'}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {selectedTrajectoryCandidate.skills?.length ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedTrajectoryCandidate.skills.slice(0, 10).map(skill => (
+                        <span key={skill} className="px-2 py-0.5 bg-[#f0ede8] rounded-full text-xs text-[#6b7063]">{skill}</span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-[#6b7063]">No skills extracted.</p>
+                  )}
+                </div>
+              </div>
+
+              {selectedTrajectoryCandidate.positionFitSummary && (
+                <div className="rounded-xl border border-[#c8e6d8] bg-[#f8fcfa] p-4">
+                  <p className="text-xs tracking-wider uppercase text-[#2d6a55] mb-2 font-semibold">Position Fit Reasoning</p>
+                  <p className="text-sm text-[#3d5a4a] leading-relaxed">{selectedTrajectoryCandidate.positionFitSummary}</p>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -99,7 +99,7 @@ export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Pr
       
       const score = data.evaluation?.screening_score || 80;
       onComplete(answers, score, data.evaluation, data.agent_warnings || []);
-      navigate('/candidate/feedback');
+      navigate('/candidate/applications');
     } catch (err: any) {
       console.error(err);
       const message = err.message || 'Unable to evaluate your answers. Please try again when the API is available.';

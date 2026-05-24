@@ -3,7 +3,6 @@ import { Routes, Route, Navigate } from 'react-router';
 import { CandidateLogin } from './candidate/CandidateLogin';
 import { CandidateHome } from './candidate/CandidateHome';
 import { CandidateSandbox } from './candidate/CandidateSandbox';
-import { CandidateFeedback } from './candidate/CandidateFeedback';
 import { CandidateInformation } from './candidate/CandidateInformation';
 import { CandidateApplyLoading } from './candidate/CandidateApplyLoading';
 
@@ -318,13 +317,7 @@ export function CandidatePortal() {
         />
         <Route
           path="/feedback"
-          element={
-            candidateData ? (
-              <CandidateFeedback candidateData={candidateData} onSignOut={handleSignOut} />
-            ) : (
-              <Navigate to="/candidate" replace />
-            )
-          }
+          element={<Navigate to={candidateData ? "/candidate/applications" : "/candidate"} replace />}
         />
       </Routes>
     </div>

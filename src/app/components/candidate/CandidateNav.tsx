@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router';
-import { ArrowLeft, BarChart3, Briefcase, FileText, Home, LogOut, User } from 'lucide-react';
+import { ArrowLeft, Briefcase, FileText, Home, LogOut, User } from 'lucide-react';
 
 interface Props {
   onSignOut?: () => void;
@@ -9,8 +9,7 @@ const navItems = [
   { path: '/candidate/home', label: 'Overview', icon: Home },
   { path: '/candidate/profile', label: 'Profile', icon: User },
   { path: '/candidate/applications', label: 'Applications', icon: FileText },
-  { path: '/candidate/jobs', label: 'Jobs', icon: Briefcase },
-  { path: '/candidate/feedback', label: 'Results', icon: BarChart3 }
+  { path: '/candidate/jobs', label: 'Jobs', icon: Briefcase }
 ];
 
 export function CandidateNav({ onSignOut }: Props) {
