@@ -1,13 +1,14 @@
 import { CandidateData } from '../CandidatePortal';
-import { Link } from 'react-router';
 import * as Progress from '@radix-ui/react-progress';
-import { BookOpen, Calendar, ArrowLeft, CheckCircle2, TrendingUp, Target } from 'lucide-react';
+import { BookOpen, Calendar, CheckCircle2, TrendingUp, Target } from 'lucide-react';
+import { CandidateNav } from './CandidateNav';
 
 interface Props {
   candidateData: CandidateData;
+  onSignOut?: () => void;
 }
 
-export function CandidateFeedback({ candidateData }: Props) {
+export function CandidateFeedback({ candidateData, onSignOut }: Props) {
   const score = candidateData.score || 0;
   const isHighScore = score >= 70;
   const scoreBreakdown = candidateData.evaluation?.score_breakdown;
@@ -49,6 +50,7 @@ export function CandidateFeedback({ candidateData }: Props) {
   return (
     <div className="min-h-screen py-12 px-6 bg-[#f7f6f3]">
       <div className="max-w-3xl mx-auto">
+        <CandidateNav onSignOut={onSignOut} />
 
         {/* Header */}
         <div className="text-center mb-10">

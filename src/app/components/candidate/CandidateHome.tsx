@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import * as Progress from '@radix-ui/react-progress';
-import { ArrowLeft, BarChart3, Bell, Briefcase, CheckCircle2, FileText, Loader2, LogOut, MessageSquare, PlayCircle, Send, User, Users, X } from 'lucide-react';
+import { BarChart3, Bell, Briefcase, CheckCircle2, FileText, Loader2, MessageSquare, PlayCircle, Send, User, Users, X } from 'lucide-react';
 import { CandidateData } from '../CandidatePortal';
+import { CandidateNav } from './CandidateNav';
 
 interface Props {
   candidateData: CandidateData;
   onUpdateCandidate: (data: CandidateData) => void;
   onSignOut: () => void;
+  view?: 'overview' | 'applications' | 'jobs' | 'profile';
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -66,7 +68,7 @@ const getVisiblePages = (currentPage: number, totalPages: number) => {
     .sort((a, b) => a - b);
 };
 
-export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: Props) {
+export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, view = 'overview' }: Props) {
   const navigate = useNavigate();
   const [positions, setPositions] = useState<any[]>([]);
   const [allPositions, setAllPositions] = useState<any[]>([]);
@@ -501,13 +503,10 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
   };
 
   return (
-    <div className="min-h-screen py-12 px-6 bg-[#f7f6f3]">
-      <div className="max-w-3xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
-          <Link to="/" className="inline-flex items-center gap-2 text-sm text-[#6b7063] hover:text-[#1c1c1a] transition-colors">
-            <ArrowLeft className="w-4 h-4" />
-            All Portals
-          </Link>
+    <div className="min-h-screen py-10 px-6 bg-[#f7f6f3]">
+      <div className={`${view === 'overview' ? 'max-w-4xl' : 'max-w-5xl'} mx-auto`}>
+        <CandidateNav onSignOut={onSignOut} />
+        <div className="flex justify-end mb-4">
           <div className="flex items-center gap-3">
             <div className="relative" ref={notifRef}>
               <button
@@ -571,13 +570,6 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
                 </div>
               )}
             </div>
-            <button
-              onClick={onSignOut}
-              className="inline-flex items-center gap-2 text-sm text-[#6b7063] hover:text-[#c25a2a] transition-colors"
-            >
-              <LogOut className="w-4 h-4" />
-              Sign Out
-            </button>
           </div>
         </div>
 
@@ -587,9 +579,9 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
             <div>
               <h1 className="text-[#1c1c1a] text-2xl font-semibold mb-1">Welcome back, {candidateData.name}</h1>
               <p className="text-sm text-[#6b7063]">{candidateData.email}</p>
-              <Link to="/candidate/information" className="inline-flex items-center gap-2 mt-3 text-sm text-[#2d6a55] font-semibold hover:underline">
+              <Link to="/candidate/profile" className="inline-flex items-center gap-2 mt-3 text-sm text-[#2d6a55] font-semibold hover:underline">
                 <User className="w-4 h-4" />
-                Edit information
+                Edit profile
               </Link>
             </div>
             {candidateData.profilePictureUrl ? (
@@ -652,6 +644,30 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
           </div>
         )}
 
+        {view === 'overview' && (
+          <div className="grid md:grid-cols-3 gap-4 mb-5">
+            <Link to="/candidate/profile" className="bg-white border border-[#e4e1da] rounded-2xl p-5 shadow-sm hover:border-[#2d6a55]/30 transition-colors">
+              <FileText className="w-5 h-5 text-[#2d6a55] mb-3" />
+              <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Profile</p>
+              <p className="text-lg text-[#1c1c1a] font-semibold mt-1">{profileCompletion}% complete</p>
+              <p className="text-xs text-[#6b7063] mt-1">{profileReady ? 'Ready to apply' : `${missingProfileFields.length} detail${missingProfileFields.length === 1 ? '' : 's'} missing`}</p>
+            </Link>
+            <Link to="/candidate/applications" className="bg-white border border-[#e4e1da] rounded-2xl p-5 shadow-sm hover:border-[#2d6a55]/30 transition-colors">
+              <BarChart3 className="w-5 h-5 text-[#2d6a55] mb-3" />
+              <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Current Status</p>
+              <p className="text-lg text-[#1c1c1a] font-semibold mt-1">{statusLabels[selectedStatus]}</p>
+              <p className="text-xs text-[#6b7063] mt-1">{applications.length} application{applications.length === 1 ? '' : 's'} on record</p>
+            </Link>
+            <Link to="/candidate/jobs" className="bg-white border border-[#e4e1da] rounded-2xl p-5 shadow-sm hover:border-[#2d6a55]/30 transition-colors">
+              <Briefcase className="w-5 h-5 text-[#2d6a55] mb-3" />
+              <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Open Jobs</p>
+              <p className="text-lg text-[#1c1c1a] font-semibold mt-1">{positions.length} available</p>
+              <p className="text-xs text-[#6b7063] mt-1">Browse roles on the Jobs page</p>
+            </Link>
+          </div>
+        )}
+
+        {view === 'profile' && (
         <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mb-5">
           <div className="flex items-center gap-3 mb-4">
             <FileText className="w-4 h-4 text-[#2d6a55]" />
@@ -837,6 +853,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
             </div>
           )}
         </div>
+        )}
 
         {errorMessage && (
           <div className="mb-5 p-4 bg-[#fdf2f2] border border-[#f5c2c2] text-[#b91c1c] rounded-xl text-sm">
@@ -844,6 +861,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
           </div>
         )}
 
+        {(view === 'overview' || view === 'applications') && (
         <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mb-5">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs text-[#6b7063] uppercase tracking-wider font-semibold">Application Progress</span>
@@ -873,8 +891,9 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
             </div>
           </div>
         </div>
+        )}
 
-        {applications.length > 0 && (
+        {view === 'applications' && applications.length > 0 && (
           <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mb-5">
             <div className="flex items-center gap-3 mb-5">
               <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
@@ -952,7 +971,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
         )}
 
         {/* Interview Scheduled Card — below Application History */}
-        {selectedStatus === 'interview_scheduled' && candidateData.interviewSlot && (
+        {view === 'applications' && selectedStatus === 'interview_scheduled' && candidateData.interviewSlot && (
           <div className="mb-5 rounded-2xl border border-[#c5cbf7] bg-[#f5f7ff] p-6 shadow-sm">
             <div className="flex items-start gap-4">
               <div className="w-10 h-10 bg-[#eef2ff] rounded-xl flex items-center justify-center flex-shrink-0">
@@ -987,6 +1006,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
           </div>
         )}
 
+        {(view === 'overview' || view === 'applications') && (
         <div className="grid sm:grid-cols-3 gap-3">
           {selectedAgentError && (
             <div className="sm:col-span-3 rounded-xl border border-[#f5c2c2] bg-[#fdf2f2] p-4 text-sm text-[#b91c1c]">
@@ -1025,7 +1045,9 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
             </div>
           )}
         </div>
+        )}
 
+        {view === 'jobs' && (
         <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mt-5">
           <div className="flex items-center gap-3 mb-5">
             <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
@@ -1084,7 +1106,9 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
           </div>
           {renderPagination(positionPageSafe, positionTotalPages, positions.length, 'positions', setPositionPage)}
         </div>
+        )}
 
+        {view === 'applications' && (
         <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mt-5">
           <div className="flex items-center gap-3 mb-4">
             <MessageSquare className="w-4 h-4 text-[#2d6a55]" />
@@ -1106,6 +1130,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut }: P
             <p className="text-sm text-[#6b7063]">Feedback will appear here after you complete an interview and the hiring manager reviews your progress.</p>
           )}
         </div>
+        )}
       </div>
     </div>
   );

@@ -44,6 +44,7 @@ interface Props {
   onScheduleInterview: (email: string, positionId: number | undefined, date: string, time: string, location: string, notes?: string) => Promise<void>;
   onUpdateOutreachNotes: (email: string, positionId?: number, outreachEmail?: string, hrFeedback?: string) => Promise<void>;
   onRevertStatus?: (email: string, positionId?: number) => Promise<void>;
+  view?: 'overview' | 'candidates';
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
@@ -91,7 +92,8 @@ export function CandidateDashboard({
   onReject: onRejectProp,
   onScheduleInterview: onScheduleInterviewProp,
   onUpdateOutreachNotes,
-  onRevertStatus
+  onRevertStatus,
+  view = 'overview'
 }: Props) {
   const [anonymizedMode, setAnonymizedMode] = useState(false);
   const [busyEmail, setBusyEmail] = useState('');
@@ -375,9 +377,11 @@ export function CandidateDashboard({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-[#1c1c1a] text-xl font-semibold">Candidate Pipeline</h2>
+          <h2 className="text-[#1c1c1a] text-xl font-semibold">{view === 'overview' ? 'Pipeline Overview' : 'Candidates'}</h2>
           <p className="text-sm text-[#6b7063] mt-0.5">
-            {selectedJob ? `${selectedJob.title} dashboard` : 'All-position analytics and bias mitigation'}
+            {view === 'overview'
+              ? selectedJob ? `${selectedJob.title} dashboard` : 'All-position analytics and position health'
+              : selectedJob ? `${selectedJob.title} candidate worklist` : 'Filter, review, and manage candidate decisions'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -403,6 +407,8 @@ export function CandidateDashboard({
         </div>
       )}
 
+      {view === 'overview' && (
+      <>
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -508,8 +514,11 @@ export function CandidateDashboard({
           </motion.div>
         ))}
       </div>
+      </>
+      )}
 
       {/* Bias Mitigation Controls */}
+      {view === 'candidates' && (
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -580,8 +589,10 @@ export function CandidateDashboard({
           </div>
         </div>
       </motion.div>
+      )}
 
       {/* Scatter Plot */}
+      {view === 'overview' && (
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -665,8 +676,11 @@ export function CandidateDashboard({
           </div>
         )}
       </motion.div>
+      )}
 
       {/* Active Pipeline */}
+      {view === 'candidates' && (
+      <>
       <motion.div
 initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -1830,6 +1844,8 @@ initial={{ opacity: 0, y: 16 }}
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

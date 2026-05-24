@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Link } from 'react-router';
-import { ArrowLeft, FileText, Loader2, LogOut, Save, Upload, User } from 'lucide-react';
+import { FileText, Loader2, Save, Upload, User } from 'lucide-react';
 import { CandidateData } from '../CandidatePortal';
 import { PdfResumeViewer } from '../PdfResumeViewer';
+import { CandidateNav } from './CandidateNav';
 
 interface Props {
   candidateData: CandidateData;
@@ -12,6 +12,16 @@ interface Props {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1$/, '');
+const requiredProfileFields = [
+  ['name', 'Full name'],
+  ['age', 'Age'],
+  ['phone', 'Phone'],
+  ['address', 'Address'],
+  ['cameFrom', 'Came from'],
+  ['workExperience', 'Work experience'],
+  ['qualification', 'Qualification'],
+  ['gradeResults', 'Grade and results']
+] as const;
 
 export function CandidateInformation({ candidateData, onUpdateCandidate, onSignOut }: Props) {
   const [form, setForm] = useState({
@@ -34,6 +44,7 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [message, setMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const missingFields = requiredProfileFields.filter(([field]) => !String((form as any)[field] || '').trim());
 
   const openPdfInBrowser = async (url: string) => {
     try {
@@ -161,16 +172,7 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
   return (
     <div className="min-h-screen bg-[#f7f6f3] px-6 py-10">
       <div className="max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
-          <Link to="/candidate/home" className="inline-flex items-center gap-2 text-sm text-[#6b7063] hover:text-[#1c1c1a]">
-            <ArrowLeft className="w-4 h-4" />
-            Candidate Home
-          </Link>
-          <button onClick={onSignOut} className="inline-flex items-center gap-2 text-sm text-[#6b7063] hover:text-[#c25a2a]">
-            <LogOut className="w-4 h-4" />
-            Sign Out
-          </button>
-        </div>
+        <CandidateNav onSignOut={onSignOut} />
 
         <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mb-5">
           <div className="flex items-center gap-3 mb-5">
@@ -182,6 +184,16 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
           </div>
           {message && <div className="mb-4 rounded-xl border border-[#c8e6d8] bg-[#e8f2ee] p-3 text-sm text-[#2d6a55]">{message}</div>}
           {errorMessage && <div className="mb-4 rounded-xl border border-[#f5c2c2] bg-[#fdf2f2] p-3 text-sm text-[#b91c1c]">{errorMessage}</div>}
+          <div className={`mb-5 rounded-xl border p-4 ${missingFields.length ? 'border-[#f2d3a4] bg-[#fff8ed]' : 'border-[#c8e6d8] bg-[#e8f2ee]'}`}>
+            <p className={`text-sm font-semibold ${missingFields.length ? 'text-[#8a5a14]' : 'text-[#2d6a55]'}`}>
+              Missing Information Assistant
+            </p>
+            <p className="mt-1 text-xs text-[#6b7063] leading-relaxed">
+              {missingFields.length
+                ? `Complete ${missingFields.map(([, label]) => label.toLowerCase()).join(', ')} below, then save your details.`
+                : 'Your required profile information is complete.'}
+            </p>
+          </div>
 
           <div className="grid md:grid-cols-2 gap-4">
             {[

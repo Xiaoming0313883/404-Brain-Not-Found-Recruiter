@@ -125,6 +125,7 @@ export function CandidatePortal() {
                 candidateData={candidateData}
                 onUpdateCandidate={setCandidateData}
                 onSignOut={handleSignOut}
+                view="overview"
               />
             ) : (
               <Navigate to="/candidate" replace />
@@ -132,7 +133,38 @@ export function CandidatePortal() {
           }
         />
         <Route
-          path="/information"
+          path="/applications"
+          element={
+            candidateData ? (
+              <CandidateHome
+                candidateData={candidateData}
+                onUpdateCandidate={setCandidateData}
+                onSignOut={handleSignOut}
+                view="applications"
+              />
+            ) : (
+              <Navigate to="/candidate" replace />
+            )
+          }
+        />
+        <Route
+          path="/jobs"
+          element={
+            candidateData ? (
+              <CandidateHome
+                candidateData={candidateData}
+                onUpdateCandidate={setCandidateData}
+                onSignOut={handleSignOut}
+                view="jobs"
+              />
+            ) : (
+              <Navigate to="/candidate" replace />
+            )
+          }
+        />
+        <Route path="/information" element={<Navigate to="/candidate/profile" replace />} />
+        <Route
+          path="/profile"
           element={
             candidateData ? (
               <CandidateInformation
@@ -222,7 +254,7 @@ export function CandidatePortal() {
           path="/feedback"
           element={
             candidateData && (candidateData.status === 'screening' || candidateData.status === 'completed' || candidateData.status === 'hired' || candidateData.status === 'rejected' || candidateData.status === 'interview_scheduled') ? (
-              <CandidateFeedback candidateData={candidateData} />
+              <CandidateFeedback candidateData={candidateData} onSignOut={handleSignOut} />
             ) : (
               <Navigate to="/candidate" replace />
             )

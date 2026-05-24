@@ -410,7 +410,8 @@ export function HiringManagerPortal() {
   const navItems = [
     { path: '/hiring-manager/jobs', label: 'Job Builder', icon: Briefcase },
     { path: '/hiring-manager/sourcing', label: 'LinkedIn Sourcing', icon: Users },
-    { path: '/hiring-manager/dashboard', label: 'Candidate Pipeline', icon: BarChart3 },
+    { path: '/hiring-manager/dashboard', label: 'Overview', icon: BarChart3 },
+    { path: '/hiring-manager/candidates', label: 'Candidates', icon: Users },
     { path: '/hiring-manager/accounts', label: 'Candidate Accounts', icon: UserCog },
     { path: '/hiring-manager/calendar', label: 'Interview Calendar', icon: Calendar },
   ];
@@ -514,6 +515,28 @@ export function HiringManagerPortal() {
                 onScheduleInterview={scheduleInterviewByEmail}
                 onUpdateOutreachNotes={updateCandidateOutreachNotesByEmail}
                 onRevertStatus={revertCandidateStatusByEmail}
+                view="overview"
+              />
+            }
+          />
+          <Route
+            path="/candidates"
+            element={
+              <CandidateDashboard
+                jobs={jobs}
+                candidates={candidates}
+                neutralize={neutralizeActive}
+                onToggleNeutralize={handleNeutralizeToggle}
+                isLoading={isLoading}
+                onRefresh={() => fetchCandidates()}
+                onStatusChange={updateCandidateStatusByEmail}
+                onInvite={inviteCandidateByEmail}
+                onDelete={deleteCandidateByEmail}
+                onReject={rejectCandidateByEmail}
+                onScheduleInterview={scheduleInterviewByEmail}
+                onUpdateOutreachNotes={updateCandidateOutreachNotesByEmail}
+                onRevertStatus={revertCandidateStatusByEmail}
+                view="candidates"
               />
             }
           />
