@@ -3,6 +3,7 @@ import re
 from typing import Dict, Any, List, Tuple
 from app.config import settings
 from .base_agent import get_openai_client, parse_llm_json
+from .bias_agent import analyze_prestige_indicators, apply_bias_controls_to_assessment
 
 # D. MATCHING AGENT
 # ==========================================
@@ -155,7 +156,12 @@ def _trajectory_score(candidate_profile: Dict[str, Any]) -> int:
         score += 6
     return max(35, min(98, score))
 
-def build_position_fit_assessment(job_requirements: Dict[str, Any], candidate_profile: Dict[str, Any]) -> Dict[str, Any]:
+def build_position_fit_assessment(
+    job_requirements: Dict[str, Any],
+    candidate_profile: Dict[str, Any],
+    bias_controls: Dict[str, Any] | None = None,
+    prestige_analysis: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     signal_groups = _build_role_signal_groups(job_requirements)
     candidate_text = " ".join(_tokenize(candidate_profile))
     candidate_tokens = set(candidate_text.split())
@@ -219,7 +225,7 @@ def build_position_fit_assessment(job_requirements: Dict[str, Any], candidate_pr
         advocate_pros.append(f"Shows success signals relevant to this role: {', '.join([*success['matched'], *success['partial']][:4])}.")
     advocate_pros.append(f"Trajectory score is {trajectory_score}/100 based on progression, breadth, and learning signals.")
 
-    return {
+    assessment = {
         "debate": {
             "critical_recruiter_cons": critical_cons,
             "talent_advocate_pros": advocate_pros
@@ -250,9 +256,19 @@ def build_position_fit_assessment(job_requirements: Dict[str, Any], candidate_pr
         )
     }
 
-def run_matching_agent(job_requirements: Dict[str, Any], candidate_profile: Dict[str, Any]) -> Dict[str, Any]:
+    analysis = prestige_analysis or analyze_prestige_indicators(candidate_profile)
+    return apply_bias_controls_to_assessment(assessment, job_requirements, candidate_profile, bias_controls, analysis)
+
+def run_matching_agent(
+    job_requirements: Dict[str, Any],
+    candidate_profile: Dict[str, Any],
+    bias_controls: Dict[str, Any] | None = None,
+    prestige_analysis: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     client = get_openai_client()
-    base_assessment = build_position_fit_assessment(job_requirements, candidate_profile)
+    analysis = prestige_analysis or analyze_prestige_indicators(candidate_profile)
+    calibration_controls = {**(bias_controls or {}), "scoring_mode": "blind_merit", "prestige_weight": 0}
+    base_assessment = build_position_fit_assessment(job_requirements, candidate_profile, calibration_controls, analysis)
     system_prompt = """You are an expert two-persona hiring committee. You will evaluate the match between ONE CURRENT POSITION and ONE candidate profile.
 You MUST output two highly detailed, contrasting evaluation arguments:
 
@@ -320,7 +336,7 @@ Baseline Position-Fit Assessment: {json.dumps(base_assessment)}"""
             )
             parsed = parse_llm_json(response.choices[0].message.content)
             parsed_scores = {**base_assessment.get("scores", {}), **(parsed.get("scores") or {})}
-            return {
+            merged = {
                 **base_assessment,
                 **parsed,
                 "scores": parsed_scores,
@@ -328,8 +344,9 @@ Baseline Position-Fit Assessment: {json.dumps(base_assessment)}"""
                 "score_contributors": parsed.get("score_contributors") or base_assessment["score_contributors"],
                 "score_explanation": parsed.get("score_explanation") or base_assessment["score_explanation"]
             }
+            return apply_bias_controls_to_assessment(merged, job_requirements, candidate_profile, bias_controls, analysis)
         except Exception as e:
             print(f"Matching Agent API error: {e}. Falling back to rule-based debate simulator.")
 
-    return base_assessment
+    return apply_bias_controls_to_assessment(base_assessment, job_requirements, candidate_profile, bias_controls, analysis)
 

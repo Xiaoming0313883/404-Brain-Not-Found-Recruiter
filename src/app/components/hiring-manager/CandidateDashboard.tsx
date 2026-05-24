@@ -1,5 +1,5 @@
-import { useState, useMemo, useRef } from 'react';
-import { Job, ScrapedCandidate } from '../HiringManagerPortal';
+import { useEffect, useState, useMemo, useRef } from 'react';
+import { BiasControls, Job, ScrapedCandidate } from '../HiringManagerPortal';
 import {
   Users,
   Briefcase,
@@ -45,6 +45,8 @@ interface Props {
   candidates: ScrapedCandidate[];
   neutralize: boolean;
   onToggleNeutralize: (active: boolean) => void;
+  biasControls: BiasControls;
+  onUpdateBiasControls: (updates: Partial<BiasControls>) => Promise<BiasControls>;
   isLoading?: boolean;
   onRefresh: () => Promise<void> | void;
   onStatusChange: (email: string, status: ScrapedCandidate['status'], positionId?: number) => Promise<void>;
@@ -102,6 +104,8 @@ export function CandidateDashboard({
   candidates,
   neutralize,
   onToggleNeutralize,
+  biasControls,
+  onUpdateBiasControls,
   isLoading,
   onRefresh,
   onStatusChange: onStatusChangeProp,
@@ -113,12 +117,16 @@ export function CandidateDashboard({
   onRevertStatus,
   view = 'overview'
 }: Props) {
-  const [anonymizedMode, setAnonymizedMode] = useState(false);
+  const anonymizedMode = biasControls.anonymized_blind_hiring;
   const [busyEmail, setBusyEmail] = useState('');
   const actionLocksRef = useRef<Set<string>>(new Set());
   const [actionError, setActionError] = useState('');
   const [selectedPositionId, setSelectedPositionId] = useState<number | 'all'>('all');
   const [selectedTrajectoryCandidate, setSelectedTrajectoryCandidate] = useState<ScrapedCandidate | null>(null);
+  const [fairnessAudit, setFairnessAudit] = useState<any>(null);
+  const [fairnessLoading, setFairnessLoading] = useState(false);
+  const [localPrestigeWeight, setLocalPrestigeWeight] = useState(biasControls.prestige_weight);
+  const [isSeedingBiasMockData, setIsSeedingBiasMockData] = useState(false);
 
   const [lastActionCandidate, setLastActionCandidate] = useState<{ email: string; name: string; oldStatus: string; newStatus: string; jobId?: number } | null>(null);
 
@@ -385,6 +393,269 @@ export function CandidateDashboard({
     return null;
   };
 
+  useEffect(() => {
+    setLocalPrestigeWeight(biasControls.prestige_weight);
+  }, [biasControls.prestige_weight]);
+
+  useEffect(() => {
+    if (view !== 'overview') return;
+    let cancelled = false;
+    const loadFairnessAudit = async () => {
+      setFairnessLoading(true);
+      try {
+        const query = selectedPositionId === 'all' ? '' : `?position_id=${selectedPositionId}`;
+        const res = await fetch(`${API_BASE_URL}/candidates/fairness-audit${query}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setFairnessAudit(data);
+      } catch (error) {
+        if (!cancelled) setFairnessAudit(null);
+      } finally {
+        if (!cancelled) setFairnessLoading(false);
+      }
+    };
+    loadFairnessAudit();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPositionId, candidates.length, biasControls.scoring_mode, biasControls.prestige_weight, view]);
+
+  const updateBiasControl = async (updates: Partial<BiasControls>, options: { notify?: boolean } = {}) => {
+    try {
+      await onUpdateBiasControls(updates);
+      if (options.notify !== false) toast.success('Bias controls updated.');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to update bias controls.');
+    }
+  };
+
+  const commitPrestigeWeight = () => {
+    if (localPrestigeWeight !== biasControls.prestige_weight) {
+      updateBiasControl({ prestige_weight: localPrestigeWeight }, { notify: false });
+    }
+  };
+
+  const seedBiasComparisonMockData = async () => {
+    const positionId = selectedPositionId === 'all'
+      ? jobs.find(job => job.isOpenForApplications)?.id || jobs[0]?.id
+      : selectedPositionId;
+    if (!positionId) {
+      toast.error('Create a position before adding mock comparison candidates.');
+      return;
+    }
+    setIsSeedingBiasMockData(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/candidates/mock-bias-comparison`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ position_id: positionId })
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.detail || 'Failed to add mock comparison candidates.');
+      await onRefresh();
+      toast.success(`Added ${data?.created_count || 0} university comparison candidates.`);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to add mock comparison candidates.');
+    } finally {
+      setIsSeedingBiasMockData(false);
+    }
+  };
+
+  const renderBiasMitigationControls = () => (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: 0.45 }}
+      className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm"
+    >
+      <div className="flex items-center gap-3 mb-6">
+        <div className="w-11 h-11 bg-[#e8f2ee] rounded-2xl flex items-center justify-center">
+          <ShieldCheck className="w-5 h-5 text-[#2d6a55]" />
+        </div>
+        <div>
+          <h3 className="text-[#1c1c1a] font-semibold text-base">Fair Hiring Controls</h3>
+          <p className="text-sm text-[#6b7063]">Choose what hiring managers see and how much reputation affects scores.</p>
+        </div>
+      </div>
+
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between gap-5 p-5 bg-[#f7f6f3] rounded-2xl border border-[#e4e1da] hover:border-[#2d6a55]/30 transition-colors">
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <label htmlFor="prestige-toggle" className="text-sm sm:text-base text-[#1c1c1a] cursor-pointer font-medium">
+                Hide school and company names
+              </label>
+              <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold transition-colors ${
+                neutralize ? 'bg-[#e8f2ee] text-[#2d6a55]' : 'bg-[#f0ede8] text-[#a8a49d]'
+              }`}>
+                {neutralize ? 'Active' : 'Off'}
+              </span>
+            </div>
+            <p className="text-sm text-[#6b7063] leading-relaxed">
+              Show schools and employers as simple background types, so names like universities or big companies do not stand out first.
+            </p>
+          </div>
+          <Switch.Root
+            id="prestige-toggle"
+            checked={neutralize}
+            onCheckedChange={onToggleNeutralize}
+            className="w-14 h-7 bg-[#e4e1da] rounded-full relative data-[state=checked]:bg-[#2d6a55] transition-colors outline-none cursor-pointer flex-shrink-0"
+          >
+            <Switch.Thumb className="block w-6 h-6 bg-white rounded-full shadow transition-transform duration-200 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[30px]" />
+          </Switch.Root>
+        </div>
+
+        <div className="flex items-center justify-between gap-5 p-5 bg-[#f7f6f3] rounded-2xl border border-[#e4e1da] hover:border-[#2d6a55]/30 transition-colors">
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <label htmlFor="anonymous-toggle" className="text-sm sm:text-base text-[#1c1c1a] cursor-pointer font-medium">
+                Hide candidate identity
+              </label>
+              <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold transition-colors ${
+                anonymizedMode ? 'bg-[#e8f2ee] text-[#2d6a55]' : 'bg-[#f0ede8] text-[#a8a49d]'
+              }`}>
+                {anonymizedMode ? 'Active' : 'Off'}
+              </span>
+            </div>
+            <p className="text-sm text-[#6b7063] leading-relaxed">
+              Replace names and emails with candidate ID labels while you review early-stage applications.
+            </p>
+          </div>
+          <Switch.Root
+            id="anonymous-toggle"
+            checked={anonymizedMode}
+            onCheckedChange={(checked) => updateBiasControl({ anonymized_blind_hiring: checked })}
+            className="w-14 h-7 bg-[#e4e1da] rounded-full relative data-[state=checked]:bg-[#2d6a55] transition-colors outline-none cursor-pointer flex-shrink-0"
+          >
+            <Switch.Thumb className="block w-6 h-6 bg-white rounded-full shadow transition-transform duration-200 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[30px]" />
+          </Switch.Root>
+        </div>
+
+        <div className="p-5 bg-[#f7f6f3] rounded-2xl border border-[#e4e1da] hover:border-[#2d6a55]/30 transition-colors">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <p className="text-sm sm:text-base text-[#1c1c1a] font-medium">How should scores be calculated?</p>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#e8f2ee] text-[#2d6a55]">
+                  {biasControls.scoring_mode === 'prestige_aware' ? 'Reputation included' : 'Skills only'}
+                </span>
+              </div>
+              <p className="text-sm text-[#6b7063] leading-relaxed">
+                Decide whether the score should focus only on role fit, or also count school and company reputation.
+              </p>
+            </div>
+            <div className="flex bg-white border border-[#e4e1da] rounded-xl p-1 flex-shrink-0">
+              {[
+                { value: 'blind_merit', label: 'Focus on skills only' },
+                { value: 'prestige_aware', label: 'Include school/company reputation' }
+              ].map(option => (
+                <button
+                  key={option.value}
+                  onClick={() => updateBiasControl({ scoring_mode: option.value as BiasControls['scoring_mode'] })}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    biasControls.scoring_mode === option.value
+                      ? 'bg-[#2d6a55] text-white'
+                      : 'text-[#6b7063] hover:text-[#1c1c1a]'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {biasControls.scoring_mode === 'prestige_aware' && (
+            <div className="mt-4 pt-4 border-t border-[#e4e1da]">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <label htmlFor="prestige-weight" className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">
+                  How much should reputation matter?
+                </label>
+                <span className="text-sm text-[#2d6a55] font-semibold">{localPrestigeWeight}%</span>
+              </div>
+              <p className="text-xs text-[#6b7063] leading-relaxed mb-3">
+                0% means it does not affect scores. 30% means it has a strong effect.
+              </p>
+              <input
+                id="prestige-weight"
+                type="range"
+                min="0"
+                max="30"
+                step="1"
+                value={localPrestigeWeight}
+                onChange={(event) => setLocalPrestigeWeight(Number(event.target.value))}
+                onPointerUp={commitPrestigeWeight}
+                onMouseUp={commitPrestigeWeight}
+                onTouchEnd={commitPrestigeWeight}
+                onBlur={commitPrestigeWeight}
+                onKeyUp={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') commitPrestigeWeight();
+                }}
+                className="w-full accent-[#2d6a55]"
+              />
+              <div className="flex justify-between text-[11px] text-[#a8a49d] mt-1">
+                <span>0%</span>
+                <span>15%</span>
+                <span>30%</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 bg-white rounded-2xl border border-[#e4e1da]">
+          <div>
+            <p className="text-sm text-[#1c1c1a] font-semibold">Try sample candidates</p>
+            <p className="text-xs text-[#6b7063] mt-0.5">
+              Add example candidates from different school backgrounds, then compare how score settings change their ranking.
+            </p>
+          </div>
+          <button
+            onClick={seedBiasComparisonMockData}
+            disabled={isSeedingBiasMockData}
+            className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[#2d6a55] text-white text-xs font-semibold hover:bg-[#245747] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+          >
+            {isSeedingBiasMockData && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            Add Sample Candidates
+          </button>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-3 pt-2">
+          <div className="bg-[#f0f9f4] border border-[#c8e6d8] rounded-xl p-4">
+            <p className="text-xs tracking-wider uppercase text-[#2d6a55] font-semibold mb-1">Fairness Check</p>
+            <p className="text-2xl text-[#1c1c1a] font-semibold">{fairnessLoading ? '--' : fairnessAudit?.fairness_score ?? '--'}</p>
+            <p className="text-xs text-[#6b7063] mt-1 leading-relaxed">Higher means the current pipeline looks more balanced.</p>
+          </div>
+          <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-4">
+            <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold mb-1">Risk Level</p>
+            <p className="text-lg text-[#1c1c1a] font-semibold capitalize">{fairnessAudit?.risk_level?.replace('_', ' ') || 'Checking'}</p>
+            <p className="text-xs text-[#6b7063] mt-1 leading-relaxed">Shows whether results may need a closer review.</p>
+          </div>
+          <div className="bg-[#fdf8ee] border border-[#e8d8a0] rounded-xl p-4">
+            <p className="text-xs tracking-wider uppercase text-[#8a5a14] font-semibold mb-1">Reputation Difference</p>
+            <p className="text-lg text-[#1c1c1a] font-semibold">
+              {fairnessAudit?.selection_patterns?.prestige_selection_gap ?? 0} pts
+            </p>
+            <p className="text-xs text-[#6b7063] mt-1 leading-relaxed">Compares outcomes for higher- and lower-reputation backgrounds.</p>
+          </div>
+        </div>
+
+        {fairnessAudit?.summary && (
+          <div className="rounded-xl border border-[#e4e1da] bg-white p-4">
+            <p className="text-sm text-[#6b7063] leading-relaxed">{fairnessAudit.summary}</p>
+            {fairnessAudit.warnings?.length ? (
+              <div className="flex flex-wrap gap-2 mt-3">
+                {fairnessAudit.warnings.slice(0, 3).map((warning: string) => (
+                  <span key={warning} className="px-2 py-1 rounded-full bg-[#f7f6f3] border border-[#e4e1da] text-[11px] text-[#6b7063]">
+                    {warning}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+
   const kpiCards = [
     { label: selectedJob ? 'Selected Position Pool' : 'Active Positions', value: selectedJob ? totalCandidates : activePositions, icon: Briefcase },
     { label: 'Active Pipeline', value: activePipelineCount, icon: Users },
@@ -538,80 +809,6 @@ export function CandidateDashboard({
       </>
       )}
 
-      {/* Bias Mitigation Controls */}
-      {view === 'candidates' && (
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, delay: 0.3 }}
-        className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm"
-      >
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
-            <ShieldCheck className="w-4.5 h-4.5 text-[#2d6a55]" style={{ width: '18px', height: '18px' }} />
-          </div>
-          <div>
-            <h3 className="text-[#1c1c1a] font-semibold text-base">Bias Mitigation Controls</h3>
-            <p className="text-xs text-[#6b7063]">Advanced fairness protocols</p>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex items-center justify-between p-4 bg-[#f7f6f3] rounded-xl border border-[#e4e1da] hover:border-[#2d6a55]/30 transition-colors">
-            <div className="flex-1 mr-6">
-              <div className="flex items-center gap-2 mb-0.5">
-                <label htmlFor="prestige-toggle" className="text-sm text-[#1c1c1a] cursor-pointer font-medium">
-                  Prestige Neutralizer Mode
-                </label>
-                <span className={`px-2 py-0.5 rounded-full text-xs font-semibold transition-colors ${
-                  neutralize ? 'bg-[#e8f2ee] text-[#2d6a55]' : 'bg-[#f0ede8] text-[#a8a49d]'
-                }`}>
-                  {neutralize ? 'Active' : 'Off'}
-                </span>
-              </div>
-              <p className="text-xs text-[#6b7063]">
-                Replace company and university names with descriptive categories dynamically via FastAPI Agent
-              </p>
-            </div>
-            <Switch.Root
-              id="prestige-toggle"
-              checked={neutralize}
-              onCheckedChange={onToggleNeutralize}
-              className="w-11 h-6 bg-[#e4e1da] rounded-full relative data-[state=checked]:bg-[#2d6a55] transition-colors outline-none cursor-pointer flex-shrink-0"
-            >
-              <Switch.Thumb className="block w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[22px]" />
-            </Switch.Root>
-          </div>
-
-          <div className="flex items-center justify-between p-4 bg-[#f7f6f3] rounded-xl border border-[#e4e1da] hover:border-[#2d6a55]/30 transition-colors">
-            <div className="flex-1 mr-6">
-              <div className="flex items-center gap-2 mb-0.5">
-                <label htmlFor="anonymous-toggle" className="text-sm text-[#1c1c1a] cursor-pointer font-medium">
-                  Anonymized Blind Hiring Protocol
-                </label>
-                <span className={`px-2 py-0.5 rounded-full text-xs font-semibold transition-colors ${
-                  anonymizedMode ? 'bg-[#e8f2ee] text-[#2d6a55]' : 'bg-[#f0ede8] text-[#a8a49d]'
-                }`}>
-                  {anonymizedMode ? 'Active' : 'Off'}
-                </span>
-              </div>
-              <p className="text-xs text-[#6b7063]">
-                Replace candidate names and emails with anonymized ID tokens
-              </p>
-            </div>
-            <Switch.Root
-              id="anonymous-toggle"
-              checked={anonymizedMode}
-              onCheckedChange={setAnonymizedMode}
-              className="w-11 h-6 bg-[#e4e1da] rounded-full relative data-[state=checked]:bg-[#2d6a55] transition-colors outline-none cursor-pointer flex-shrink-0"
-            >
-              <Switch.Thumb className="block w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[22px]" />
-            </Switch.Root>
-          </div>
-        </div>
-      </motion.div>
-      )}
-
       {/* Scatter Plot */}
       {view === 'overview' && (
       <motion.div
@@ -702,6 +899,8 @@ export function CandidateDashboard({
         )}
       </motion.div>
       )}
+
+      {view === 'overview' && renderBiasMitigationControls()}
 
       {/* Active Pipeline */}
       {(view === 'overview' || view === 'candidates') && (
@@ -930,7 +1129,17 @@ initial={{ opacity: 0, y: 16 }}
                                 {/* High position fit badge */}
                                 {candidate.matchScore >= 80 && (
                                   <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[#e8f2ee] text-[#2d6a55] whitespace-nowrap flex items-center gap-1">
-                                    ★ High Fit
+                                    <Award className="w-3 h-3" /> High Fit
+                                  </span>
+                                )}
+                                {candidate.resumeContextIntelligence?.high_potential_candidate && (
+                                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[#fef9c3] text-[#854d0e] whitespace-nowrap">
+                                    High Potential
+                                  </span>
+                                )}
+                                {candidate.resumeContextIntelligence?.undervalued_talent_alert && (
+                                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[#fff7ed] text-[#c2410c] whitespace-nowrap">
+                                    Undervalued Talent
                                   </span>
                                 )}
                                 {(() => {
@@ -1034,6 +1243,48 @@ initial={{ opacity: 0, y: 16 }}
                                 ) : null}
                               </div>
                             )}
+                          </div>
+                        )}
+
+                        {(candidate.biasControl || candidate.prestigeAnalysis || candidate.resumeContextIntelligence?.signals?.length) && (
+                          <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-4 shadow-sm">
+                            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                              <div>
+                                <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-1 font-semibold">Why the score changed</p>
+                                <p className="text-sm text-[#1c1c1a] font-semibold">
+                                  {candidate.biasControl?.scoring_mode === 'prestige_aware' ? 'School/company reputation included' : 'Focused on skills only'}
+                                </p>
+                              </div>
+                              <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                                candidate.biasControl?.prestige_affects_score ? 'bg-[#fff7ed] text-[#c2410c]' : 'bg-[#e8f2ee] text-[#2d6a55]'
+                              }`}>
+                                {candidate.biasControl?.prestige_affects_score ? `School/company reputation counts for ${candidate.biasControl?.prestige_weight || 0}%` : 'School/company reputation not counted'}
+                              </span>
+                            </div>
+                            {candidate.biasControl?.explanation && (
+                              <p className="text-sm text-[#6b7063] leading-relaxed mb-3">{candidate.biasControl.explanation}</p>
+                            )}
+                            {candidate.prestigeAnalysis?.prestige_indicators?.length ? (
+                              <p className="text-xs text-[#6b7063] leading-relaxed mb-3">
+                                {candidate.prestigeAnalysis.prestige_indicators.length} school or company background detail{candidate.prestigeAnalysis.prestige_indicators.length === 1 ? '' : 's'} found.
+                              </p>
+                            ) : null}
+                            {candidate.prestigeAnalysis?.prestige_indicators?.length ? (
+                              <div className="flex flex-wrap gap-2 mb-3">
+                                {candidate.prestigeAnalysis.prestige_indicators.slice(0, 6).map((indicator, indicatorIndex) => (
+                                  <span key={`${indicator.original}-${indicatorIndex}`} className="px-2 py-1 rounded-full bg-white border border-[#e4e1da] text-[11px] text-[#6b7063]">
+                                    {neutralize ? indicator.neutral_category : `${indicator.original} shown as ${indicator.neutral_category}`}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                            {candidate.resumeContextIntelligence?.signals?.length ? (
+                              <div className="space-y-1">
+                                {candidate.resumeContextIntelligence.signals.map(signal => (
+                                  <p key={signal} className="text-xs text-[#2d6a55] font-medium">{signal}</p>
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
                         )}
 
@@ -2011,6 +2262,23 @@ initial={{ opacity: 0, y: 16 }}
                 <div className="rounded-xl border border-[#c8e6d8] bg-[#f8fcfa] p-4">
                   <p className="text-xs tracking-wider uppercase text-[#2d6a55] mb-2 font-semibold">Position Fit Reasoning</p>
                   <p className="text-sm text-[#3d5a4a] leading-relaxed">{selectedTrajectoryCandidate.positionFitSummary}</p>
+                </div>
+              )}
+
+              {(selectedTrajectoryCandidate.biasControl || selectedTrajectoryCandidate.resumeContextIntelligence?.signals?.length) && (
+                <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Why the score changed</p>
+                    <span className="px-2 py-0.5 rounded-full bg-white border border-[#e4e1da] text-xs text-[#6b7063] font-semibold">
+                      {selectedTrajectoryCandidate.biasControl?.scoring_mode === 'prestige_aware' ? 'Reputation included' : 'Skills only'}
+                    </span>
+                  </div>
+                  {selectedTrajectoryCandidate.biasControl?.explanation && (
+                    <p className="text-sm text-[#6b7063] leading-relaxed mb-2">{selectedTrajectoryCandidate.biasControl.explanation}</p>
+                  )}
+                  {selectedTrajectoryCandidate.resumeContextIntelligence?.signals?.map(signal => (
+                    <p key={signal} className="text-xs text-[#2d6a55] font-medium">{signal}</p>
+                  ))}
                 </div>
               )}
             </div>

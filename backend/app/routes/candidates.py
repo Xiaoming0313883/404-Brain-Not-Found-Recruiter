@@ -19,6 +19,13 @@ from ..config import settings
 from ..services.agents.base_agent import get_openai_client
 from ..services.job_windows import is_open_for_applications
 from ..services.linkedin_profiles import build_fast_match_results, build_fast_outreach, scrape_linkedin_profile
+from ..services.bias_settings import get_bias_controls
+from ..services.agents.bias_agent import (
+    analyze_prestige_indicators,
+    neutralize_candidate_profile,
+    neutralize_text as agent_neutralize_text,
+    apply_bias_controls_to_assessment,
+)
 from ..services.agents import (
     run_resume_agent,
     run_matching_agent,
@@ -135,6 +142,9 @@ class InterviewSlotPayload(BaseModel):
 class AutoSourcePayload(BaseModel):
     position_id: int
     count: int = 3
+
+class MockBiasComparisonPayload(BaseModel):
+    position_id: int
 
 class NotificationReadPayload(BaseModel):
     notification_id: Optional[str] = None
@@ -364,22 +374,103 @@ def serialize_candidate(candidate: Dict[str, Any], management_email: Optional[st
 
 def neutralize_text(text: str) -> str:
     """Masks high prestige institutions inside textual data."""
-    if not text:
-        return text
-    replacements = {
-        r"\bHarvard\b": "[Tier-1 Research University]",
-        r"\bYale\b": "[Tier-1 Ivy League School]",
-        r"\bMIT\b": "[Tier-1 Research University]",
-        r"\bStanford\b": "[Tier-1 Research University]",
-        r"\bGoogle\b": "[Tier-1 Tech Corporation]",
-        r"\bMeta\b": "[Tier-1 Tech Corporation]",
-        r"\bApple\b": "[Tier-1 Tech Corporation]",
-        r"\bMcKinsey\b": "[Tier-1 Consulting Firm]",
-        r"\bBCG\b": "[Tier-1 Consulting Firm]"
+    return agent_neutralize_text(text)
+
+def build_candidate_bias_artifacts(
+    profile_data: Dict[str, Any],
+    resume_text: str = "",
+    existing_analysis: Optional[Dict[str, Any]] = None,
+    use_llm: bool = True
+) -> Dict[str, Any]:
+    analysis = existing_analysis or analyze_prestige_indicators(profile_data or {}, resume_text or "", use_llm=use_llm)
+    neutralized_profile = neutralize_candidate_profile(profile_data or {}, analysis)
+    return {
+        "bias_analysis": analysis,
+        "neutralized_profile_data": neutralized_profile
     }
-    for pattern, replacement in replacements.items():
-        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-    return text
+
+def apply_bias_to_match_results(
+    match_results: Dict[str, Any],
+    job: Dict[str, Any],
+    profile_data: Dict[str, Any],
+    controls: Dict[str, Any],
+    bias_analysis: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    return apply_bias_controls_to_assessment(
+        match_results or {},
+        job or {},
+        profile_data or {},
+        controls,
+        bias_analysis
+    )
+
+def attach_bias_artifacts_to_candidate(candidate: Dict[str, Any], resume_text: str = "") -> Dict[str, Any]:
+    artifacts = build_candidate_bias_artifacts(
+        candidate.get("profile_data", {}),
+        resume_text or candidate.get("resume_text", ""),
+        candidate.get("bias_analysis")
+    )
+    candidate["bias_analysis"] = artifacts["bias_analysis"]
+    candidate["neutralized_profile_data"] = artifacts["neutralized_profile_data"]
+    return artifacts
+
+def ensure_candidate_bias_metadata(candidate: Dict[str, Any], db: Dict[str, Any]) -> None:
+    controls = get_bias_controls(db)
+    artifacts = attach_bias_artifacts_to_candidate(candidate)
+    for application in normalize_candidate_applications(candidate):
+        match_results = application.get("match_results") or {}
+        if not match_results or match_results.get("bias_control"):
+            continue
+        job = db.get("positions", {}).get(str(application.get("position_id")), {})
+        application["match_results"] = apply_bias_to_match_results(
+            match_results,
+            job,
+            candidate.get("profile_data", {}),
+            controls,
+            artifacts["bias_analysis"]
+        )
+        if application.get("position_id") == candidate.get("position_id"):
+            sync_current_application(candidate, application)
+
+def serialize_neutralized_candidate(candidate: Dict[str, Any], email: str, application: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    working = {**candidate}
+    artifacts = build_candidate_bias_artifacts(
+        candidate.get("profile_data", {}),
+        candidate.get("resume_text", ""),
+        candidate.get("bias_analysis")
+    )
+    email_hash = get_anonymized_hash(candidate.get("email") or email)
+    profile = {
+        **artifacts["neutralized_profile_data"],
+        "name": email_hash,
+        "location": artifacts["neutralized_profile_data"].get("location", "Anonymous City")
+    }
+    match_results = application.get("match_results", {}) if application else candidate.get("match_results", {})
+    debate = match_results.get("debate", {})
+    neutralized_match = {
+        **match_results,
+        "debate": {
+            "critical_recruiter_cons": [agent_neutralize_text(con, artifacts["bias_analysis"]) for con in debate.get("critical_recruiter_cons", [])],
+            "talent_advocate_pros": [agent_neutralize_text(pro, artifacts["bias_analysis"]) for pro in debate.get("talent_advocate_pros", [])]
+        },
+        "position_fit_summary": agent_neutralize_text(match_results.get("position_fit_summary", ""), artifacts["bias_analysis"]),
+        "score_explanation": agent_neutralize_text(match_results.get("score_explanation", ""), artifacts["bias_analysis"])
+    }
+    working.update({
+        "name": email_hash,
+        "email": f"{email_hash.lower().replace(' ', '_').replace('#', '')}@anonymous.com",
+        "linkedin_url": "https://www.linkedin.com/in/anonymous-profile",
+        "profile_data": profile,
+        "bias_analysis": artifacts["bias_analysis"],
+        "neutralized_profile_data": artifacts["neutralized_profile_data"],
+        "match_results": neutralized_match,
+        "sourcing_pitch": agent_neutralize_text(candidate.get("sourcing_pitch", ""), artifacts["bias_analysis"]),
+        "outreach_email": agent_neutralize_text(candidate.get("outreach_email", ""), artifacts["bias_analysis"])
+    })
+    if application:
+        neutralized_application = {**application, "match_results": neutralized_match}
+        return serialize_application_candidate(working, email, neutralized_application)
+    return serialize_candidate(working, email)
 
 def get_resume_summary(profile_data: Dict[str, Any], resume_text: str) -> str:
     about = profile_data.get("about", "").strip()
@@ -532,83 +623,114 @@ def save_profile_picture_file(email: str, image: UploadFile, contents: bytes) ->
 def get_candidates(neutralize: bool = Query(False)):
     db = load_db()
     candidates = list(db.get("candidates", {}).items())
-    
     if not neutralize:
         rows = []
         for email, candidate in candidates:
+            ensure_candidate_bias_metadata(candidate, db)
             applications = normalize_candidate_applications(candidate)
             if applications:
                 rows.extend(serialize_application_candidate(candidate, email, app) for app in applications)
             else:
                 rows.append(serialize_candidate(candidate, email))
+        save_db(db)
         return rows
         
-    # Apply Prestige Neutralization & Anonymization dynamics
     neutralized_list = []
-    for email, c in candidates:
-        email_hash = get_anonymized_hash(c["email"])
-        
-        # Neutralize profile_data nested properties
-        profile = c.get("profile_data", {})
-        neutralized_profile = {
-            "name": email_hash,
-            "headline": profile.get("headline", "Software Engineer"),
-            "location": profile.get("location", "Anonymous City"),
-            "about": profile.get("about", ""),
-            "experiences": [],
-            "education": []
-        }
-        
-        # Replace experiences company names
-        for exp in profile.get("experiences", []):
-            company = exp.get("company", "")
-            # Apply standard filters
-            for target, replacement in [("Google", "[Tier-1 Tech Corporation]"), ("Meta", "[Tier-1 Tech Corporation]"), ("Apple", "[Tier-1 Tech Corporation]"), ("McKinsey", "[Tier-1 Consulting Firm]"), ("Harvard", "[Tier-1 Research University]")]:
-                if target.lower() in company.lower():
-                    company = replacement
-            neutralized_profile["experiences"].append({
-                "title": exp.get("title"),
-                "company": company,
-                "duration": exp.get("duration")
-            })
-            
-        # Replace education school names
-        for edu in profile.get("education", []):
-            school = edu.get("school", "")
-            for target, replacement in [("Harvard", "[Tier-1 Research University]"), ("Yale", "[Tier-1 Ivy League School]"), ("Stanford", "[Tier-1 Research University]")]:
-                if target.lower() in school.lower():
-                    school = replacement
-            neutralized_profile["education"].append({
-                "school": school,
-                "degree": edu.get("degree")
+    for email, candidate in candidates:
+        ensure_candidate_bias_metadata(candidate, db)
+        applications = normalize_candidate_applications(candidate)
+        if applications:
+            neutralized_list.extend(serialize_neutralized_candidate(candidate, email, app) for app in applications)
+        else:
+            neutralized_list.append(serialize_neutralized_candidate(candidate, email))
+    save_db(db)
+    return neutralized_list
+
+@router.get("/fairness-audit")
+def get_fairness_audit(position_id: Optional[int] = Query(None)):
+    db = load_db()
+    rows: List[Dict[str, Any]] = []
+    for email, candidate in db.get("candidates", {}).items():
+        ensure_candidate_bias_metadata(candidate, db)
+        for application in normalize_candidate_applications(candidate):
+            if position_id and application.get("position_id") != position_id:
+                continue
+            match_results = application.get("match_results") or candidate.get("match_results", {})
+            bias_control = match_results.get("bias_control", {})
+            prestige_analysis = match_results.get("prestige_analysis") or candidate.get("bias_analysis", {})
+            rows.append({
+                "email": email,
+                "status": application.get("status", candidate.get("status", "staged")),
+                "match_score": (match_results.get("scores") or {}).get("overall_position_fit", 0),
+                "prestige_score": bias_control.get("prestige_score") or prestige_analysis.get("prestige_score", 35),
+                "prestige_affects_score": bool(bias_control.get("prestige_affects_score")),
+                "indicator_count": len(prestige_analysis.get("prestige_indicators", []))
             })
 
-        # Neutralize debate elements
-        match_results = c.get("match_results", {})
-        debate = match_results.get("debate", {})
-        neutralized_debate = {
-            "critical_recruiter_cons": [neutralize_text(con) for con in debate.get("critical_recruiter_cons", [])],
-            "talent_advocate_pros": [neutralize_text(pro) for pro in debate.get("talent_advocate_pros", [])]
+    total = len(rows)
+    if total == 0:
+        return {
+            "fairness_score": 100,
+            "risk_level": "insufficient_data",
+            "summary": "No candidates are available for this fairness audit scope yet.",
+            "selection_patterns": {},
+            "prestige_favoritism": {"risk": "insufficient_data", "message": "Add candidates before measuring prestige-related outcome patterns."},
+            "warnings": ["Protected-class inference is disabled; the audit uses only available recruitment outcomes and prestige signals."]
         }
-        
-        neutralized_candidate = {
-            **c,
-            "name": email_hash,
-            "email": f"{email_hash.lower().replace(' ', '_').replace('#', '')}@anonymous.com",
-            "linkedin_url": "https://www.linkedin.com/in/anonymous-profile",
-            "profile_data": neutralized_profile,
-            "match_results": {
-                **match_results,
-                "debate": neutralized_debate
-            }
-        }
-        applications = normalize_candidate_applications(neutralized_candidate)
-        if applications:
-            neutralized_list.extend(serialize_application_candidate(neutralized_candidate, email, app) for app in applications)
-        else:
-            neutralized_list.append(serialize_candidate(neutralized_candidate, email))
-        
-    return neutralized_list
+
+    selected_statuses = {"completed", "interview_scheduled", "hired"}
+    rejected = [row for row in rows if row["status"] == "rejected"]
+    selected = [row for row in rows if row["status"] in selected_statuses]
+    high_prestige = [row for row in rows if int(row["prestige_score"] or 0) >= 75]
+    lower_prestige = [row for row in rows if int(row["prestige_score"] or 0) < 75]
+
+    def rate(pool: List[Dict[str, Any]], statuses: set[str]) -> int:
+        return round((len([row for row in pool if row["status"] in statuses]) / max(1, len(pool))) * 100)
+
+    high_selection = rate(high_prestige, selected_statuses)
+    lower_selection = rate(lower_prestige, selected_statuses)
+    gap = high_selection - lower_selection if high_prestige and lower_prestige else 0
+    prestige_weighted_count = len([row for row in rows if row["prestige_affects_score"]])
+    risk_points = min(35, abs(gap)) + min(20, prestige_weighted_count * 4)
+    fairness_score = max(0, min(100, 100 - risk_points))
+    risk_level = "low"
+    if fairness_score < 60:
+        risk_level = "high"
+    elif fairness_score < 80:
+        risk_level = "medium"
+
+    warnings = ["Protected-class inference is disabled; the audit uses only available recruitment outcomes and prestige signals."]
+    if len(high_prestige) < 2 or len(lower_prestige) < 2:
+        warnings.append("Prestige cohorts are small, so favoritism risk is directional rather than statistically conclusive.")
+    if gap > 20:
+        warnings.append("High-prestige candidates are advancing at a noticeably higher rate than lower-prestige candidates.")
+    if prestige_weighted_count:
+        warnings.append("Prestige-Aware scoring is active for at least one candidate; review whether this aligns with the hiring strategy.")
+
+    save_db(db)
+    return {
+        "fairness_score": fairness_score,
+        "risk_level": risk_level,
+        "summary": f"Audit reviewed {total} candidate application{'s' if total != 1 else ''}; selection gap by prestige cohort is {gap} points.",
+        "selection_patterns": {
+            "total_candidates": total,
+            "selected_count": len(selected),
+            "rejected_count": len(rejected),
+            "selected_rate": rate(rows, selected_statuses),
+            "rejection_rate": rate(rows, {"rejected"}),
+            "high_prestige_selection_rate": high_selection,
+            "lower_prestige_selection_rate": lower_selection,
+            "prestige_selection_gap": gap
+        },
+        "prestige_favoritism": {
+            "risk": risk_level,
+            "high_prestige_count": len(high_prestige),
+            "lower_prestige_count": len(lower_prestige),
+            "prestige_weighted_count": prestige_weighted_count,
+            "message": "Monitor advancement rates across prestige cohorts before final decisions."
+        },
+        "warnings": warnings
+    }
 
 @router.get("/lookup")
 def lookup_candidate(email: str):
@@ -813,6 +935,7 @@ def update_candidate_profile(email: str, payload: CandidateProfilePayload):
     profile_data = normalize_profile_details(profile_data)
     candidate["profile_data"] = profile_data
     candidate["profile_verified"] = not get_missing_profile_fields(profile_data)
+    attach_bias_artifacts_to_candidate(candidate)
 
     save_db(db)
     return serialize_candidate(candidate, email_clean)
@@ -850,6 +973,7 @@ def profile_assistant(email: str, payload: CandidateProfileAssistantPayload):
     candidate["profile_data"] = normalize_profile_details(profile_data)
     candidate["name"] = candidate["profile_data"].get("name") or candidate.get("name")
     candidate["profile_verified"] = not get_missing_profile_fields(candidate["profile_data"])
+    attach_bias_artifacts_to_candidate(candidate)
     remaining = get_missing_profile_fields(candidate["profile_data"])
     next_field = remaining[0] if remaining else None
     save_db(db)
@@ -898,6 +1022,7 @@ async def replace_candidate_resume(email: str, resume: UploadFile = File(...)):
     candidate["resume_text"] = resume_text
     candidate["resume_summary"] = get_resume_summary(candidate["profile_data"], resume_text)
     candidate["profile_verified"] = not get_missing_profile_fields(candidate["profile_data"])
+    attach_bias_artifacts_to_candidate(candidate, resume_text)
     add_notification(candidate, "Resume updated", "Your resume and profile details were updated.", "profile")
     save_db(db)
     return serialize_candidate(candidate, email_clean)
@@ -1068,16 +1193,18 @@ def build_interview_for_position(db: Dict[str, Any], candidate: Dict[str, Any], 
 
     profile_data = candidate.get("profile_data", {})
     agent_warnings: List[str] = []
+    controls = get_bias_controls(db)
+    artifacts = attach_bias_artifacts_to_candidate(candidate)
 
     try:
-        match_results = run_matching_agent(job, profile_data)
+        match_results = run_matching_agent(job, profile_data, controls, artifacts["bias_analysis"])
     except Exception as e:
         print(f"Error running matching agent: {e}")
         agent_warnings.append("Matching Agent failed, so a basic position-fit assessment was used.")
-        match_results = {
+        match_results = apply_bias_to_match_results({
             "debate": {"critical_recruiter_cons": ["Stack verification required."], "talent_advocate_pros": ["Strong interest in the position."]},
             "scores": {"technical": 75, "domain": 70, "culture": 80, "trajectory_slope": 75}
-        }
+        }, job, profile_data, controls, artifacts["bias_analysis"])
 
     try:
         custom_questions = run_interview_agent_phase_a(profile_data, match_results, job)
@@ -1143,6 +1270,7 @@ async def signup_candidate(
         }
     validate_resume_agent_profile(profile_data, name)
     profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
+    bias_artifacts = build_candidate_bias_artifacts(profile_data, resume_text)
 
     resume_path = save_resume_file(email_clean, resume.filename or "resume.pdf", contents)
     resume_summary = get_resume_summary(profile_data, resume_text)
@@ -1159,6 +1287,8 @@ async def signup_candidate(
         "source_method": "resume",
         "linkedin_url": "",
         "profile_data": profile_data,
+        "bias_analysis": bias_artifacts["bias_analysis"],
+        "neutralized_profile_data": bias_artifacts["neutralized_profile_data"],
         "resume_filename": resume.filename,
         "resume_path": resume_path,
         "resume_url": f"/api/v1/candidates/{email_clean}/resume",
@@ -1384,6 +1514,8 @@ async def apply_inbound(
         }
     validate_resume_agent_profile(profile_data, name)
     profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
+    controls = get_bias_controls(db)
+    bias_artifacts = build_candidate_bias_artifacts(profile_data, resume_text)
         
     # Fetch job requirements
     job = db.get("positions", {}).get(str(position_id))
@@ -1394,14 +1526,14 @@ async def apply_inbound(
         
     # 2. Invoke Matching Agent (Debate committee)
     try:
-        match_results = run_matching_agent(job, profile_data)
+        match_results = run_matching_agent(job, profile_data, controls, bias_artifacts["bias_analysis"])
     except Exception as e:
         print(f"Error running matching agent: {e}")
         agent_warnings.append("Matching Agent failed, so a basic position-fit assessment was used.")
-        match_results = {
+        match_results = apply_bias_to_match_results({
             "debate": {"critical_recruiter_cons": ["Stack verification required."], "talent_advocate_pros": ["Strong interest in the position."]},
             "scores": {"technical": 75, "domain": 70, "culture": 80, "trajectory_slope": 75}
-        }
+        }, job, profile_data, controls, bias_artifacts["bias_analysis"])
         
     # 3. Invoke Candidate Interview Agent (Phase A - Question generation)
     try:
@@ -1445,6 +1577,8 @@ async def apply_inbound(
         "source_method": "resume",
         "linkedin_url": "",
         "profile_data": profile_data,
+        "bias_analysis": bias_artifacts["bias_analysis"],
+        "neutralized_profile_data": bias_artifacts["neutralized_profile_data"],
         "resume_filename": resume.filename,
         "resume_path": resume_path,
         "resume_url": f"/api/v1/candidates/{email_clean}/resume",
@@ -1563,13 +1697,15 @@ def scrape_profile(payload: ScrapePayload):
     job = db.get("positions", {}).get(str(payload.position_id))
     if not job:
         raise HTTPException(status_code=404, detail="Selected position not found.")
+    controls = get_bias_controls(db)
+    bias_artifacts = build_candidate_bias_artifacts(profile_data)
 
     # 1. Invoke Matching Agent (Debate)
     try:
-        match_results = run_matching_agent(job, profile_data)
+        match_results = run_matching_agent(job, profile_data, controls, bias_artifacts["bias_analysis"])
     except Exception as e:
         print(f"Scraper matching debate error: {e}")
-        match_results = build_fast_match_results(job, profile_data)
+        match_results = build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
         
     # 2. Invoke Candidate Interview Agent (Phase A screening questions)
     try:
@@ -1606,6 +1742,8 @@ def scrape_profile(payload: ScrapePayload):
         "source_method": profile_data.get("source_method", "manual_public"),
         "linkedin_url": payload.linkedin_url,
         "profile_data": profile_data,
+        "bias_analysis": bias_artifacts["bias_analysis"],
+        "neutralized_profile_data": bias_artifacts["neutralized_profile_data"],
         "sourcing_pitch": sourcing_pitch,
         "outreach_email": outreach_email,
         "match_results": match_results,
@@ -1628,13 +1766,20 @@ def auto_source_candidates(payload: AutoSourcePayload):
     job = db.get("positions", {}).get(str(payload.position_id))
     if not job:
         raise HTTPException(status_code=404, detail="Selected position not found.")
+    controls = get_bias_controls(db)
 
     generated = []
     sample_profiles = build_auto_source_profiles(job, max(1, min(payload.count, 10)))
 
     for index, profile_data in enumerate(sample_profiles):
         candidate_email = profile_data["email"]
-        match_results = calibrate_auto_source_match(build_fast_match_results(job, profile_data), profile_data, job, index)
+        bias_artifacts = build_candidate_bias_artifacts(profile_data, use_llm=False)
+        match_results = calibrate_auto_source_match(
+            build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"]),
+            profile_data,
+            job,
+            index
+        )
         custom_questions = [
             f"Describe your most relevant experience for the {job.get('title', 'selected')} role.",
             f"What evidence shows you can meet the main requirements for {job.get('title', 'this position')}?",
@@ -1654,6 +1799,8 @@ def auto_source_candidates(payload: AutoSourcePayload):
             "source_method": "prototype_auto_source",
             "linkedin_url": f"https://www.linkedin.com/in/{profile_data['name'].lower().replace(' ', '-')}",
             "profile_data": profile_data,
+            "bias_analysis": bias_artifacts["bias_analysis"],
+            "neutralized_profile_data": bias_artifacts["neutralized_profile_data"],
             "sourcing_pitch": sourcing_pitch,
             "outreach_email": outreach_email,
             "match_results": match_results,
@@ -1668,6 +1815,120 @@ def auto_source_candidates(payload: AutoSourcePayload):
 
     save_db(db)
     return generated
+
+@router.post("/mock-bias-comparison")
+def add_mock_bias_comparison_candidates(payload: MockBiasComparisonPayload):
+    db = load_db()
+    job = db.get("positions", {}).get(str(payload.position_id))
+    if not job:
+        raise HTTPException(status_code=404, detail="Selected position not found.")
+
+    controls = get_bias_controls(db)
+    title = job.get("title", "Open Role")
+    terms = role_search_terms(job, limit=6)
+    skills = list(dict.fromkeys([*terms, title, job.get("department", ""), "communication", "project delivery"]))[:12]
+    comparison_profiles = [
+        {
+            "name": "Alex Prestige",
+            "email": f"bias.demo.top.{payload.position_id}@example.com",
+            "headline": f"{title} candidate from a top-tier university",
+            "school": "MIT",
+            "company": "Google",
+            "note": "strong institutional prestige signals"
+        },
+        {
+            "name": "Rina Regional",
+            "email": f"bias.demo.regional.{payload.position_id}@example.com",
+            "headline": f"{title} candidate from a regional public university",
+            "school": "University of Malaya",
+            "company": "Regional Product Studio",
+            "note": "regional university background with matching project evidence"
+        },
+        {
+            "name": "Sam Portfolio",
+            "email": f"bias.demo.portfolio.{payload.position_id}@example.com",
+            "headline": f"{title} candidate with portfolio-led experience",
+            "school": "Professional Training Institute",
+            "company": "Startup Experience Lab",
+            "note": "portfolio-first background with lower pedigree signals"
+        },
+        {
+            "name": "Maya Growth",
+            "email": f"bias.demo.growth.{payload.position_id}@example.com",
+            "headline": f"{title} candidate with high growth trajectory",
+            "school": "Asia Pacific University",
+            "company": "Verified Prototype Talent Pool",
+            "note": "high growth and consistent role evidence"
+        }
+    ]
+
+    created = []
+    candidates = db.setdefault("candidates", {})
+    for index, profile in enumerate(comparison_profiles):
+        profile_data = {
+            "name": profile["name"],
+            "email": profile["email"],
+            "headline": profile["headline"],
+            "location": "Kuala Lumpur, MY",
+            "about": (
+                f"Bias comparison mock candidate for {title}; all comparison candidates share similar role skills, "
+                f"but differ by university and employer prestige so scoring mode changes are visible."
+            ),
+            "work_experience": f"Delivered projects involving {', '.join(terms[:4]) or title}.",
+            "skills": skills,
+            "awards": ["High Potential Candidate"] if index in {2, 3} else [],
+            "experiences": [
+                {
+                    "title": f"{title} Specialist",
+                    "company": profile["company"],
+                    "duration": "2021 - Present",
+                    "description": f"Built role-relevant projects, collaborated with stakeholders, and demonstrated {', '.join(terms[:3]) or 'position fit'}."
+                }
+            ],
+            "education": [
+                {
+                    "school": profile["school"],
+                    "degree": f"Degree related to {terms[0] if terms else title}"
+                }
+            ],
+            "scrape_status": "mock_bias_comparison",
+            "scrape_warning": "Mock candidate for university-score comparison; not a real sourced profile.",
+            "source_type": "linkedin",
+            "source_method": "mock_bias_comparison"
+        }
+        bias_artifacts = build_candidate_bias_artifacts(profile_data, use_llm=False)
+        match_results = build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
+        custom_questions = [
+            f"Describe evidence that shows your fit for {title}.",
+            "Which project best demonstrates your practical skills for this position?",
+            "What growth area would you prioritize in your first month?"
+        ]
+        candidate_record = {
+            "name": profile_data["name"],
+            "email": profile_data["email"],
+            "status": "staged",
+            "position_id": payload.position_id,
+            "is_sourced": True,
+            "source_type": "linkedin",
+            "source_method": "mock_bias_comparison",
+            "linkedin_url": f"https://www.linkedin.com/in/{profile_data['name'].lower().replace(' ', '-')}",
+            "profile_data": profile_data,
+            "bias_analysis": bias_artifacts["bias_analysis"],
+            "neutralized_profile_data": bias_artifacts["neutralized_profile_data"],
+            "sourcing_pitch": f"{profile_data['name']} is a university comparison mock profile with {profile['note']}.",
+            "outreach_email": f"Subject: Mock comparison candidate for {title}\n\nThis profile is seeded for Bias Control Console testing.",
+            "match_results": match_results,
+            "custom_questions": custom_questions,
+            "answers": [],
+            "evaluation": {},
+            "notifications": [],
+            "outreach_history": []
+        }
+        candidates[profile_data["email"]] = candidate_record
+        created.append(serialize_candidate(candidate_record, profile_data["email"]))
+
+    save_db(db)
+    return {"created_count": len(created), "candidates": created}
 
 @router.post("/invite")
 def invite_candidate(payload: InvitePayload):

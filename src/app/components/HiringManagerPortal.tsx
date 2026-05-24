@@ -96,6 +96,28 @@ export interface ScrapedCandidate {
   agentWarnings?: string[];
   lastAgentError?: string;
   statusHistory?: string[];
+  biasControl?: {
+    scoring_mode?: 'blind_merit' | 'prestige_aware';
+    prestige_weight?: number;
+    prestige_score?: number;
+    prestige_affects_score?: boolean;
+    explanation?: string;
+  };
+  prestigeAnalysis?: {
+    prestige_score?: number;
+    neutralization_summary?: string;
+    prestige_indicators?: Array<{
+      type: string;
+      original: string;
+      neutral_category: string;
+      reason?: string;
+    }>;
+  };
+  resumeContextIntelligence?: {
+    high_potential_candidate?: boolean;
+    undervalued_talent_alert?: boolean;
+    signals?: string[];
+  };
 }
 
 interface AuthUser {
@@ -105,6 +127,20 @@ interface AuthUser {
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+
+export interface BiasControls {
+  neutralize_prestige: boolean;
+  anonymized_blind_hiring: boolean;
+  scoring_mode: 'blind_merit' | 'prestige_aware';
+  prestige_weight: number;
+}
+
+const DEFAULT_BIAS_CONTROLS: BiasControls = {
+  neutralize_prestige: false,
+  anonymized_blind_hiring: false,
+  scoring_mode: 'blind_merit',
+  prestige_weight: 15
+};
 
 const mapJobFromApi = (j: any): Job => ({
   ...j,
@@ -142,6 +178,7 @@ export function HiringManagerPortal() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [candidates, setCandidates] = useState<ScrapedCandidate[]>([]);
   const [neutralizeActive, setNeutralizeActive] = useState(false);
+  const [biasControls, setBiasControls] = useState<BiasControls>(DEFAULT_BIAS_CONTROLS);
   const [isLoading, setIsLoading] = useState(false);
 
   // Fetch Jobs List
@@ -222,7 +259,10 @@ export function HiringManagerPortal() {
           interviewSlot: c.interview_slot,
           agentWarnings: c.agent_warnings || [],
           lastAgentError: c.last_agent_error || '',
-          statusHistory: c.status_history || []
+          statusHistory: c.status_history || [],
+          biasControl: c.match_results?.bias_control,
+          prestigeAnalysis: c.match_results?.prestige_analysis || c.bias_analysis,
+          resumeContextIntelligence: c.match_results?.resume_context_intelligence
         }));
         setCandidates(mapped);
       }
@@ -236,13 +276,46 @@ export function HiringManagerPortal() {
   useEffect(() => {
     if (authUser) {
       fetchJobs();
-      fetchCandidates();
+      fetchBiasControls().then(controls => fetchCandidates(controls.neutralize_prestige));
     }
   }, [authUser]);
 
+  const fetchBiasControls = async (): Promise<BiasControls> => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/settings/bias-controls`);
+      if (res.ok) {
+        const data = await res.json();
+        const normalized = { ...DEFAULT_BIAS_CONTROLS, ...data };
+        setBiasControls(normalized);
+        setNeutralizeActive(normalized.neutralize_prestige);
+        return normalized;
+      }
+    } catch (err) {
+      console.error("Failed to load bias controls.");
+    }
+    return DEFAULT_BIAS_CONTROLS;
+  };
+
+  const updateBiasControls = async (updates: Partial<BiasControls>) => {
+    const res = await fetch(`${API_BASE_URL}/settings/bias-controls`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates)
+    });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null);
+      throw new Error(errorData?.detail || 'Failed to update bias controls.');
+    }
+    const data = await res.json();
+    const normalized = { ...DEFAULT_BIAS_CONTROLS, ...data };
+    setBiasControls(normalized);
+    setNeutralizeActive(normalized.neutralize_prestige);
+    await fetchCandidates(normalized.neutralize_prestige);
+    return normalized;
+  };
+
   const handleNeutralizeToggle = (active: boolean) => {
-    setNeutralizeActive(active);
-    fetchCandidates(active);
+    updateBiasControls({ neutralize_prestige: active }).catch(error => console.error(error));
   };
 
   const addJob = async (job: Omit<Job, 'id' | 'createdAt'>) => {
@@ -524,6 +597,8 @@ export function HiringManagerPortal() {
                 candidates={candidates}
                 neutralize={neutralizeActive}
                 onToggleNeutralize={handleNeutralizeToggle}
+                biasControls={biasControls}
+                onUpdateBiasControls={updateBiasControls}
                 isLoading={isLoading}
                 onRefresh={() => fetchCandidates()}
                 onStatusChange={updateCandidateStatusByEmail}

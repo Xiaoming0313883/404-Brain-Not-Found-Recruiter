@@ -235,8 +235,8 @@ def scrape_linkedin_profile(linkedin_url: str) -> Dict[str, Any]:
     }
 
 
-def build_fast_match_results(job: Dict[str, Any], profile_data: Dict[str, Any]) -> Dict[str, Any]:
-    return build_position_fit_assessment(job, profile_data)
+def build_fast_match_results(job: Dict[str, Any], profile_data: Dict[str, Any], bias_controls: Dict[str, Any] | None = None, prestige_analysis: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    return build_position_fit_assessment(job, profile_data, bias_controls, prestige_analysis)
 
 
 def build_fast_outreach(profile_data: Dict[str, Any], job: Dict[str, Any]) -> Dict[str, str]:
