@@ -177,35 +177,3 @@
     line-height: 1.5;
   }
 }
-
-button[data-click-loading='true'] {
-  position: relative;
-}
-
-button[data-click-loading='true']::after {
-  content: '';
-  display: inline-block;
-  width: 0.9em;
-  height: 0.9em;
-  margin-left: 0.45rem;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 9999px;
-  opacity: 0.85;
-  rotate: 0deg;
-  animation: button-click-loading-spin 650ms linear infinite;
-}
-
-button[data-click-loading-icon='true']::after {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  margin: 0;
-  translate: -50% -50%;
-}
-
-@keyframes button-click-loading-spin {
-  to {
-    rotate: 360deg;
-  }
-}

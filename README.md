@@ -115,12 +115,14 @@ Candidates can:
 - Interview Agent Phase A question generation and Phase B answer evaluation.
 - Candidate upskilling roadmap generation.
 - Bias Agent for prestige indicator detection and profile neutralization.
-- Bias controls for blind merit, anonymized hiring, and prestige-aware comparison.
+- Bias controls for blind merit, anonymized hiring, and prestige-aware comparison with visible score formulas.
 - Fairness audit for prestige-related outcome patterns.
 - Candidate account administration.
 - Interview calendar.
 - SMTP verification and optional email notifications.
 - Local JSON data store for fast hackathon iteration.
+- Refresh-safe clean routes for both portals through Vercel SPA rewrites.
+- Scoped chat scrolling so agent chats scroll inside their own message panes.
 
 ## AI Agent Workflow
 
@@ -436,17 +438,20 @@ The score is explainable. Each candidate includes:
 | Mode | What happens |
 | --- | --- |
 | `blind_merit` | School and employer reputation are classified for transparency but do not affect the final score. |
-| `prestige_aware` | The final score includes a configurable reputation component from 0% to 30%. |
+| `prestige_aware` | The final score includes a configurable reputation component from 0% to 50%. |
 | `neutralize_prestige` | Candidate names and profile text can be shown with pedigree indicators replaced by neutral categories. |
 | `anonymized_blind_hiring` | Candidate identity can be hidden in hiring-manager views. |
 
 Prestige-aware formula:
 
 ```text
-biased_score =
+final_score = round(
   fair_score * (100 - prestige_weight) / 100
-+ prestige_score * prestige_weight / 100
++ reputation_score * prestige_weight / 100
+)
 ```
+
+When prestige-aware scoring is active, candidate match results include `bias_control.calculation` with the fair score, reputation score, merit weight, reputation weight, final score, score delta, and display formula. This is shown in the hiring-manager dashboard so unchanged rounded scores are still explainable.
 
 The Bias Agent detects indicators such as universities, employers, certifications, and elite programs. It also includes a small QS ranking map for demo comparison, including APU as a recognized university signal.
 
@@ -723,8 +728,8 @@ LINKEDIN_LI_AT_COOKIE=
 LINKEDIN_HEADLESS=True
 
 APIFY_API_TOKEN=
-APIFY_PROFILE_ACTOR_ID=curious_coder/linkedin-profile-scraper
-APIFY_SEARCH_ACTOR_ID=M2FMdjRVeF1HPGFcc
+APIFY_PROFILE_ACTOR_ID=
+APIFY_SEARCH_ACTOR_ID=
 APIFY_TIMEOUT_SECONDS=90
 ```
 
@@ -745,6 +750,8 @@ For production on Vercel:
 ```env
 VITE_API_URL=https://<your-railway-service>.up.railway.app/api/v1
 ```
+
+The root `vercel.json` rewrites all frontend paths back to `index.html`, so clean React routes such as `/candidate/home` and `/hiring-manager/dashboard` remain refresh-safe after deployment.
 
 ### Railway Backend Hosting
 
@@ -922,8 +929,8 @@ PATCH  /candidates/{email}/outreach-notes
 {
   "neutralize_prestige": true,
   "anonymized_blind_hiring": false,
-  "scoring_mode": "blind_merit",
-  "prestige_weight": 15
+  "scoring_mode": "prestige_aware",
+  "prestige_weight": 30
 }
 ```
 
@@ -997,6 +1004,23 @@ For production, Vercel should use:
 VITE_API_URL=https://<your-railway-service>.up.railway.app/api/v1
 ```
 
+### Refreshing a portal route shows 404 or login
+
+The frontend uses clean React routes. Vercel must keep the root `vercel.json` rewrite so deep links return `index.html` instead of a platform 404:
+
+```json
+{
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
+```
+
+Candidate sessions are restored from `candidateSessionV3`, and hiring-manager demo sessions are restored from `hiringManagerSessionV1`. If a user intentionally signs out, those local sessions are cleared and protected pages return to login.
+
 ### `npm install` fails
 
 Use Node.js 20 or newer and npm 10 or newer:
@@ -1069,7 +1093,9 @@ After setup, give the full flow a quick test drive:
 - Backend health check returns online status.
 - Frontend opens at the Vite dev URL.
 - Hiring manager can sign in.
+- Hiring-manager and candidate routes stay on the same portal page after browser refresh.
 - Requirement Agent asks adaptive intake questions.
+- Requirement Agent and profile assistant chats scroll inside their chat panels when new messages arrive.
 - A position can be created and published.
 - Automatic sourcing returns candidate profiles.
 - Candidate can verify email before signup.
@@ -1078,7 +1104,7 @@ After setup, give the full flow a quick test drive:
 - Candidate can apply to an open position.
 - Candidate can submit screening answers.
 - Hiring manager can review match score, debate, screening feedback, and roadmap.
-- Bias controls can switch between blind merit and prestige-aware scoring.
+- Bias controls can switch between blind merit and prestige-aware scoring, with the formula and delta visible.
 - Fairness audit returns a score and risk level after candidate data exists.
 - Interview scheduling and rejection flows update candidate notifications.
 <div align="center">

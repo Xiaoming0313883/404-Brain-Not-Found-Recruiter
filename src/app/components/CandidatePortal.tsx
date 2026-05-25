@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Routes, Route, Navigate, useLocation } from 'react-router';
+import { motion } from 'motion/react';
 import { CandidateLogin } from './candidate/CandidateLogin';
 import { CandidateHome } from './candidate/CandidateHome';
 import { CandidateSandbox } from './candidate/CandidateSandbox';
@@ -88,13 +89,53 @@ export interface CandidateData {
 
 const CANDIDATE_SESSION_KEY = 'candidateSessionV3';
 
+const loadCandidateSession = (): CandidateData | null => {
+  window.localStorage.removeItem('candidateSession');
+  window.localStorage.removeItem('candidateSessionV2');
+  const stored = window.localStorage.getItem(CANDIDATE_SESSION_KEY);
+  if (!stored) return null;
+  try {
+    return JSON.parse(stored) as CandidateData;
+  } catch {
+    window.localStorage.removeItem(CANDIDATE_SESSION_KEY);
+    return null;
+  }
+};
+
+const persistCandidateSession = (candidate: CandidateData | null) => {
+  if (candidate) {
+    window.localStorage.setItem(CANDIDATE_SESSION_KEY, JSON.stringify(candidate));
+  } else {
+    window.localStorage.removeItem(CANDIDATE_SESSION_KEY);
+  }
+};
+
+function CandidatePageAppear({ children, pageKey }: { children: ReactNode; pageKey: string }) {
+  return (
+    <motion.div
+      key={pageKey}
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, ease: 'easeOut' }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
 export function CandidatePortal() {
-  const [candidateData, setCandidateData] = useState<CandidateData | null>(() => {
-    window.localStorage.removeItem('candidateSession');
-    window.localStorage.removeItem('candidateSessionV2');
-    const stored = window.localStorage.getItem(CANDIDATE_SESSION_KEY);
-    return stored ? JSON.parse(stored) : null;
-  });
+  const location = useLocation();
+  const [candidateData, setCandidateData] = useState<CandidateData | null>(loadCandidateSession);
+
+  const updateCandidateData = (value: CandidateData | null | ((current: CandidateData | null) => CandidateData | null)) => {
+    setCandidateData(current => {
+      const next = typeof value === 'function'
+        ? (value as (current: CandidateData | null) => CandidateData | null)(current)
+        : value;
+      persistCandidateSession(next);
+      return next;
+    });
+  };
 
   const refetchCandidateData = async () => {
     if (!candidateData?.email) return;
@@ -102,7 +143,7 @@ export function CandidatePortal() {
       const response = await fetch(`${API_BASE_URL}/candidates/lookup?email=${encodeURIComponent(candidateData.email.trim())}`);
       if (response.ok) {
         const data = await response.json();
-        setCandidateData(prev => {
+        updateCandidateData(prev => {
           if (!prev) return null;
           const applications = data.applications || [];
           const selectedApp = applications.find((app: any) => app.application_id === prev.selectedApplicationId)
@@ -148,11 +189,7 @@ export function CandidatePortal() {
   };
 
   useEffect(() => {
-    if (candidateData) {
-      window.localStorage.setItem(CANDIDATE_SESSION_KEY, JSON.stringify(candidateData));
-    } else {
-      window.localStorage.removeItem(CANDIDATE_SESSION_KEY);
-    }
+    persistCandidateSession(candidateData);
   }, [candidateData]);
 
   useEffect(() => {
@@ -169,86 +206,94 @@ export function CandidatePortal() {
     return () => clearInterval(interval);
   }, [candidateData?.email]);
 
-  const handleSignOut = () => setCandidateData(null);
+  const handleSignOut = () => updateCandidateData(null);
 
   return (
     <div className="min-h-screen bg-[#f7f6f3]">
       <Routes>
         <Route
-          path="/"
+          index
           element={
             <CandidateLogin
-              onAuthenticate={setCandidateData}
+              onAuthenticate={updateCandidateData}
             />
           }
         />
         <Route
-          path="/home"
+          path="home"
           element={
             candidateData ? (
-              <CandidateHome
-                candidateData={candidateData}
-                onUpdateCandidate={setCandidateData}
-                onSignOut={handleSignOut}
-                view="overview"
-              />
+              <CandidatePageAppear pageKey={location.pathname}>
+                <CandidateHome
+                  candidateData={candidateData}
+                  onUpdateCandidate={updateCandidateData}
+                  onSignOut={handleSignOut}
+                  view="overview"
+                />
+              </CandidatePageAppear>
             ) : (
               <Navigate to="/candidate" replace />
             )
           }
         />
         <Route
-          path="/applications"
+          path="applications"
           element={
             candidateData ? (
-              <CandidateHome
-                candidateData={candidateData}
-                onUpdateCandidate={setCandidateData}
-                onSignOut={handleSignOut}
-                view="applications"
-              />
+              <CandidatePageAppear pageKey={location.pathname}>
+                <CandidateHome
+                  candidateData={candidateData}
+                  onUpdateCandidate={updateCandidateData}
+                  onSignOut={handleSignOut}
+                  view="applications"
+                />
+              </CandidatePageAppear>
             ) : (
               <Navigate to="/candidate" replace />
             )
           }
         />
         <Route
-          path="/jobs"
+          path="jobs"
           element={
             candidateData ? (
-              <CandidateHome
-                candidateData={candidateData}
-                onUpdateCandidate={setCandidateData}
-                onSignOut={handleSignOut}
-                view="jobs"
-              />
+              <CandidatePageAppear pageKey={location.pathname}>
+                <CandidateHome
+                  candidateData={candidateData}
+                  onUpdateCandidate={updateCandidateData}
+                  onSignOut={handleSignOut}
+                  view="jobs"
+                />
+              </CandidatePageAppear>
             ) : (
               <Navigate to="/candidate" replace />
             )
           }
         />
-        <Route path="/information" element={<Navigate to="/candidate/profile" replace />} />
+        <Route path="information" element={<Navigate to="/candidate/profile" replace />} />
         <Route
-          path="/profile"
+          path="profile"
           element={
             candidateData ? (
-              <CandidateInformation
-                candidateData={candidateData}
-                onUpdateCandidate={setCandidateData}
-                onSignOut={handleSignOut}
-              />
+              <CandidatePageAppear pageKey={location.pathname}>
+                <CandidateInformation
+                  candidateData={candidateData}
+                  onUpdateCandidate={updateCandidateData}
+                  onSignOut={handleSignOut}
+                />
+              </CandidatePageAppear>
             ) : (
               <Navigate to="/candidate" replace />
             )
           }
         />
         <Route
-          path="/apply-loading"
+          path="apply-loading"
           element={
             candidateData ? (
               <CandidateApplyLoading
                 candidateData={candidateData}
-                onUpdateCandidate={setCandidateData}
+                onUpdateCandidate={updateCandidateData}
               />
             ) : (
               <Navigate to="/candidate" replace />
@@ -256,11 +301,11 @@ export function CandidatePortal() {
           }
         />
         <Route
-          path="/new"
+          path="new"
           element={
             candidateData ? (
               <CandidateLogin
-                onAuthenticate={setCandidateData}
+                onAuthenticate={updateCandidateData}
                 forceNewApplication
                 initialEmail={candidateData.email}
               />
@@ -270,7 +315,7 @@ export function CandidatePortal() {
           }
         />
         <Route
-          path="/sandbox"
+          path="sandbox"
           element={
             candidateData?.jobId && candidateData.status !== 'completed' && candidateData.status !== 'hired' && candidateData.status !== 'rejected' && candidateData.status !== 'interview_scheduled' && !candidateData.lastAgentError ? (
               <CandidateSandbox
@@ -278,7 +323,7 @@ export function CandidatePortal() {
                 onComplete={(answers, score, evaluation, agentWarnings = []) => {
                   const selectedPositionId = candidateData.jobId;
                   const selectedApplicationId = candidateData.selectedApplicationId;
-                  setCandidateData({
+                  updateCandidateData({
                     ...candidateData,
                     sandboxAnswers: answers,
                     score,
@@ -296,7 +341,7 @@ export function CandidatePortal() {
                 onAgentError={(answers, message) => {
                   const selectedPositionId = candidateData.jobId;
                   const selectedApplicationId = candidateData.selectedApplicationId;
-                  setCandidateData({
+                  updateCandidateData({
                     ...candidateData,
                     sandboxAnswers: answers,
                     status: 'screening',
@@ -316,7 +361,7 @@ export function CandidatePortal() {
           }
         />
         <Route
-          path="/feedback"
+          path="feedback"
           element={<Navigate to={candidateData ? "/candidate/applications" : "/candidate"} replace />}
         />
       </Routes>

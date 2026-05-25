@@ -104,7 +104,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [profileChatInput, setProfileChatInput] = useState('');
-  const profileChatEndRef = useRef<HTMLDivElement | null>(null);
+  const profileChatScrollRef = useRef<HTMLDivElement | null>(null);
   const [applicationPage, setApplicationPage] = useState(1);
   const [positionPage, setPositionPage] = useState(1);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -157,6 +157,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
       }
     ];
   });
+  const previousProfileChatMessageCountRef = useRef(profileChatMessages.length);
   const applications = candidateData.applications || [];
   const [selectedApplicationId, setSelectedApplicationId] = useState(
     candidateData.selectedApplicationId || applications[applications.length - 1]?.application_id || ''
@@ -198,6 +199,9 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
   };
   const canReview = selectedStatus === 'screening' || selectedStatus === 'completed' || selectedStatus === 'hired' || selectedStatus === 'interview_scheduled' || selectedStatus === 'rejected';
   const canContinue = selectedStatus !== 'completed' && selectedStatus !== 'hired' && selectedStatus !== 'rejected' && selectedStatus !== 'interview_scheduled' && selectedStatus !== 'profile' && Boolean(selectedApplication) && !selectedAgentError && !(selectedApplication?.answers?.length);
+  const showReviewResultsAction = view === 'overview' && canReview;
+  const showViewSessionAction = Boolean(selectedApplication) && !canReview;
+  const showApplicationActions = Boolean(selectedAgentError || canContinue || showReviewResultsAction || showViewSessionAction || !selectedApplication);
   const appliedPositionIds = new Set(applications.map(application => application.position_id));
   const applicationTotalPages = Math.max(1, Math.ceil(applications.length / PAGE_SIZE));
   const applicationPageSafe = Math.min(applicationPage, applicationTotalPages);
@@ -279,8 +283,19 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
   }, [candidateData.selectedApplicationId, selectedApplicationId]);
 
   useEffect(() => {
-    profileChatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [profileChatMessages, isSavingProfile]);
+    if (profileChatMessages.length <= previousProfileChatMessageCountRef.current) {
+      previousProfileChatMessageCountRef.current = profileChatMessages.length;
+      return;
+    }
+
+    const chatScroll = profileChatScrollRef.current;
+    if (chatScroll) {
+      window.requestAnimationFrame(() => {
+        chatScroll.scrollTop = chatScroll.scrollHeight;
+      });
+    }
+    previousProfileChatMessageCountRef.current = profileChatMessages.length;
+  }, [profileChatMessages.length]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -1161,7 +1176,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
                 <MessageSquare className="w-4 h-4 text-[#2d6a55]" />
                 <p className="text-sm text-[#1c1c1a] font-semibold">Missing Information Assistant</p>
               </div>
-              <div className="bg-white border border-[#e4e1da] rounded-xl p-3 max-h-56 overflow-auto space-y-2 mb-3">
+              <div ref={profileChatScrollRef} className="bg-white border border-[#e4e1da] rounded-xl p-3 max-h-56 overflow-auto space-y-2 mb-3">
                 {profileChatMessages.map((message, index) => (
                   <div key={index} className={`flex ${message.role === 'candidate' ? 'justify-end' : 'justify-start'}`}>
                     <div className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
@@ -1171,7 +1186,6 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
                     </div>
                   </div>
                 ))}
-                <div ref={profileChatEndRef} />
                 {isSavingProfile && (
                   <div className="flex justify-start">
                     <div className="rounded-xl px-3 py-2 text-xs bg-[#f0ede8] text-[#6b7063] inline-flex items-center gap-2">
@@ -1279,7 +1293,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
           </>
         )}
 
-        {(view === 'overview' || view === 'applications') && (
+        {(view === 'overview' || view === 'applications') && showApplicationActions && (
         <div className="grid sm:grid-cols-3 gap-3">
           {selectedAgentError && (
             <div className="sm:col-span-3 rounded-xl border border-[#f5c2c2] bg-[#fdf2f2] p-4 text-sm text-[#b91c1c]">
@@ -1296,7 +1310,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
               Continue Interview
             </Link>
           )}
-          {canReview ? (
+          {showReviewResultsAction ? (
             <Link
               to="/candidate/applications"
               onClick={() => syncSelectedApplication()}
@@ -1305,7 +1319,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
               <BarChart3 className="w-4 h-4" />
               Review Results
             </Link>
-          ) : selectedApplication ? (
+          ) : showViewSessionAction ? (
             <Link
               to="/candidate/sandbox"
               onClick={() => syncSelectedApplication()}

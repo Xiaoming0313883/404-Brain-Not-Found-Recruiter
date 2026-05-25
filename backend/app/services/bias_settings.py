@@ -5,7 +5,7 @@ DEFAULT_BIAS_CONTROLS: Dict[str, Any] = {
     "neutralize_prestige": False,
     "anonymized_blind_hiring": False,
     "scoring_mode": "blind_merit",
-    "prestige_weight": 15,
+    "prestige_weight": 30,
 }
 
 
@@ -22,7 +22,7 @@ def normalize_bias_controls(value: Dict[str, Any] | None) -> Dict[str, Any]:
         prestige_weight = int(controls.get("prestige_weight", DEFAULT_BIAS_CONTROLS["prestige_weight"]))
     except (TypeError, ValueError):
         prestige_weight = DEFAULT_BIAS_CONTROLS["prestige_weight"]
-    controls["prestige_weight"] = max(0, min(30, prestige_weight))
+    controls["prestige_weight"] = max(0, min(50, prestige_weight))
     return controls
 
 

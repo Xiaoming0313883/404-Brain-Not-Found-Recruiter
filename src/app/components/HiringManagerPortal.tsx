@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, type ReactNode } from 'react';
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router';
-import { Briefcase, Users, BarChart3, ArrowLeft, LogOut, Calendar, UserCog } from 'lucide-react';
+import { motion } from 'motion/react';
+import { Briefcase, Users, BarChart3, ArrowLeft, LogOut, Calendar, UserCog, ClipboardList } from 'lucide-react';
 import { JobBuilder } from './hiring-manager/JobBuilder';
 import { LinkedInScraper } from './hiring-manager/LinkedInScraper';
 import { CandidateDashboard } from './hiring-manager/CandidateDashboard';
@@ -102,6 +103,22 @@ export interface ScrapedCandidate {
     prestige_weight?: number;
     prestige_score?: number;
     prestige_affects_score?: boolean;
+    fair_score?: number;
+    biased_score?: number;
+    three_tier_scores?: {
+      skills_score?: number;
+      experience_score?: number;
+      reputation_score?: number;
+    };
+    calculation?: {
+      fair_score?: number;
+      reputation_score?: number;
+      merit_weight?: number;
+      reputation_weight?: number;
+      final_score?: number;
+      delta?: number;
+      formula?: string;
+    };
     explanation?: string;
   };
   prestigeAnalysis?: {
@@ -138,7 +155,41 @@ const DEFAULT_BIAS_CONTROLS: BiasControls = {
   neutralize_prestige: false,
   anonymized_blind_hiring: false,
   scoring_mode: 'blind_merit',
-  prestige_weight: 15
+  prestige_weight: 30
+};
+
+const HIRING_MANAGER_SESSION_KEY = 'hiringManagerSessionV1';
+
+function PageAppear({ children, pageKey }: { children: ReactNode; pageKey: string }) {
+  return (
+    <motion.div
+      key={pageKey}
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, ease: 'easeOut' }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+const loadHiringManagerSession = (): AuthUser | null => {
+  const stored = window.localStorage.getItem(HIRING_MANAGER_SESSION_KEY);
+  if (!stored) return null;
+  try {
+    return JSON.parse(stored) as AuthUser;
+  } catch {
+    window.localStorage.removeItem(HIRING_MANAGER_SESSION_KEY);
+    return null;
+  }
+};
+
+const persistHiringManagerSession = (user: AuthUser | null) => {
+  if (user) {
+    window.localStorage.setItem(HIRING_MANAGER_SESSION_KEY, JSON.stringify(user));
+  } else {
+    window.localStorage.removeItem(HIRING_MANAGER_SESSION_KEY);
+  }
 };
 
 const mapJobFromApi = (j: any): Job => ({
@@ -173,12 +224,13 @@ const toJobApiPayload = (job: Partial<Omit<Job, 'id' | 'createdAt'>>) => {
 
 export function HiringManagerPortal() {
   const location = useLocation();
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(loadHiringManagerSession);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [candidates, setCandidates] = useState<ScrapedCandidate[]>([]);
   const [neutralizeActive, setNeutralizeActive] = useState(false);
   const [biasControls, setBiasControls] = useState<BiasControls>(DEFAULT_BIAS_CONTROLS);
   const [isLoading, setIsLoading] = useState(false);
+  const candidateFetchCountRef = useRef(0);
 
   // Fetch Jobs List
   const fetchJobs = async () => {
@@ -195,6 +247,7 @@ export function HiringManagerPortal() {
 
   // Fetch Candidates List
   const fetchCandidates = async (neutralize: boolean = neutralizeActive) => {
+    candidateFetchCountRef.current += 1;
     setIsLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/candidates?neutralize=${neutralize}`);
@@ -268,7 +321,10 @@ export function HiringManagerPortal() {
     } catch (err) {
       console.error("Failed to load candidates from API.");
     } finally {
-      setIsLoading(false);
+      candidateFetchCountRef.current = Math.max(0, candidateFetchCountRef.current - 1);
+      if (candidateFetchCountRef.current === 0) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -278,6 +334,20 @@ export function HiringManagerPortal() {
       fetchBiasControls().then(controls => fetchCandidates(controls.neutralize_prestige));
     }
   }, [authUser]);
+
+  useEffect(() => {
+    persistHiringManagerSession(authUser);
+  }, [authUser]);
+
+  const handleAuthenticate = (user: AuthUser) => {
+    persistHiringManagerSession(user);
+    setAuthUser(user);
+  };
+
+  const handleSignOut = () => {
+    persistHiringManagerSession(null);
+    setAuthUser(null);
+  };
 
   const fetchBiasControls = async (): Promise<BiasControls> => {
     try {
@@ -493,7 +563,7 @@ export function HiringManagerPortal() {
   };
 
   if (!authUser) {
-    return <HiringManagerLogin onAuthenticate={setAuthUser} />;
+    return <HiringManagerLogin onAuthenticate={handleAuthenticate} />;
   }
 
   const currentPath = location.pathname;
@@ -502,6 +572,7 @@ export function HiringManagerPortal() {
     { path: '/hiring-manager/jobs', label: 'Job Builder', icon: Briefcase },
     { path: '/hiring-manager/sourcing', label: 'LinkedIn Sourcing', icon: Users },
     { path: '/hiring-manager/dashboard', label: 'Overview', icon: BarChart3 },
+    { path: '/hiring-manager/candidates', label: 'Candidates', icon: ClipboardList },
     { path: '/hiring-manager/accounts', label: 'Candidate Accounts', icon: UserCog },
     { path: '/hiring-manager/calendar', label: 'Interview Calendar', icon: Calendar },
   ];
@@ -537,7 +608,7 @@ export function HiringManagerPortal() {
                 <span className="hidden sm:inline">All Portals</span>
               </Link>
               <button
-                onClick={() => setAuthUser(null)}
+                onClick={handleSignOut}
                 className="inline-flex items-center gap-1.5 text-sm text-[#6b7063] hover:text-[#c25a2a] transition-colors cursor-pointer"
                 title="Sign out"
               >
@@ -551,14 +622,15 @@ export function HiringManagerPortal() {
 
       <div className="bg-white border-b border-[#e4e1da] shadow-sm">
         <div className="max-w-7xl mx-auto px-6">
-          <div className="flex gap-0">
+          <div className="flex gap-0 overflow-x-auto">
             {navItems.map(({ path, label, icon: Icon }) => {
-              const isActive = currentPath.includes(path.split('/').pop()!);
+              const isActive = currentPath === path || currentPath.startsWith(`${path}/`);
               return (
                 <Link
                   key={path}
                   to={path}
-                  className={`flex items-center gap-2 px-5 py-3.5 border-b-2 text-sm font-medium transition-colors ${
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`flex flex-shrink-0 items-center gap-2 px-5 py-3.5 border-b-2 text-sm font-medium whitespace-nowrap transition-colors ${
                     isActive
                       ? 'border-[#2d6a55] text-[#2d6a55]'
                       : 'border-transparent text-[#6b7063] hover:text-[#1c1c1a] hover:border-[#e4e1da]'
@@ -575,65 +647,104 @@ export function HiringManagerPortal() {
 
       <div className="max-w-7xl mx-auto px-6 py-8">
         <Routes>
-          <Route path="/" element={<Navigate to="/hiring-manager/jobs" replace />} />
-          <Route path="/jobs" element={<JobBuilder jobs={jobs} candidates={candidates} onAddJob={addJob} onUpdateJob={updateJob} onDeleteJob={deleteJob} />} />
+          <Route index element={<Navigate to="/hiring-manager/jobs" replace />} />
           <Route
-            path="/sourcing"
+            path="jobs"
             element={
-              <LinkedInScraper
-                jobs={jobs}
-                candidates={candidates}
-                onAddCandidate={addCandidate}
-                onUpdateStatus={updateCandidateStatus}
-              />
+              <PageAppear pageKey={currentPath}>
+                <JobBuilder jobs={jobs} candidates={candidates} onAddJob={addJob} onUpdateJob={updateJob} onDeleteJob={deleteJob} />
+              </PageAppear>
             }
           />
           <Route
-            path="/dashboard"
+            path="sourcing"
             element={
-              <CandidateDashboard
-                jobs={jobs}
-                candidates={candidates}
-                neutralize={neutralizeActive}
-                onToggleNeutralize={handleNeutralizeToggle}
-                biasControls={biasControls}
-                onUpdateBiasControls={updateBiasControls}
-                isLoading={isLoading}
-                onRefresh={() => fetchCandidates()}
-                onStatusChange={updateCandidateStatusByEmail}
-                onInvite={inviteCandidateByEmail}
-                onDelete={deleteCandidateByEmail}
-                onReject={rejectCandidateByEmail}
-                onScheduleInterview={scheduleInterviewByEmail}
-                onUpdateOutreachNotes={updateCandidateOutreachNotesByEmail}
-                onRevertStatus={revertCandidateStatusByEmail}
-                view="overview"
-              />
-            }
-          />
-          <Route path="/candidates" element={<Navigate to="/hiring-manager/jobs" replace />} />
-          <Route
-            path="/accounts"
-            element={
-              <CandidateAccountsPage
-                candidates={candidates}
-                neutralize={neutralizeActive}
-                isLoading={isLoading}
-                onRefresh={() => fetchCandidates()}
-                onDelete={deleteCandidateByEmail}
-                onUpdateAccount={updateCandidateAccountByEmail}
-                onResetPassword={resetCandidatePasswordByEmail}
-              />
+              <PageAppear pageKey={currentPath}>
+                <LinkedInScraper
+                  jobs={jobs}
+                  candidates={candidates}
+                  onAddCandidate={addCandidate}
+                  onUpdateStatus={updateCandidateStatus}
+                />
+              </PageAppear>
             }
           />
           <Route
-            path="/calendar"
+            path="dashboard"
             element={
-              <InterviewCalendar
-                jobs={jobs}
-                candidates={candidates}
-                onScheduleInterview={scheduleInterviewByEmail}
-              />
+              <PageAppear pageKey={currentPath}>
+                <CandidateDashboard
+                  jobs={jobs}
+                  candidates={candidates}
+                  neutralize={neutralizeActive}
+                  onToggleNeutralize={handleNeutralizeToggle}
+                  biasControls={biasControls}
+                  onUpdateBiasControls={updateBiasControls}
+                  isLoading={isLoading}
+                  onRefresh={() => fetchCandidates()}
+                  onStatusChange={updateCandidateStatusByEmail}
+                  onInvite={inviteCandidateByEmail}
+                  onDelete={deleteCandidateByEmail}
+                  onReject={rejectCandidateByEmail}
+                  onScheduleInterview={scheduleInterviewByEmail}
+                  onUpdateOutreachNotes={updateCandidateOutreachNotesByEmail}
+                  onRevertStatus={revertCandidateStatusByEmail}
+                  view="overview"
+                />
+              </PageAppear>
+            }
+          />
+          <Route
+            path="candidates"
+            element={
+              <PageAppear pageKey={currentPath}>
+                <CandidateDashboard
+                  jobs={jobs}
+                  candidates={candidates}
+                  neutralize={neutralizeActive}
+                  onToggleNeutralize={handleNeutralizeToggle}
+                  biasControls={biasControls}
+                  onUpdateBiasControls={updateBiasControls}
+                  isLoading={isLoading}
+                  onRefresh={() => fetchCandidates()}
+                  onStatusChange={updateCandidateStatusByEmail}
+                  onInvite={inviteCandidateByEmail}
+                  onDelete={deleteCandidateByEmail}
+                  onReject={rejectCandidateByEmail}
+                  onScheduleInterview={scheduleInterviewByEmail}
+                  onUpdateOutreachNotes={updateCandidateOutreachNotesByEmail}
+                  onRevertStatus={revertCandidateStatusByEmail}
+                  view="candidates"
+                />
+              </PageAppear>
+            }
+          />
+          <Route
+            path="accounts"
+            element={
+              <PageAppear pageKey={currentPath}>
+                <CandidateAccountsPage
+                  candidates={candidates}
+                  neutralize={neutralizeActive}
+                  isLoading={isLoading}
+                  onRefresh={() => fetchCandidates()}
+                  onDelete={deleteCandidateByEmail}
+                  onUpdateAccount={updateCandidateAccountByEmail}
+                  onResetPassword={resetCandidatePasswordByEmail}
+                />
+              </PageAppear>
+            }
+          />
+          <Route
+            path="calendar"
+            element={
+              <PageAppear pageKey={currentPath}>
+                <InterviewCalendar
+                  jobs={jobs}
+                  candidates={candidates}
+                  onScheduleInterview={scheduleInterviewByEmail}
+                />
+              </PageAppear>
             }
           />
         </Routes>

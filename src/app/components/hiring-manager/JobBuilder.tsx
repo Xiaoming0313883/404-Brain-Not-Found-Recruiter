@@ -78,11 +78,23 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
   const [chatMessages, setChatMessages] = useState<Array<{ role: 'agent' | 'manager'; content: string }>>([
     { role: 'agent', content: 'Enter the basic position details, then I will ask adaptive follow-up questions and prefill editable draft values.' }
   ]);
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const previousChatMessageCountRef = useRef(chatMessages.length);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [chatMessages, isAgentThinking]);
+    if (chatMessages.length <= previousChatMessageCountRef.current) {
+      previousChatMessageCountRef.current = chatMessages.length;
+      return;
+    }
+
+    const chatScroll = chatScrollRef.current;
+    if (chatScroll) {
+      window.requestAnimationFrame(() => {
+        chatScroll.scrollTop = chatScroll.scrollHeight;
+      });
+    }
+    previousChatMessageCountRef.current = chatMessages.length;
+  }, [chatMessages.length]);
 
   const startCreate = () => {
     resetForm();
@@ -526,7 +538,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
               </div>
             </div>
 
-            <div className="bg-white border border-[#e4e1da] rounded-xl p-4 max-h-80 overflow-auto space-y-3 mb-4">
+            <div ref={chatScrollRef} className="bg-white border border-[#e4e1da] rounded-xl p-4 max-h-80 overflow-auto space-y-3 mb-4">
               {chatMessages.map((message, index) => (
                 <div
                   key={index}
@@ -549,7 +561,6 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
                   </div>
                 </div>
               )}
-              <div ref={chatEndRef} />
             </div>
 
             {!isIntakeComplete ? (

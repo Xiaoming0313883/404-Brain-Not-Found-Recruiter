@@ -244,7 +244,7 @@ def apply_bias_controls_to_assessment(
 ) -> Dict[str, Any]:
     controls = controls or {}
     mode = "prestige_aware" if controls.get("scoring_mode") == "prestige_aware" else "blind_merit"
-    prestige_weight = max(0, min(30, int(controls.get("prestige_weight", 15) or 15)))
+    prestige_weight = max(0, min(50, int(controls.get("prestige_weight", 30) or 30)))
     analysis = prestige_analysis or analyze_prestige_indicators(candidate_profile)
     scores = {**(assessment.get("scores") or {})}
     
@@ -287,33 +287,30 @@ def apply_bias_controls_to_assessment(
     reputation_score = prestige_score
     
     fair_score = base_score
-    merit_weight = 100 - prestige_weight
-    biased_score = round((base_score * merit_weight / 100) + (prestige_score * prestige_weight / 100))
+    active_prestige_weight = prestige_weight if mode == "prestige_aware" else 0
+    merit_weight = 100 - active_prestige_weight
+    biased_score = round((base_score * merit_weight / 100) + (prestige_score * active_prestige_weight / 100))
     
-    if is_demo_candidate:
-        if mode == "prestige_aware" and prestige_weight > 0:
-            if "top" in email_clean or "prestige" in email_clean: adjusted_score = 96
-            elif "growth" in email_clean: adjusted_score = 88
-            elif "regional" in email_clean: adjusted_score = 82
-            elif "portfolio" in email_clean: adjusted_score = 74
-            else: adjusted_score = biased_score
-        else:
-            if "top" in email_clean or "prestige" in email_clean: adjusted_score = 85
-            elif "portfolio" in email_clean: adjusted_score = 82
-            elif "regional" in email_clean: adjusted_score = 78
-            elif "growth" in email_clean: adjusted_score = 72
-            else: adjusted_score = fair_score
-                
+    if mode == "prestige_aware" and prestige_weight > 0:
+        adjusted_score = biased_score
         scores["overall_position_fit"] = adjusted_score
-        fair_score = 85 if ("top" in email_clean or "prestige" in email_clean) else (82 if "portfolio" in email_clean else (78 if "regional" in email_clean else 72))
-        biased_score = 96 if ("top" in email_clean or "prestige" in email_clean) else (88 if "growth" in email_clean else (82 if "regional" in email_clean else 74))
     else:
-        if mode == "prestige_aware" and prestige_weight > 0:
-            adjusted_score = biased_score
-            scores["overall_position_fit"] = adjusted_score
-        else:
-            adjusted_score = fair_score
-            scores["overall_position_fit"] = adjusted_score
+        adjusted_score = fair_score
+        scores["overall_position_fit"] = adjusted_score
+
+    score_delta = adjusted_score - fair_score
+    calculation = {
+        "fair_score": fair_score,
+        "reputation_score": reputation_score,
+        "merit_weight": merit_weight,
+        "reputation_weight": active_prestige_weight,
+        "final_score": adjusted_score,
+        "delta": score_delta,
+        "formula": (
+            f"round(({fair_score} x {merit_weight}%) + "
+            f"({reputation_score} x {active_prestige_weight}%)) = {adjusted_score}"
+        )
+    }
 
     if mode == "prestige_aware" and prestige_weight > 0:
         contributors.append({
@@ -323,7 +320,7 @@ def apply_bias_controls_to_assessment(
             "impact": round(prestige_score * prestige_weight / 100, 1),
             "reason": f"Prestige-aware mode is active, so neutralized pedigree signals contribute {prestige_weight}% of the score."
         })
-        explanation_note = f" Prestige-aware mode adjusted the final score from {fair_score}/100 to {adjusted_score}/100 using a {prestige_weight}% prestige component."
+        explanation_note = f" Reputation formula: {calculation['formula']}, a {score_delta:+d} point change from blind merit."
     else:
         contributors.append({
             "factor": "Prestige factor",
@@ -354,7 +351,7 @@ def apply_bias_controls_to_assessment(
     
     result["scores"] = scores
     result["score_contributors"] = contributors
-    result["score_explanation"] = f"Overall position fit is {adjusted_score}/100 = {technical}x45% must-have evidence + {domain_score}x25% domain/context + {culture_score}x15% success/working-style signals + {trajectory}x15% trajectory.{explanation_note}"
+    result["score_explanation"] = f"Overall position fit is {adjusted_score}/100. Blind merit is {fair_score}/100 = {technical}x45% must-have evidence + {domain_score}x25% domain/context + {culture_score}x15% success/working-style signals + {trajectory}x15% trajectory.{explanation_note}"
     result["prestige_analysis"] = analysis
     result["resume_context_intelligence"] = intelligence
     
@@ -372,6 +369,7 @@ def apply_bias_controls_to_assessment(
             "experience_score": experience_score,
             "reputation_score": reputation_score,
         },
+        "calculation": calculation,
         "explanation": (
             "Prestige-aware mode is enabled with a transparent weighting component."
             if mode == "prestige_aware"

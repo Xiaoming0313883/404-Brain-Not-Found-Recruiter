@@ -45,6 +45,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
   const [verificationMessage, setVerificationMessage] = useState('');
   const [isVerifyingEmail, setIsVerifyingEmail] = useState(false);
   const [isResendingVerification, setIsResendingVerification] = useState(false);
+  const [candidateContinueAction, setCandidateContinueAction] = useState<'lookup' | 'invited' | 'account' | null>(null);
   const [verificationCooldown, setVerificationCooldown] = useState(0);
   const [emailVerifiedForSignup, setEmailVerifiedForSignup] = useState(forceNewApplication);
   
@@ -315,6 +316,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
   };
 
   const handleEmailLookup = async () => {
+    if (candidateContinueAction) return;
     setErrorMessage('');
     setPassword('');
     setConfirmPassword('');
@@ -323,6 +325,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
     setEmailVerificationMode(null);
     setEmailVerifiedForSignup(false);
     if (!validateEmailInput()) return;
+    setCandidateContinueAction('lookup');
     try {
       const response = await fetch(`${API_BASE_URL}/candidates/lookup?email=${encodeURIComponent(email.trim())}`);
       if (response.ok) {
@@ -348,6 +351,8 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
     } catch (err: any) {
       console.error(err);
       setErrorMessage(err.message || API_UNREACHABLE_MESSAGE);
+    } finally {
+      setCandidateContinueAction(null);
     }
   };
 
@@ -550,56 +555,54 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
     }
   };
 
-  const handleInvitedContinue = () => {
+  const handleInvitedContinue = async () => {
     if (!loadedCandidate) return;
+    if (!validatePassword() || candidateContinueAction) return;
     setErrorMessage('');
-
-    const authenticate = async () => {
-      try {
-        const data = loadedCandidate.has_password
-          ? await loginExistingCandidate()
-          : await setExistingCandidatePassword();
-        if (!data) return;
-        const candidateData = mapCandidateFromApi(data);
-        if (data.email_verified === false) {
-          setPendingVerification(candidateData);
-          setVerificationMessage(`Enter the verification code sent to ${candidateData.email}.`);
-          return;
-        }
-        onAuthenticate(candidateData);
-        navigate('/candidate/sandbox');
-      } catch (err: any) {
-        setErrorMessage(err.message || 'Unable to authenticate candidate.');
+    setCandidateContinueAction('invited');
+    try {
+      const data = loadedCandidate.has_password
+        ? await loginExistingCandidate()
+        : await setExistingCandidatePassword();
+      if (!data) return;
+      const candidateData = mapCandidateFromApi(data);
+      if (data.email_verified === false) {
+        setPendingVerification(candidateData);
+        setVerificationMessage(`Enter the verification code sent to ${candidateData.email}.`);
+        return;
       }
-    };
-
-    authenticate();
+      onAuthenticate(candidateData);
+      navigate('/candidate/sandbox');
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Unable to authenticate candidate.');
+    } finally {
+      setCandidateContinueAction(null);
+    }
   };
 
-  const handleAccountContinue = () => {
+  const handleAccountContinue = async () => {
     if (!loadedCandidate) return;
+    if (!validatePassword() || candidateContinueAction) return;
     setErrorMessage('');
-
-    const authenticate = async () => {
-      try {
-        const data = loadedCandidate.has_password
-          ? await loginExistingCandidate()
-          : await setExistingCandidatePassword();
-        if (!data) return;
-        const candidateData = mapCandidateFromApi(data);
-        if (data.email_verified === false) {
-          setPendingVerification(candidateData);
-          setVerificationMessage(`Enter the verification code sent to ${candidateData.email}.`);
-          return;
-        }
-        onAuthenticate(candidateData);
-        navigate('/candidate/home');
-      } catch (err: any) {
-        setErrorMessage(err.message || 'Unable to authenticate candidate.');
+    setCandidateContinueAction('account');
+    try {
+      const data = loadedCandidate.has_password
+        ? await loginExistingCandidate()
+        : await setExistingCandidatePassword();
+      if (!data) return;
+      const candidateData = mapCandidateFromApi(data);
+      if (data.email_verified === false) {
+        setPendingVerification(candidateData);
+        setVerificationMessage(`Enter the verification code sent to ${candidateData.email}.`);
+        return;
       }
-    };
-
-    authenticate();
+      onAuthenticate(candidateData);
+      navigate('/candidate/home');
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Unable to authenticate candidate.');
+    } finally {
+      setCandidateContinueAction(null);
+    }
   };
   const getAccountProgressInfo = (cand: any) => {
     const status = cand.status;
@@ -775,16 +778,25 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="your.email@example.com"
                   className={`${inputClass} pl-10`}
-                  onKeyPress={(e) => e.key === 'Enter' && email && handleEmailLookup()}
+                  onKeyPress={(e) => e.key === 'Enter' && email && !candidateContinueAction && handleEmailLookup()}
                 />
               </div>
               <button
                 onClick={handleEmailLookup}
-                disabled={!email.trim()}
+                disabled={!email.trim() || candidateContinueAction === 'lookup'}
                 className="flex items-center gap-2 px-4 py-2.5 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors text-sm whitespace-nowrap"
               >
-                Continue
-                <ArrowRight className="w-4 h-4" />
+                {candidateContinueAction === 'lookup' ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Checking...
+                  </>
+                ) : (
+                  <>
+                    Continue
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
               </button>
             </div>
             <p className="mt-3 text-xs text-[#a8a49d] text-center">
@@ -862,10 +874,20 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
             {/* Continue */}
             <button
               onClick={handleInvitedContinue}
-              className="w-full py-3 bg-[#2d6a55] text-white rounded-xl hover:bg-[#245747] transition-colors flex items-center justify-center gap-2 text-sm font-medium shadow-sm cursor-pointer"
+              disabled={candidateContinueAction === 'invited'}
+              className="w-full py-3 bg-[#2d6a55] text-white rounded-xl hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 text-sm font-medium shadow-sm cursor-pointer"
             >
-              Start Interview Session
-              <ArrowRight className="w-4 h-4" />
+              {candidateContinueAction === 'invited' ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Preparing interview...
+                </>
+              ) : (
+                <>
+                  Start Interview Session
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           </div>
         )}
@@ -911,10 +933,20 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
 
             <button
               onClick={handleAccountContinue}
-              className="w-full py-3 bg-[#2d6a55] text-white rounded-xl hover:bg-[#245747] transition-colors flex items-center justify-center gap-2 text-sm font-medium shadow-sm cursor-pointer"
+              disabled={candidateContinueAction === 'account'}
+              className="w-full py-3 bg-[#2d6a55] text-white rounded-xl hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 text-sm font-medium shadow-sm cursor-pointer"
             >
-              Open Candidate Dashboard
-              <ArrowRight className="w-4 h-4" />
+              {candidateContinueAction === 'account' ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Opening dashboard...
+                </>
+              ) : (
+                <>
+                  Open Candidate Dashboard
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           </div>
         )}

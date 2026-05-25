@@ -361,10 +361,8 @@ export function CandidateDashboard({
       setActionError(error.message || 'Candidate action failed.');
       toast.error(error.message || 'Candidate action failed.');
     } finally {
-      window.setTimeout(() => {
-        actionLocksRef.current.delete(email);
-        setBusyEmail(current => current === email ? '' : current);
-      }, 900);
+      actionLocksRef.current.delete(email);
+      setBusyEmail(current => current === email ? '' : current);
     }
   };
 
@@ -571,13 +569,13 @@ export function CandidateDashboard({
                 <span className="text-sm text-[#2d6a55] font-semibold">{localPrestigeWeight}%</span>
               </div>
               <p className="text-xs text-[#6b7063] leading-relaxed mb-3">
-                0% means it does not affect scores. 30% means it has a strong effect.
+                0% means it does not affect scores. 50% means reputation weighs as much as the merit side of the formula.
               </p>
               <input
                 id="prestige-weight"
                 type="range"
                 min="0"
-                max="30"
+                max="50"
                 step="1"
                 value={localPrestigeWeight}
                 onChange={(event) => setLocalPrestigeWeight(Number(event.target.value))}
@@ -683,10 +681,11 @@ export function CandidateDashboard({
           )}
           <button
             onClick={() => onRefresh()}
+            disabled={isLoading}
             className="inline-flex items-center justify-center w-9 h-9 bg-white border border-[#e4e1da] rounded-lg text-[#6b7063] hover:text-[#1c1c1a] hover:bg-[#f7f6f3] transition-colors"
             title="Refresh candidates"
           >
-            <RefreshCcw className="w-4 h-4" />
+            <RefreshCcw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
@@ -904,9 +903,9 @@ export function CandidateDashboard({
       {(view === 'overview' || view === 'candidates') && (
       <>
       <motion.div
-initial={{ opacity: 0, y: 16 }}
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, delay: 0.5 }}
+        transition={{ duration: 0.4 }}
         className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm"
       >
         <div className="flex flex-col gap-4 mb-6 border-b border-[#e4e1da] pb-5">
@@ -1091,7 +1090,7 @@ initial={{ opacity: 0, y: 16 }}
                   key={`${candidate.email}-${candidate.applicationId || candidate.jobId || index}`}
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, delay: index * 0.05 }}
+                  transition={{ duration: 0.3 }}
                 >
                   <Accordion.Item
                     value={`candidate-${candidate.id}-${candidate.applicationId || candidate.jobId || index}`}
@@ -1263,6 +1262,31 @@ initial={{ opacity: 0, y: 16 }}
                                     </div>
                                   </div>
 
+                                  {candidate.biasControl?.calculation && (
+                                    <div className="mt-4 rounded-xl border border-[#e4e1da] bg-white p-3">
+                                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                                        <p className="text-[10px] tracking-wider uppercase text-[#6b7063] font-bold">Active Formula</p>
+                                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                          (candidate.biasControl.calculation.delta || 0) > 0
+                                            ? 'bg-[#fff7ed] text-[#c2410c]'
+                                            : (candidate.biasControl.calculation.delta || 0) < 0
+                                              ? 'bg-[#fdf2f2] text-[#b91c1c]'
+                                              : 'bg-[#f0ede8] text-[#6b7063]'
+                                        }`}>
+                                          {(candidate.biasControl.calculation.delta || 0) > 0 ? '+' : ''}{candidate.biasControl.calculation.delta || 0} pts
+                                        </span>
+                                      </div>
+                                      <p className="text-xs text-[#1c1c1a] font-semibold leading-relaxed">
+                                        {candidate.biasControl.calculation.formula || `round((${candidate.biasControl.calculation.fair_score} x ${candidate.biasControl.calculation.merit_weight}%) + (${candidate.biasControl.calculation.reputation_score} x ${candidate.biasControl.calculation.reputation_weight}%)) = ${candidate.biasControl.calculation.final_score}`}
+                                      </p>
+                                      {(candidate.biasControl.calculation.delta || 0) === 0 && (candidate.biasControl.calculation.reputation_weight || 0) > 0 && (
+                                        <p className="mt-1.5 text-[11px] text-[#6b7063] leading-relaxed">
+                                          The rounded score stayed the same because the merit score and reputation score are close at this weight.
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
+
                                   {/* Three-Tier Scoring Separated Display */}
                                   <div className="mt-4 pt-4 border-t border-[#e4e1da]">
                                     <p className="text-xs tracking-wider uppercase text-[#1c1c1a] mb-3 font-bold">Category Scoring Separation</p>
@@ -1392,12 +1416,6 @@ initial={{ opacity: 0, y: 16 }}
                         <div className="bg-white border border-[#e4e1da] rounded-xl p-4 shadow-sm">
                           <div className="flex items-center justify-between gap-3 mb-3">
                             <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Manage Candidate Status</p>
-                            {busyEmail === actionEmail && (
-                              <span className="inline-flex items-center gap-1.5 text-xs text-[#2d6a55] font-semibold">
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                Updating...
-                              </span>
-                            )}
                           </div>
                           <div className="flex flex-wrap gap-2">
                             {candidate.status === 'staged' && (
@@ -2381,6 +2399,19 @@ initial={{ opacity: 0, y: 16 }}
                   </div>
                   {selectedTrajectoryCandidate.biasControl?.explanation && (
                     <p className="text-sm text-[#6b7063] leading-relaxed mb-2">{selectedTrajectoryCandidate.biasControl.explanation}</p>
+                  )}
+                  {selectedTrajectoryCandidate.biasControl?.calculation && (
+                    <div className="mb-2 rounded-lg border border-[#e4e1da] bg-white px-3 py-2">
+                      <p className="text-[10px] tracking-wider uppercase text-[#a8a49d] font-semibold">Active Formula</p>
+                      <p className="text-xs text-[#1c1c1a] font-semibold mt-1">
+                        {selectedTrajectoryCandidate.biasControl.calculation.formula}
+                      </p>
+                      {(selectedTrajectoryCandidate.biasControl.calculation.delta || 0) === 0 && (selectedTrajectoryCandidate.biasControl.calculation.reputation_weight || 0) > 0 && (
+                        <p className="mt-1 text-[11px] text-[#6b7063]">
+                          Rounded score unchanged because merit and reputation scores are close at this weight.
+                        </p>
+                      )}
+                    </div>
                   )}
                   {selectedTrajectoryCandidate.resumeContextIntelligence?.signals?.map(signal => (
                     <p key={signal} className="text-xs text-[#2d6a55] font-medium">{signal}</p>
