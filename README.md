@@ -1,171 +1,567 @@
 # 404Hire
 
-**404 Brain Not Found. Talent Found. 👾**
+**Group:** 404 Brain Not Found  
+**Affiliation:** UTM KL Faculty of AI students  
+**Event:** APU AI Marathon 2026: LLM Everywhere  
+**Track:** Problem Statement 2 - The Intelligent Recruiter  
+**Tagline:** 404 Brain Not Found. Talent Found.  
 
-**404Hire — Because Great Talent Shouldn’t Be “Not Found.”**
+404Hire is an LLM-powered intelligent recruiter workspace that connects hiring managers with candidates through agentic job intake, resume understanding, candidate matching, screening, outreach, and fair-hiring controls.
 
-404Hire is an AI-assisted recruitment workspace built for hiring managers and candidates. It combines job intake, LinkedIn-style sourcing, resume validation, candidate account management, profile completion, screening questions, match scoring, and hiring-manager feedback in one local-first prototype.
-
-The project was built for coursework, demos, and rapid product validation. It uses a React/Vite frontend, a FastAPI backend, OpenAI-compatible agent services, local JSON storage, and local file uploads.
+The project was built by **404 Brain Not Found**, a team of **UTM KL Faculty of AI students**, for **APU AI Marathon 2026: LLM Everywhere**. It follows the Intelligent Recruiter challenge by taking job requirements plus candidate data, identifying strong matches, generating recruiter-facing reasoning, and supporting LinkedIn-style sourcing through live or simulated integrations.
 
 ![404Hire logo](src/assets/404hire-logo.jpeg)
 
 ## Table Of Contents
 
-- [Product Overview](#product-overview)
-- [Core Capabilities](#core-capabilities)
-- [User Roles](#user-roles)
+- [Live Deployment](#live-deployment)
+- [Marathon Alignment](#marathon-alignment)
+- [Project Overview](#project-overview)
+- [Core Features](#core-features)
+- [AI Agent Workflow](#ai-agent-workflow)
+- [Process Flow](#process-flow)
+- [Decision Logic](#decision-logic)
 - [System Architecture](#system-architecture)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
-- [Prerequisites](#prerequisites)
+- [Local Setup](#local-setup)
 - [Environment Variables](#environment-variables)
-- [Installation](#installation)
-- [Running Locally](#running-locally)
 - [Demo Accounts](#demo-accounts)
-- [Key Workflows](#key-workflows)
-- [AI Agent Design](#ai-agent-design)
 - [API Reference](#api-reference)
-- [Data And Upload Storage](#data-and-upload-storage)
-- [Validation And Safety Rules](#validation-and-safety-rules)
-- [Useful Commands](#useful-commands)
+- [Data And Storage](#data-and-storage)
+- [Validation And Safety](#validation-and-safety)
 - [Troubleshooting](#troubleshooting)
-- [Production Readiness Notes](#production-readiness-notes)
+- [Production Notes](#production-notes)
+- [Verification Checklist](#verification-checklist)
 
-## Product Overview
+## Live Deployment
 
-404Hire provides two coordinated portals:
+| Service | Platform | URL | Purpose |
+| --- | --- | --- | --- |
+| Frontend website | Vercel | [https://404hire.vercel.app](https://404hire.vercel.app) | Hosts the React/Vite web application and serves the public user interface. |
+| Backend API | Render | [https://four04hire.onrender.com](https://four04hire.onrender.com) | Runs the FastAPI backend and exposes the API over HTTPS. |
 
-1. Hiring Manager Portal
-   - Build and manage job positions.
-   - Use an adaptive Requirement Agent to gather role context.
-   - Run automatic prototype candidate sourcing.
-   - Analyze manual LinkedIn profile URLs.
-   - Review candidates by position and pipeline status.
-   - Manage candidate accounts on a dedicated account page.
-   - Schedule interviews, reject candidates, complete screening, and mark hires.
+The frontend is deployed on **Vercel** because it is optimized for Vite frontend builds, preview deployments, and fast static asset delivery.
 
-2. Candidate Portal
-   - Enter an email and verify it before profile creation.
-   - Upload a valid PDF resume.
-   - Let the Resume Agent extract structured profile details.
-   - Complete missing required information.
-   - Apply to open positions.
-   - Complete AI-generated screening questions.
-   - Review score, feedback, and upskilling guidance.
+The backend is deployed on **Render** because it can run the Python FastAPI service as a web service and provide a public API endpoint for the Vercel frontend.
 
-The system is intentionally transparent in prototype mode. When SMTP is not configured, 404Hire shows the prototype email verification code directly on the page so the flow remains testable.
+Production frontend environment variable:
 
-## Core Capabilities
+```env
+VITE_API_URL=https://four04hire.onrender.com/api/v1
+```
 
-- Dual-portal React application.
-- Hiring manager login with demo accounts.
-- Candidate email lookup, account creation, login, and password setup.
-- Prototype-first email verification before candidate profile creation.
-- Resume upload with PDF validation and text extraction.
-- Resume Agent profile extraction with manual completion flow.
-- Required candidate information verification before applications.
-- Position creation with open and close application windows.
-- Adaptive job intake using the Requirement Agent.
-- LinkedIn URL normalization for common profile link formats.
-- Automatic prototype candidate sourcing based on selected job requirements.
-- Matching Agent scoring and debate-style analysis.
-- Interview Agent screening question generation and answer evaluation.
-- Detailed AI feedback for hiring managers, including evidence, risks, notes, and follow-up probes.
-- Candidate account management on a separate hiring-manager page.
-- Pagination for candidate pipeline, candidate accounts, candidate application history, and candidate positions.
-- Bias mitigation and neutralized candidate review.
-- Local JSON database and upload directory for simple development.
+## Marathon Alignment
 
-## User Roles
+APU AI Marathon 2026 is themed **LLM Everywhere**, with emphasis on practical LLM use, agentic workflows, tool integration, and working prototypes.
 
-### Hiring Manager
+404Hire addresses the **Intelligent Recruiter** track:
 
-Hiring managers create jobs, source candidates, inspect candidate records, review match analysis, and manage candidate progress through the recruiting funnel.
+- **Problem:** Traditional job boards are static and do not actively bridge hiring managers with diverse candidate profiles.
+- **Mission:** Use candidate data from resumes, profiles, and sourced talent pools to identify strong matches for a job description.
+- **Agentic twist:** Go beyond ranking. Generate recruiter explanations, personalized sourcing pitches, screening questions, outreach emails, and fair-hiring analysis.
+- **Prototype focus:** Demonstrate an end-to-end recruiter workflow with real LLM calls when configured and deterministic fallback logic when APIs are unavailable.
 
-Main pages:
+## Project Overview
 
-- Job Builder
-- LinkedIn Sourcing
-- Candidate Pipeline
-- Candidate Accounts
-- Interview Calendar
+404Hire provides two connected portals:
 
-### Candidate
+### Hiring Manager Portal
 
-Candidates verify their email, upload resumes, complete profile details, apply to available positions, answer screening questions, and review feedback.
+Hiring managers can:
 
-Main pages:
+- Create and manage job positions.
+- Use an adaptive Requirement Agent for job intake.
+- Source candidates automatically through live Apify/LinkedIn integration when configured.
+- Fall back to prototype candidate sourcing for demos.
+- Review candidate match scores, evidence, risks, screening answers, and status.
+- Toggle fair-hiring controls such as blind merit scoring, prestige neutralization, anonymized review, and reputation-aware scoring.
+- Run a fairness audit over candidate outcomes.
+- Schedule interviews, reject candidates, complete reviews, and mark hires.
 
-- Candidate Login
-- Candidate Home
-- Candidate Screening Sandbox
-- Candidate Feedback
+### Candidate Portal
+
+Candidates can:
+
+- Verify email before account creation.
+- Upload a PDF resume.
+- Let the Resume Agent extract profile details.
+- Complete missing required profile fields with the profile assistant.
+- Apply to open positions.
+- Answer AI-generated screening questions.
+- Review feedback, score breakdowns, and upskilling guidance.
+- Receive notifications about application progress.
+
+## Core Features
+
+- Dual-portal React/Vite application.
+- FastAPI backend under `/api/v1`.
+- LLM-compatible agent layer using an OpenAI-style chat completions client.
+- Adaptive job intake and role requirement generation.
+- Resume parsing with LLM extraction, PDF text extraction, OCR fallbacks, and rule-based fallback parsing.
+- Candidate profile completion and verification.
+- Position windows with open and close dates.
+- Manual LinkedIn profile scraping when live scraper credentials are configured.
+- Automatic candidate sourcing through Apify or prototype simulation.
+- Streaming sourcing progress through Server-Sent Events.
+- Position-specific matching with explainable score contributors.
+- Interview question generation and answer evaluation.
+- Candidate upskilling roadmap generation.
+- Bias Agent for prestige indicator detection and profile neutralization.
+- Bias controls for blind merit, anonymized hiring, and prestige-aware comparison.
+- Fairness audit for prestige-related outcome patterns.
+- Candidate account administration.
+- Interview calendar.
+- SMTP verification and optional email notifications.
+- Local JSON data store for fast hackathon iteration.
+
+## AI Agent Workflow
+
+404Hire uses a six-agent workflow. The agents are the active reasoning layer between both user sides: hiring managers define and review talent requirements, while candidates submit resumes, profiles, and screening answers.
+
+```mermaid
+flowchart LR
+    HM["HIRING MANAGER SIDE"] --> RQ["AGENT 1: REQUIREMENT AGENT"]
+    RQ --> JOB["Structured job profile"]
+    JOB --> SRC{"Source path"}
+    SRC -->|Live configured| LIVE["Apify or LinkedIn profile data"]
+    SRC -->|No live token| MOCK["Prototype candidate profiles"]
+    LIVE --> BA1["AGENT 3: BIAS AGENT"]
+    MOCK --> BA1
+    BA1 --> MA1["AGENT 4: MATCHING AGENT"]
+    MA1 --> IA1["AGENT 5A: INTERVIEW AGENT QUESTIONS"]
+    IA1 --> RA1["AGENT 6: REPORT AGENT"]
+    RA1 --> STAGED["Staged candidate for review"]
+
+    CAND["CANDIDATE SIDE"] --> PDF["Email verification and PDF resume"]
+    PDF --> RES["AGENT 2: RESUME AGENT"]
+    RES --> BA2["AGENT 3: BIAS AGENT"]
+    BA2 --> PROFILE{"Profile complete?"}
+    PROFILE -->|No| ASSIST["Profile assistant collects missing fields"]
+    ASSIST --> PROFILE
+    PROFILE -->|Yes| JOBS["Candidate browses active jobs"]
+    JOBS --> CHOOSE["Candidate chooses one job to apply"]
+    CHOOSE --> APPLY["Apply to selected position"]
+    APPLY --> MA2["AGENT 4: MATCHING AGENT"]
+    MA2 --> IA2["AGENT 5A: INTERVIEW AGENT QUESTIONS"]
+    IA2 --> ANSWERS["Candidate submits answers"]
+    ANSWERS --> IA3["AGENT 5B: INTERVIEW AGENT EVALUATION"]
+    IA3 --> RA2["AGENT 6: REPORT AGENT"]
+    RA2 --> REVIEW["Hiring manager review"]
+
+    classDef agent fill:#e8f2ee,stroke:#2d6a55,stroke-width:2px,color:#12382d;
+    class RQ,RES,BA1,BA2,MA1,MA2,IA1,IA2,IA3,RA1,RA2 agent;
+```
+
+Each agent has a focused responsibility and a fallback path so the demo remains usable even when an external LLM or scraping service is unavailable.
+
+| Agent | File | Input | Output | Role |
+| --- | --- | --- | --- | --- |
+| Requirement Agent | `backend/app/services/agents/requirement_agent.py` | Job title, department, hiring-manager intake | Job description, requirements, role family, pillars, behavioral signals, Boolean query | Turns a loose hiring request into structured recruiting criteria. |
+| Resume Agent | `backend/app/services/agents/resume_agent.py` | Resume text extracted from PDF/OCR | Candidate profile fields, skills, education, experience, summary | Converts unstructured resumes into searchable candidate data. |
+| Bias Agent | `backend/app/services/agents/bias_agent.py` | Candidate profile and resume text | Prestige indicators, neutralized profile, reputation score | Detects school/company pedigree signals and supports fair-hiring controls. |
+| Matching Agent | `backend/app/services/agents/matching_agent.py` | Job requirements, candidate profile, bias controls | Position-fit score, score contributors, advocate and critical recruiter views | Scores fit using role evidence, domain context, success signals, and trajectory. |
+| Interview Agent | `backend/app/services/agents/interview_agent.py` | Candidate profile, match results, job requirements, answers | Screening questions, answer critiques, screening score, recommendation | Creates and evaluates position-specific screening. |
+| Report Agent | `backend/app/services/agents/report_agent.py` | Candidate profile, match results, job requirements | Sourcing pitch, outreach email, upskilling roadmap | Produces human-readable recruiter and candidate artifacts. |
+
+### Two-Sided Agent Orchestration
+
+```mermaid
+flowchart TB
+    subgraph HM_SIDE["Hiring Manager Side"]
+        HM1["Create or update position"]
+        HM2["AGENT: REQUIREMENT AGENT<br/>asks intake questions and builds criteria"]
+        HM3["Start sourcing"]
+        HM4{"Live sourcing available?"}
+        HM5["Scrape live LinkedIn profiles<br/>through Apify/cookie workflow"]
+        HM6["Generate prototype profiles<br/>for demo mode"]
+        HM7["AGENT: BIAS AGENT<br/>detects prestige indicators"]
+        HM8["AGENT: MATCHING AGENT<br/>scores role fit"]
+        HM9["AGENT: INTERVIEW AGENT<br/>generates screening questions"]
+        HM10["AGENT: REPORT AGENT<br/>writes pitch and outreach"]
+        HM11["Staged candidate appears in pipeline"]
+        HM12["Review, invite, schedule, reject, complete, or hire"]
+    end
+
+    subgraph CAND_SIDE["Candidate Side"]
+        C1["Verify email"]
+        C2["Upload PDF resume"]
+        C3["Extract resume text<br/>pypdf, PyMuPDF, pdfminer, OCR, vision fallback"]
+        C4["AGENT: RESUME AGENT<br/>extracts structured profile"]
+        C5["AGENT: BIAS AGENT<br/>creates neutralized profile metadata"]
+        C6{"Required profile fields complete?"}
+        C7["Profile assistant collects missing details"]
+        C8["Open Jobs page"]
+        C9["Browse active positions from GET /jobs?active_only=true"]
+        C10["Candidate chooses one job"]
+        C11["Click Apply"]
+        C12["AGENT: MATCHING AGENT<br/>scores selected job fit"]
+        C13["AGENT: INTERVIEW AGENT PHASE A<br/>creates screening questions"]
+        C14["Review questions"]
+        C15["Save draft answers<br/>optional user control"]
+        C16["Submit final screening answers"]
+        C17["AGENT: INTERVIEW AGENT PHASE B<br/>evaluates answers"]
+        C18["AGENT: REPORT AGENT<br/>creates upskilling roadmap"]
+        C19["Application visible to hiring manager"]
+        C20["Candidate tracks status, feedback, notifications, and roadmap"]
+    end
+
+    HM1 --> HM2 --> HM3 --> HM4
+    HM4 -->|Yes| HM5 --> HM7
+    HM4 -->|No| HM6 --> HM7
+    HM7 --> HM8 --> HM9 --> HM10 --> HM11 --> HM12
+
+    C1 --> C2 --> C3 --> C4 --> C5 --> C6
+    C6 -->|No| C7 --> C6
+    C6 -->|Yes| C8 --> C9 --> C10 --> C11 --> C12 --> C13 --> C14 --> C15 --> C16 --> C17 --> C18 --> C19 --> C20
+    C19 -. "same review dashboard" .-> HM12
+
+    classDef agent fill:#e8f2ee,stroke:#2d6a55,stroke-width:2px,color:#12382d;
+    class HM2,HM7,HM8,HM9,HM10,C4,C5,C12,C13,C17,C18 agent;
+```
+
+## Process Flow
+
+```mermaid
+flowchart TD
+    START["User enters 404Hire"] --> SIDE{"Which portal?"}
+    SIDE -->|Hiring manager| HM_LOGIN["Demo login"]
+    SIDE -->|Candidate| C_VERIFY["Email verification"]
+
+    HM_LOGIN --> JOB_FLOW["Job creation flow"]
+    JOB_FLOW --> RQA["AGENT: REQUIREMENT AGENT"]
+    RQA --> SOURCE_FLOW["Sourcing flow"]
+    SOURCE_FLOW --> EVAL_PIPE["AGENT PIPELINE:<br/>Bias -> Matching -> Interview Questions -> Report"]
+    EVAL_PIPE --> HM_REVIEW["Hiring-manager review flow"]
+
+    C_VERIFY --> RESUME_FLOW["Candidate signup flow"]
+    RESUME_FLOW --> RSA["AGENT PIPELINE:<br/>Resume -> Bias"]
+    RSA --> PROFILE_GATE{"Profile complete?"}
+    PROFILE_GATE -->|No| PROFILE_ASSIST["Profile assistant"]
+    PROFILE_ASSIST --> PROFILE_GATE
+    PROFILE_GATE -->|Yes| JOB_LIST["Jobs page:<br/>candidate browses active positions"]
+    JOB_LIST --> JOB_CHOICE["Candidate chooses one job"]
+    JOB_CHOICE --> APPLY_FLOW["Apply to selected position"]
+    APPLY_FLOW --> CAND_PIPE["AGENT PIPELINE:<br/>Matching -> Interview Questions"]
+    CAND_PIPE --> SCREEN_FLOW["Candidate screening flow"]
+    SCREEN_FLOW --> DRAFTS{"Save draft or submit?"}
+    DRAFTS -->|Save draft| DRAFT_SAVE["Draft answers saved<br/>candidate can continue later"]
+    DRAFT_SAVE --> SCREEN_FLOW
+    DRAFTS -->|Submit final| SCREEN_AGENTS["AGENT PIPELINE:<br/>Interview Evaluation -> Report Roadmap"]
+    SCREEN_AGENTS --> HM_REVIEW
+
+    HM_REVIEW --> DECISION["Decision flow:<br/>invite, schedule, complete, hire, reject, or revert"]
+
+    classDef agent fill:#e8f2ee,stroke:#2d6a55,stroke-width:2px,color:#12382d;
+    class RQA,EVAL_PIPE,RSA,CAND_PIPE,SCREEN_AGENTS agent;
+```
+
+### Candidate User Control Flow
+
+```mermaid
+flowchart TD
+    A["Candidate Home"] --> B{"Email verified?"}
+    B -->|No| B1["User must verify email before applying"]
+    B -->|Yes| C{"Required profile details complete?"}
+    C -->|No| C1["User completes missing fields:<br/>name, age, phone, address, origin, work experience, qualification, grades"]
+    C1 --> C
+    C -->|Yes| D["Jobs tab shows active positions"]
+    D --> E["User reviews title, department, location, window, and requirements"]
+    E --> F{"User chooses a job?"}
+    F -->|No| D
+    F -->|Yes| G["User clicks Apply"]
+    G --> H{"Already applied to this job?"}
+    H -->|Yes| H1["Application blocked as duplicate"]
+    H -->|No| I["AGENT: MATCHING AGENT<br/>scores fit for this exact job"]
+    I --> J["AGENT: INTERVIEW AGENT PHASE A<br/>creates job-specific questions"]
+    J --> K["User answers screening questions"]
+    K --> L{"User action"}
+    L -->|Save draft| M["Draft saved through PATCH /draft-answers"]
+    M --> K
+    L -->|Submit final| N{"Each answer at least 10 characters?"}
+    N -->|No| N1["User must improve short answers"]
+    N1 --> K
+    N -->|Yes| O["AGENT: INTERVIEW AGENT PHASE B<br/>evaluates submitted answers"]
+    O --> P["AGENT: REPORT AGENT<br/>creates feedback roadmap"]
+    P --> Q["User tracks score, feedback, roadmap, status, and notifications"]
+
+    classDef agent fill:#e8f2ee,stroke:#2d6a55,stroke-width:2px,color:#12382d;
+    class I,J,O,P agent;
+```
+
+### 1. Job Creation Flow
+
+1. Hiring manager enters title, department, address, active status, and application window.
+2. Requirement Agent asks adaptive follow-up questions.
+3. The manager reviews generated description, requirements, sourcing criteria, Boolean query, pillars, and behavioral signals.
+4. The backend validates the application window before saving the position.
+5. Saved jobs become available through `GET /jobs` and active jobs through `GET /jobs?active_only=true`.
+
+### 2. Candidate Signup Flow
+
+1. Candidate starts email verification.
+2. Backend creates a verification code and either sends it through SMTP or exposes it in prototype mode.
+3. Candidate verifies the pending email.
+4. Candidate submits name, password, and PDF resume.
+5. Backend extracts resume text, validates that the resume is readable, runs Resume Agent, saves the PDF, and creates the candidate account.
+6. If required fields are missing, the Candidate Portal guides the user through completion before application.
+
+### 3. Candidate Application Flow
+
+1. Candidate opens the Jobs page after email and profile checks pass.
+2. Frontend loads active jobs through `GET /jobs?active_only=true`.
+3. Candidate reviews the available positions and chooses one job to apply for.
+4. Backend checks the selected position exists, is open, and has not already been applied to by the same candidate.
+5. Bias Agent attaches fair-hiring metadata and neutralized profile data.
+6. Matching Agent produces a position-fit assessment for that selected job.
+7. Interview Agent generates screening questions for that selected job.
+8. Candidate can save draft answers or submit final answers.
+9. Interview Agent evaluates final answers and Report Agent creates an upskilling roadmap.
+10. Hiring manager reviews the result in the pipeline while the candidate tracks status and notifications.
+
+### 4. Sourcing Flow
+
+1. Hiring manager selects a position in LinkedIn Sourcing.
+2. For manual sourcing, the backend validates and normalizes a LinkedIn profile URL.
+3. For automatic sourcing, the backend streams progress through Server-Sent Events.
+4. If Apify is configured, the backend searches/scrapes live profile data.
+5. If Apify is not configured, the backend generates prototype candidates aligned to the job.
+6. Bias analysis, matching, interview question generation, and report generation run for each candidate.
+7. Candidates are saved as `staged` until the hiring manager sends an invitation.
+
+### 5. Hiring Manager Review Flow
+
+1. Hiring manager filters candidates by position and review state.
+2. The dashboard shows score contributors, match debate, screening feedback, prestige/bias controls, and candidate details.
+3. Hiring manager may invite, schedule interview, reject, mark completed, mark hired, or revert the latest status change.
+4. Notifications and optional SMTP emails are sent for major decisions.
+
+## Decision Logic
+
+```mermaid
+flowchart TD
+    A["Candidate or sourced profile enters pipeline"] --> B{"Source type"}
+    B -->|Candidate signup| C{"Email verified?"}
+    C -->|No| C_STOP["Stop: verify email first"]
+    C -->|Yes| D{"Valid readable PDF resume?"}
+    D -->|No| D_STOP["Stop: upload readable PDF"]
+    D -->|Yes| E["AGENT: RESUME AGENT"]
+
+    B -->|Manual or auto sourcing| F{"Live profile data available?"}
+    F -->|Yes| G["Parse live profile"]
+    F -->|No| H["Use prototype generated profile"]
+
+    E --> I1["AGENT: BIAS AGENT"]
+    I1 --> SELECT["Candidate browses active jobs"]
+    SELECT --> CHOICE{"Candidate selected a job?"}
+    CHOICE -->|No| WAIT["Stay on Jobs page"]
+    CHOICE -->|Yes| J{"Selected job exists and is open?"}
+    J -->|No| J_STOP["Stop: invalid or closed job"]
+    J -->|Yes| K{"Already applied to this job?"}
+    K -->|Yes| K_STOP["Stop: conflict response"]
+    K -->|No| L["AGENT: MATCHING AGENT"]
+
+    G --> I2["AGENT: BIAS AGENT"]
+    H --> I2
+    I2 --> SPOS{"Hiring manager selected sourcing position exists?"}
+    SPOS -->|No| SPOS_STOP["Stop: invalid sourcing position"]
+    SPOS -->|Yes| L
+    L --> M{"Bias scoring mode"}
+    M -->|blind_merit| N["Use fair score only"]
+    M -->|prestige_aware| O["Blend fair score with prestige score"]
+    N --> P["AGENT: INTERVIEW AGENT PHASE A"]
+    O --> P
+    P --> Q["Screening questions shown"]
+    Q --> R{"Answers submitted once and >= 10 chars?"}
+    R -->|No| R_STOP["Stop: ask for valid answers"]
+    R -->|Yes| S["AGENT: INTERVIEW AGENT PHASE B"]
+    S --> T["AGENT: REPORT AGENT"]
+    T --> U{"Screening score"}
+    U -->|80+| V["Recommendation: advance"]
+    U -->|62-79| W["Recommendation: hold"]
+    U -->|Below 62| X["Recommendation: reject"]
+
+    classDef agent fill:#e8f2ee,stroke:#2d6a55,stroke-width:2px,color:#12382d;
+    class E,I1,I2,L,P,S,T agent;
+```
+
+### Application Gate Logic
+
+| Decision | Condition | Result |
+| --- | --- | --- |
+| Email verification | Pending email code must match before signup | Candidate can create an account. |
+| Resume upload | File must be PDF, 10MB or smaller, and contain readable resume-like text | Resume Agent can process the profile. |
+| Position availability | Position must exist and be open for applications | Candidate can apply. |
+| Duplicate application | Candidate cannot apply twice to the same position | Backend returns a conflict response. |
+| Screening submission | Answers must be submitted once and each answer must be at least 10 characters | Interview Agent evaluates answers. |
+
+### Matching Score Logic
+
+The Matching Agent builds a score from role-specific evidence:
+
+```text
+overall_position_fit =
+  must_have_role_evidence * 45%
++ domain_and_position_context * 25%
++ success_and_working_style * 15%
++ trajectory_and_growth * 15%
+```
+
+The score is explainable. Each candidate includes:
+
+- `scores.technical`
+- `scores.domain`
+- `scores.culture`
+- `scores.trajectory_slope`
+- `scores.overall_position_fit`
+- `score_contributors`
+- `fit_breakdown`
+- `position_fit_summary`
+- `score_explanation`
+- `debate.talent_advocate_pros`
+- `debate.critical_recruiter_cons`
+
+### Bias And Reputation Logic
+
+404Hire separates merit scoring from reputation scoring.
+
+| Mode | What happens |
+| --- | --- |
+| `blind_merit` | School and employer reputation are classified for transparency but do not affect the final score. |
+| `prestige_aware` | The final score includes a configurable reputation component from 0% to 30%. |
+| `neutralize_prestige` | Candidate names and profile text can be shown with pedigree indicators replaced by neutral categories. |
+| `anonymized_blind_hiring` | Candidate identity can be hidden in hiring-manager views. |
+
+Prestige-aware formula:
+
+```text
+biased_score =
+  fair_score * (100 - prestige_weight) / 100
++ prestige_score * prestige_weight / 100
+```
+
+The Bias Agent detects indicators such as universities, employers, certifications, and elite programs. It also includes a small QS ranking map for demo comparison, including APU as a recognized university signal.
+
+### Fairness Audit Logic
+
+The fairness audit uses available recruitment outcomes and prestige signals. It does not infer protected classes.
+
+The audit checks:
+
+- Total candidate applications in scope.
+- Selection and rejection rates.
+- High-prestige versus lower-prestige selection rates.
+- Prestige selection gap.
+- Whether prestige-aware scoring is active.
+- Risk level: `low`, `medium`, `high`, or `insufficient_data`.
+
+### Screening Evaluation Logic
+
+The Interview Agent evaluates answers against the actual position, not generic interview quality.
+
+Screening score breakdown:
+
+| Dimension | Max |
+| --- | ---: |
+| Role requirement alignment | 35 |
+| Technical correctness and depth | 25 |
+| Evidence specificity | 20 |
+| Position impact | 10 |
+| Communication clarity | 10 |
+
+Recommendation logic:
+
+| Screening score | Verdict | Recommendation |
+| --- | --- | --- |
+| 80 or above | Strong fit | Advance |
+| 62 to 79 | Moderate fit | Hold |
+| Below 62 | Weak fit | Reject |
+
+### Candidate Status Logic
+
+Candidate applications can move through:
+
+```text
+profile -> staged -> invited -> applied -> screening -> completed -> interview_scheduled -> hired
+                                               |
+                                               v
+                                            rejected
+```
+
+Supported backend statuses:
+
+```text
+profile, staged, invited, applied, screening, completed, hired, inactive, rejected, interview_scheduled
+```
+
+Status changes keep a short history so the hiring manager can revert the latest change.
 
 ## System Architecture
 
 ```text
-Browser
+React/Vite frontend
   |
-  | React + Vite frontend
-  v
-src/app
-  |
-  | HTTP requests to VITE_API_URL
+  | VITE_API_URL
   v
 FastAPI backend
   |
   | /api/v1 routes
   v
-backend/app/routes
+Route layer
   |
-  | service orchestration
+  | orchestrates
   v
-backend/app/services
+Agent services, LinkedIn helpers, mailer, job-window validation, bias controls
   |
-  | agents, mailer, LinkedIn helpers, job windows
   v
-backend/data/recruiting_db.json
-backend/uploads/
+Local JSON database and upload folders
 ```
 
-### Frontend
+### Backend Runtime
 
-The frontend is a Vite React application. It uses React Router for portal routing, utility CSS classes for styling, Radix UI primitives for interaction controls, Lucide React for icons, Recharts for charts, and Motion for small UI transitions.
-
-### Backend
-
-The backend is a FastAPI application. It exposes REST routes under `/api/v1`, stores candidate and job data in a local JSON database, stores uploaded resumes on disk, and calls agent services for resume parsing, requirement intake, matching, interview evaluation, and reporting.
+- `backend/main.py` creates the FastAPI app.
+- Routes are registered under `/api/v1`.
+- Uploads are served from `/uploads`.
+- CORS is currently open for prototype deployment.
+- Local database initialization runs at startup.
 
 ## Tech Stack
 
 ### Frontend
 
-- React
+- React 18
 - TypeScript
-- Vite
-- Tailwind-style utility classes
-- Radix UI
-- Lucide React
+- Vite 6
+- Tailwind CSS 4 utility styling
+- Radix UI primitives
+- Lucide React icons
 - Recharts
 - Motion
+- React Big Calendar
+- Sonner toasts
 
 ### Backend
 
 - Python
 - FastAPI
 - Uvicorn
-- Pydantic
+- Pydantic and pydantic-settings
 - OpenAI-compatible chat completions client
 - pypdf
-- PyMuPDF and pdfminer fallbacks when available
-- Pillow, pytesseract, and RapidOCR when available
+- pdfminer.six
+- PyMuPDF
+- Pillow
+- pytesseract
+- RapidOCR
+- Playwright
+- Apify Client
+- SMTP email support
 
 ### Storage
 
-- Local JSON file: `backend/data/recruiting_db.json`
+- Local JSON database: `backend/data/recruiting_db.json`
 - Uploaded resumes: `backend/uploads/resumes/`
-- Extracted profile images: `backend/uploads/profile_pictures/`
+- Extracted profile pictures: `backend/uploads/profile_pictures/`
 
 ## Project Structure
 
@@ -181,41 +577,32 @@ The backend is a FastAPI application. It exposes REST routes under `/api/v1`, st
 |   |   |   `-- settings.py
 |   |   `-- services/
 |   |       |-- agents/
-|   |       |   |-- base_agent.py
-|   |       |   |-- requirement_agent.py
-|   |       |   |-- resume_agent.py
-|   |       |   |-- matching_agent.py
-|   |       |   |-- interview_agent.py
-|   |       |   `-- report_agent.py
+|   |       |-- bias_settings.py
 |   |       |-- job_windows.py
 |   |       |-- linkedin_profiles.py
 |   |       `-- mailer.py
+|   |-- data/
+|   |-- uploads/
 |   |-- main.py
-|   |-- requirements.txt
-|   `-- .env.example
+|   `-- requirements.txt
+|-- public/
 |-- src/
-|   |-- assets/
-|   |   `-- 404hire-logo.jpeg
 |   |-- app/
-|   |   |-- App.tsx
-|   |   `-- components/
-|   |       |-- BrandLogo.tsx
-|   |       |-- CandidatePortal.tsx
-|   |       |-- HiringManagerPortal.tsx
-|   |       |-- PortalSelector.tsx
-|   |       |-- candidate/
-|   |       `-- hiring-manager/
-|   |-- main.tsx
-|   `-- styles/
+|   |   |-- components/
+|   |   |   |-- candidate/
+|   |   |   `-- hiring-manager/
+|   |-- assets/
+|   |-- styles/
+|   `-- main.tsx
 |-- index.html
 |-- package.json
 |-- vite.config.ts
 `-- README.md
 ```
 
-## Prerequisites
+## Local Setup
 
-Install the following:
+### Prerequisites
 
 - Node.js 20 or newer
 - npm 10 or newer
@@ -227,7 +614,67 @@ Optional for scanned or image-only resumes:
 - Tesseract OCR executable in `PATH`
 - Python OCR dependencies from `backend/requirements.txt`
 
-Text-based PDF resumes work best. Image-only PDFs may require OCR or manual candidate profile completion.
+### Install Dependencies
+
+Install frontend dependencies:
+
+```powershell
+npm install
+```
+
+For a clean clone or CI install:
+
+```powershell
+npm ci
+```
+
+Install backend dependencies:
+
+```powershell
+python -m pip install -r backend\requirements.txt
+```
+
+If Playwright browser dependencies are needed for authenticated LinkedIn scraping:
+
+```powershell
+python -m playwright install
+```
+
+### Run Locally
+
+Start the backend:
+
+```powershell
+python -m uvicorn main:app --app-dir backend --host 0.0.0.0 --port 8000 --reload
+```
+
+Start the frontend:
+
+```powershell
+npm run dev
+```
+
+Open the Vite URL shown in the terminal, usually:
+
+```text
+http://localhost:5173/
+```
+
+Check backend health:
+
+```powershell
+Invoke-WebRequest http://localhost:8000/ -UseBasicParsing
+```
+
+Expected response:
+
+```json
+{
+  "status": "online",
+  "service": "Intelligent Recruiter Workspace API",
+  "version": "1.0.0"
+}
+```
 
 ## Environment Variables
 
@@ -248,8 +695,8 @@ DEBUG=True
 DATABASE_PATH=data/recruiting_db.json
 
 OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_BASE_URL=https://api.mor.org/api/v1
+OPENAI_MODEL=deepseek-v4-pro
 
 RESUME_AGENT_TEMP=0.1
 REQUIREMENT_AGENT_TEMP=0.2
@@ -260,90 +707,33 @@ REPORT_AGENT_TEMP=0.3
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your_email@gmail.com
-SMTP_PASSWORD=your_app_password
+SMTP_PASSWORD=your_app_specific_password
 
-# Apify Integration (optional - live LinkedIn scraping)
-APIFY_API_TOKEN=your_apify_token_here
+LINKEDIN_LI_AT_COOKIE=
+LINKEDIN_HEADLESS=True
+
+APIFY_API_TOKEN=
 APIFY_PROFILE_ACTOR_ID=curious_coder/linkedin-profile-scraper
 APIFY_SEARCH_ACTOR_ID=M2FMdjRVeF1HPGFcc
 APIFY_TIMEOUT_SECONDS=90
 ```
 
-> [!IMPORTANT]
-> **Apify Actor Approvals**: When using the optional live Apify LinkedIn scraper, some actors may require manual permission approvals in your Apify account upon first use. If the sourcing console displays a permission error with an approval URL, copy and open the link to grant permissions in your Apify Console.
+Do not commit real API keys, SMTP passwords, cookies, or personal secrets.
 
-Do not commit real API keys, SMTP passwords, or personal secrets.
+When using live Apify LinkedIn scraping, some actors may require manual approval in the Apify account on first use. If the sourcing console shows a permission error with an approval URL, open the URL in Apify Console and approve the actor permissions.
 
 ### Frontend
 
-Create `.env.local` in the project root:
+Create `.env.local` in the project root for local development:
 
 ```env
 VITE_API_URL=http://localhost:8000/api/v1
 ```
 
-## Installation
+For production on Vercel:
 
-This repository uses npm for the frontend. Use the committed `package-lock.json`; do not mix in pnpm or Yarn lockfiles.
-
-Install frontend dependencies:
-
-```powershell
-npm install
-```
-
-For a clean GitHub clone or CI install, you can also use:
-
-```powershell
-npm ci
-```
-
-Install backend dependencies:
-
-```powershell
-python -m pip install -r backend\requirements.txt
-```
-
-If browser automation dependencies are needed later:
-
-```powershell
-python -m playwright install
-```
-
-## Running Locally
-
-Run the backend in one terminal:
-
-```powershell
-python -m uvicorn main:app --app-dir backend --host 0.0.0.0 --port 8000 --reload
-```
-
-Run the frontend in another terminal:
-
-```powershell
-npm run dev
-```
-
-Open the Vite URL shown in the terminal, usually:
-
-```text
-http://localhost:5173/
-```
-
-Backend health check:
-
-```powershell
-Invoke-WebRequest http://localhost:8000/ -UseBasicParsing
-```
-
-Expected response:
-
-```json
-{
-  "status": "online",
-  "service": "Intelligent Recruiter Workspace API",
-  "version": "1.0.0"
-}
+```env
+VITE_API_URL=https://four04hire.onrender.com/api/v1
 ```
 
 ## Demo Accounts
@@ -360,300 +750,111 @@ hiring@company.com
 password
 ```
 
-Candidates are created through the Candidate Portal.
-
-## Key Workflows
-
-### Hiring Manager: Create A Position
-
-1. Sign in to the Hiring Manager Portal.
-2. Open Job Builder.
-3. Create a new position.
-4. Enter title, department, application window, and status.
-5. Continue to Requirement Agent intake.
-6. Answer adaptive follow-up questions.
-7. Review generated description and requirements.
-8. Publish the position.
-
-The Requirement Agent generates:
-
-- Candidate-facing job description
-- Requirements
-- Skill or domain pillars
-- Behavioral signals
-- Boolean sourcing query
-- Sourcing criteria used by matching and auto-source
-
-### Hiring Manager: Source Candidates
-
-1. Open LinkedIn Sourcing.
-2. Select a target position.
-3. Choose Automatic Agent Search or Manual URL Scrape.
-4. Review staged candidate analysis.
-5. Edit outreach email if needed.
-6. Send invitation.
-
-Manual LinkedIn URLs support common copied formats, including:
-
-- `linkedin.com/in/name`
-- `https://linkedin.com/in/name?utm_source=share`
-- `https://my.linkedin.com/in/name/`
-- old `/pub/name/...` links
-
-LinkedIn often blocks unauthenticated scraping, so 404Hire stores source warnings and asks hiring managers to verify profile details before outreach.
-
-Manual URL scrape now requires live scraper configuration through `APIFY_API_TOKEN` or `LINKEDIN_LI_AT_COOKIE`. If live profile data cannot be fetched, 404Hire will not stage a URL-only candidate. Use Automatic Agent Search for demo/prototype sourcing without live LinkedIn access.
-
-### Hiring Manager: Review Pipeline
-
-1. Open Candidate Pipeline.
-2. Scope the dashboard to all positions or a selected position.
-3. Review KPIs, charting, fit scores, and candidate rows.
-4. Open a candidate to inspect resume, profile details, match debate, and screening feedback.
-5. Mark screening, schedule interview, reject, complete, or hire.
-
-Candidate lists include pagination to keep large datasets usable.
-
-### Hiring Manager: Manage Candidate Accounts
-
-1. Open Candidate Accounts.
-2. Search by name or email.
-3. Filter by verification or password state.
-4. Verify/unverify email.
-5. Verify/pending profile.
-6. Reset password.
-7. Delete account if needed.
-
-This page is separate from the pipeline so account administration does not clutter position review.
-
-### Candidate: Create Profile
-
-1. Open Candidate Portal.
-2. Enter email.
-3. Verify the prototype code shown on the page.
-4. Create password.
-5. Upload a valid PDF resume.
-6. Review extracted profile details.
-7. Complete missing required fields.
-8. Apply to available positions.
-
-The candidate cannot continue profile creation until email verification is complete.
-
-### Candidate: Complete Screening
-
-1. Apply to an open position.
-2. Answer generated screening questions.
-3. Submit answers.
-4. Review feedback and roadmap.
-
-The backend evaluates answers against the selected position, not against generic interview criteria.
-
-## AI Agent Design
-
-### Requirement Agent
-
-File:
-
-```text
-backend/app/services/agents/requirement_agent.py
-```
-
-Purpose:
-
-- Conduct adaptive hiring-manager intake.
-- Ask one relevant question at a time.
-- Avoid fixed scripts and repeated questions.
-- Generate job requirements that match the actual role family.
-- Avoid inventing technical requirements for non-technical roles.
-
-### Resume Agent
-
-File:
-
-```text
-backend/app/services/agents/resume_agent.py
-```
-
-Purpose:
-
-- Convert resume text into structured candidate profile data.
-- Extract name, email, phone, location, education, work experience, skills, awards, and qualifications.
-- Fall back to rule-based parsing when LLM access is unavailable.
-- Support prestige neutralization when requested.
-
-### Matching Agent
-
-File:
-
-```text
-backend/app/services/agents/matching_agent.py
-```
-
-Purpose:
-
-- Compare candidate profile against the selected job.
-- Score technical/domain evidence, success signals, culture, and trajectory.
-- Produce Talent Advocate and Critical Recruiter perspectives.
-
-### Interview Agent
-
-File:
-
-```text
-backend/app/services/agents/interview_agent.py
-```
-
-Purpose:
-
-- Generate role-specific screening questions.
-- Evaluate candidate answers.
-- Provide score breakdowns.
-- Produce detailed hiring-manager feedback, including evidence, risks, opinion, and suggested follow-up probes.
-
-### Report Agent
-
-File:
-
-```text
-backend/app/services/agents/report_agent.py
-```
-
-Purpose:
-
-- Generate sourcing pitch.
-- Generate outreach email.
-- Generate candidate upskilling roadmap.
+Candidate accounts are created through the Candidate Portal.
 
 ## API Reference
 
-Base URL:
+Local API base URL:
 
 ```text
 http://localhost:8000/api/v1
 ```
 
+Production API base URL:
+
+```text
+https://four04hire.onrender.com/api/v1
+```
+
 ### Jobs
 
 ```text
-GET /jobs
-GET /jobs?active_only=true
-POST /jobs/intake
-POST /jobs
-PATCH /jobs/{job_id}
+GET    /jobs
+GET    /jobs?active_only=true
+POST   /jobs/intake
+POST   /jobs
+PATCH  /jobs/{job_id}
 DELETE /jobs/{job_id}
 ```
 
-Example intake body:
+### Settings
+
+```text
+POST  /settings/smtp/verify
+GET   /settings/bias-controls
+PATCH /settings/bias-controls
+```
+
+### Candidates And Applications
+
+```text
+GET    /candidates
+GET    /candidates?neutralize=true
+GET    /candidates/fairness-audit
+GET    /candidates/fairness-audit?position_id={position_id}
+GET    /candidates/lookup?email={email}
+POST   /candidates/start-email-verification
+POST   /candidates/verify-pending-email
+POST   /candidates/signup
+POST   /candidates/login
+POST   /candidates/{email}/password
+POST   /candidates/{email}/reset-password
+POST   /candidates/{email}/verify-email
+POST   /candidates/{email}/resend-verification
+PATCH  /candidates/{email}/profile
+POST   /candidates/{email}/profile-assistant
+POST   /candidates/{email}/profile-picture
+POST   /candidates/{email}/resume
+POST   /candidates/{email}/apply-position
+PATCH  /candidates/{email}/draft-answers
+PATCH  /candidates/{email}/notifications/read
+PATCH  /candidates/{email}/status
+POST   /candidates/{email}/revert-status
+DELETE /candidates/{email}
+GET    /candidates/{email}/resume
+POST   /candidates/apply
+POST   /candidates/{email}/sandbox
+POST   /candidates/scrape
+POST   /candidates/auto-source
+POST   /candidates/mock-bias-comparison
+POST   /candidates/invite
+POST   /candidates/{email}/reject
+POST   /candidates/{email}/schedule-interview
+GET    /candidates/interview-calendar
+PATCH  /candidates/{email}/outreach-notes
+```
+
+### Example Job Intake Body
 
 ```json
 {
   "title": "Bakery Assistant",
   "department": "Kitchen",
   "chat_messages": [
-    { "role": "agent", "content": "What products or duties will this person handle most often?" },
-    { "role": "manager", "content": "Bread preparation, oven timing, food hygiene, and early shift prep." }
+    {
+      "role": "agent",
+      "content": "What products or duties will this person handle most often?"
+    },
+    {
+      "role": "manager",
+      "content": "Bread preparation, oven timing, food hygiene, and early shift prep."
+    }
   ]
 }
 ```
 
-### Candidates
-
-```text
-GET /candidates
-GET /candidates?neutralize=true
-GET /candidates/lookup?email={email}
-POST /candidates/start-email-verification
-POST /candidates/verify-pending-email
-POST /candidates/signup
-POST /candidates/login
-POST /candidates/{email}/password
-POST /candidates/{email}/reset-password
-POST /candidates/{email}/verify-email
-POST /candidates/{email}/resend-verification
-PATCH /candidates/{email}/profile
-PATCH /candidates/{email}/account
-POST /candidates/{email}/apply-position
-POST /candidates/{email}/sandbox
-GET /candidates/{email}/resume
-POST /candidates/scrape
-POST /candidates/auto-source
-POST /candidates/invite
-PATCH /candidates/{email}/status
-POST /candidates/{email}/reject
-POST /candidates/{email}/schedule-interview
-GET /candidates/interview-calendar
-DELETE /candidates/{email}
-```
-
-### Candidate Email Verification
-
-Start verification:
-
-```text
-POST /candidates/start-email-verification
-```
+### Example Bias Control Update
 
 ```json
 {
-  "email": "candidate@example.com"
+  "neutralize_prestige": true,
+  "anonymized_blind_hiring": false,
+  "scoring_mode": "blind_merit",
+  "prestige_weight": 15
 }
 ```
 
-Verify pending email:
-
-```text
-POST /candidates/verify-pending-email
-```
-
-```json
-{
-  "email": "candidate@example.com",
-  "code": "123456"
-}
-```
-
-### Candidate Signup
-
-```text
-POST /candidates/signup
-```
-
-Form fields:
-
-- `name`
-- `email`
-- `password`
-- `resume`
-
-Rules:
-
-- Email must already be verified through pending verification.
-- Resume must be a valid PDF.
-- Resume text must look like a readable resume.
-- Existing candidate accounts are rejected with a conflict response.
-
-### LinkedIn Sourcing
-
-Manual URL scrape:
-
-```text
-POST /candidates/scrape
-```
-
-```json
-{
-  "position_id": 1,
-  "linkedin_url": "https://www.linkedin.com/in/example-profile"
-}
-```
-
-Manual scrape requires live LinkedIn profile data from Apify or an authenticated LinkedIn scraper session. Without `APIFY_API_TOKEN` or `LINKEDIN_LI_AT_COOKIE`, the API returns an error and does not create a fallback candidate.
-
-Automatic prototype sourcing:
-
-```text
-POST /candidates/auto-source
-```
+### Example Auto Source Body
 
 ```json
 {
@@ -662,83 +863,34 @@ POST /candidates/auto-source
 }
 ```
 
-Auto-source profiles are generated from the selected job context and calibrated for prototype demonstration. They are not real LinkedIn profiles.
+## Data And Storage
 
-## Data And Upload Storage
+Local development storage:
 
-The local database is:
-
-```text
-backend/data/recruiting_db.json
-```
-
-Uploaded resumes are stored in:
-
-```text
-backend/uploads/resumes/
-```
-
-Profile pictures extracted from PDFs are stored in:
-
-```text
-backend/uploads/profile_pictures/
-```
+- Database: `backend/data/recruiting_db.json`
+- Uploaded resumes: `backend/uploads/resumes/`
+- Extracted profile pictures: `backend/uploads/profile_pictures/`
 
 This storage model is easy to inspect during development, but it is not intended for production-scale use.
 
-## Validation And Safety Rules
+## Validation And Safety
 
-404Hire includes several validation controls:
+404Hire includes:
 
 - Email format validation.
-- Prototype email verification before candidate profile creation.
-- Password minimum length enforcement.
+- Pending email verification before candidate signup.
+- Verification cooldowns.
+- Password hashing with SHA-256.
 - PDF-only resume upload.
 - Resume file size limit.
-- Resume text validity check before Resume Agent processing.
+- Resume readability checks before Resume Agent processing.
 - Duplicate candidate account prevention.
 - Duplicate application prevention per position.
-- Required candidate profile fields before applying.
-- Agent fallback warnings shown to users when fallback logic is used.
-- Hiring-manager action lock to prevent accidental double-click status changes.
-
-## Useful Commands
-
-Start backend:
-
-```powershell
-python -m uvicorn main:app --app-dir backend --host 0.0.0.0 --port 8000 --reload
-```
-
-Start frontend:
-
-```powershell
-npm run dev
-```
-
-Build frontend:
-
-```powershell
-npm run build
-```
-
-Compile-check backend:
-
-```powershell
-python -m compileall backend\app
-```
-
-Check backend health:
-
-```powershell
-Invoke-WebRequest http://localhost:8000/ -UseBasicParsing
-```
-
-Install backend packages:
-
-```powershell
-python -m pip install -r backend\requirements.txt
-```
+- Position application-window validation.
+- Required profile completion flow.
+- Agent fallback warnings when fallback logic is used.
+- Hiring-manager status history and revert support.
+- Fair-hiring views that avoid protected-class inference.
 
 ## Troubleshooting
 
@@ -764,6 +916,12 @@ Confirm `.env.local` contains:
 VITE_API_URL=http://localhost:8000/api/v1
 ```
 
+For production, Vercel should use:
+
+```env
+VITE_API_URL=https://four04hire.onrender.com/api/v1
+```
+
 ### `npm install` fails
 
 Use Node.js 20 or newer and npm 10 or newer:
@@ -779,7 +937,7 @@ Then reinstall from the npm lockfile:
 npm install
 ```
 
-If the local dependency folder came from an older install attempt, remove `node_modules` and run `npm install` again. The project is intentionally npm-only, so avoid generating `pnpm-lock.yaml` or `yarn.lock`.
+The project is npm-only. Avoid generating `pnpm-lock.yaml` or `yarn.lock`.
 
 ### Resume upload fails validation
 
@@ -792,48 +950,41 @@ Recommended fixes:
 - Install Tesseract OCR if scanned resumes must be supported.
 - Confirm the file is below the upload limit.
 
-### Candidate cannot apply
+### LinkedIn sourcing is unavailable
 
-Check:
+Manual LinkedIn scraping requires live profile data through Apify or an authenticated LinkedIn scraper session. Configure:
 
-- Email is verified.
-- Required profile fields are complete.
-- The position is open for applications.
-- The candidate has not already applied to the same position.
+```env
+APIFY_API_TOKEN=your_apify_token
+```
 
-### LinkedIn profile URL is rejected
+or:
 
-Use a profile URL containing `/in/username` or `/pub/username`. The backend normalizes common copied formats, but it does not accept company pages, job pages, feed posts, or search result URLs.
+```env
+LINKEDIN_LI_AT_COOKIE=your_linkedin_cookie
+```
 
-### Manual LinkedIn scrape says live data is unavailable
-
-Configure `APIFY_API_TOKEN` for Apify live scraping or `LINKEDIN_LI_AT_COOKIE` for authenticated LinkedIn scraping. Manual URL scrape intentionally does not create URL-only demo candidates; use Automatic Agent Search when you need prototype candidates without live LinkedIn access.
-
-If the error says the Apify actor requires full account access, open the actor in your Apify Console and approve its permissions before trying manual scrape again. This approval is controlled by Apify and cannot be bypassed from the app.
-
-### Automatic sourcing returns prototype profiles
-
-This is expected. Auto-source is a prototype search simulation. It builds sample profiles from the selected job requirements so hiring managers can test sourcing, scoring, outreach, and invitation workflows without live LinkedIn access.
+Without live credentials, Automatic Agent Search falls back to prototype candidate generation.
 
 ### Large Vite chunk warning
 
-`npm run build` may warn that a JavaScript chunk is larger than 500 kB. This is a build optimization warning, not a build failure. Route-level code splitting can reduce the warning later.
+`npm run build` may warn that a JavaScript chunk is larger than 500 kB. This is a build optimization warning, not a build failure.
 
-## Production Readiness Notes
+## Production Notes
 
-Before production, replace or improve the following:
+Before a real production release, improve the following:
 
 - Replace demo hiring-manager login with real authentication.
-- Move JSON storage to PostgreSQL, MySQL, or another database.
+- Move JSON storage to PostgreSQL, MySQL, or another production database.
 - Store resumes in managed object storage.
 - Add signed URLs or authorization checks for resume downloads.
 - Restrict CORS origins in `backend/main.py`.
 - Remove prototype verification-code display.
 - Configure reliable SMTP or transactional email.
+- Replace SHA-256 password hashing with a dedicated password hashing algorithm such as bcrypt or Argon2.
 - Add audit logs for candidate status changes.
 - Add route-level automated tests.
 - Add rate limits for signup, login, and email verification.
-- Add production OCR or document parsing service.
 - Add monitoring and structured logging.
 
 ## Verification Checklist
@@ -842,20 +993,16 @@ After setup, verify:
 
 - Backend health check returns online status.
 - Frontend opens at the Vite dev URL.
-- 404Hire logo appears on the landing page and portal login screens.
 - Hiring manager can sign in.
-- Requirement Agent asks an adaptive question.
-- Position can be created and published.
-- Automatic sourcing returns candidates with position-relevant scores.
-- LinkedIn URL scrape accepts common profile URL formats.
+- Requirement Agent asks adaptive intake questions.
+- A position can be created and published.
+- Automatic sourcing returns candidate profiles.
 - Candidate can verify email before signup.
-- Candidate can upload a valid resume.
+- Candidate can upload a valid PDF resume.
 - Candidate can complete missing profile details.
 - Candidate can apply to an open position.
 - Candidate can submit screening answers.
-- Hiring manager can review detailed AI feedback.
-- Candidate accounts page supports account administration.
-
-## License
-
-This project is intended for coursework, demos, and prototype use. Add a formal license before public release.
+- Hiring manager can review match score, debate, screening feedback, and roadmap.
+- Bias controls can switch between blind merit and prestige-aware scoring.
+- Fairness audit returns a score and risk level after candidate data exists.
+- Interview scheduling and rejection flows update candidate notifications.
