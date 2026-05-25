@@ -753,10 +753,12 @@ The backend is configured for Railway with `backend/railway.json`. No Dockerfile
 1. Create a new Railway project from this GitHub repo.
 2. Set the Railway service root directory to `/backend`.
 3. Set the Railway config file path to `/backend/railway.json`.
-4. Add the backend environment variables from `backend/.env.example` in Railway Variables.
-5. Set `DEBUG=False` for production.
-6. Deploy the service.
-7. Copy the Railway public domain and set the Vercel frontend variable to:
+4. Leave Railway's custom Build Command empty. Do not paste local setup commands such as `python -m pip install -r backend\requirements.txt`.
+5. Leave Railway's custom Install Command empty unless you have a specific reason to override Railpack.
+6. Add the backend environment variables from `backend/.env.example` in Railway Variables.
+7. Set `DEBUG=False` for production.
+8. Deploy the service.
+9. Copy the Railway public domain and set the Vercel frontend variable to:
 
 ```env
 VITE_API_URL=https://<your-railway-service>.up.railway.app/api/v1
@@ -765,7 +767,7 @@ VITE_API_URL=https://<your-railway-service>.up.railway.app/api/v1
 Railway uses this start command:
 
 ```bash
-python -m uvicorn main:app --host 0.0.0.0 --port $PORT
+uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
 ## Demo Accounts
