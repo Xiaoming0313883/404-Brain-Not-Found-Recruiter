@@ -257,7 +257,16 @@ SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your_email@gmail.com
 SMTP_PASSWORD=your_app_password
+
+# Apify Integration (optional - live LinkedIn scraping)
+APIFY_API_TOKEN=your_apify_token_here
+APIFY_PROFILE_ACTOR_ID=curious_coder/linkedin-profile-scraper
+APIFY_SEARCH_ACTOR_ID=M2FMdjRVeF1HPGFcc
+APIFY_TIMEOUT_SECONDS=90
 ```
+
+> [!IMPORTANT]
+> **Apify Actor Approvals**: When using the optional live Apify LinkedIn scraper, some actors may require manual permission approvals in your Apify account upon first use. If the sourcing console displays a permission error with an approval URL, copy and open the link to grant permissions in your Apify Console.
 
 Do not commit real API keys, SMTP passwords, or personal secrets.
 

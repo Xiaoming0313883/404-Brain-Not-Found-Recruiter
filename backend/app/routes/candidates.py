@@ -9,7 +9,7 @@ import base64
 import secrets
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
 from pypdf import PdfReader
@@ -18,7 +18,7 @@ from ..database import load_db, save_db
 from ..config import settings
 from ..services.agents.base_agent import get_openai_client
 from ..services.job_windows import is_open_for_applications
-from ..services.linkedin_profiles import build_fast_match_results, build_fast_outreach, scrape_linkedin_profile
+from ..services.linkedin_profiles import build_fast_match_results, build_fast_outreach, scrape_linkedin_profile, parse_apify_profile, _get_run_field
 from ..services.bias_settings import get_bias_controls
 from ..services.agents.bias_agent import (
     analyze_prestige_indicators,
@@ -1768,53 +1768,262 @@ def auto_source_candidates(payload: AutoSourcePayload):
         raise HTTPException(status_code=404, detail="Selected position not found.")
     controls = get_bias_controls(db)
 
-    generated = []
-    sample_profiles = build_auto_source_profiles(job, max(1, min(payload.count, 10)))
+    def event_generator():
+        import json
+        generated = []
+        
+        # Check if Apify API Token is configured for live sourcing
+        if settings.APIFY_API_TOKEN.strip():
+            try:
+                from apify_client import ApifyClient
+                from apify_client.errors import ApifyApiError
+                client = ApifyClient(settings.APIFY_API_TOKEN.strip())
+                
+                yield f"data: {json.dumps({'log': 'Initializing Apify search client...'})}\n\n"
+                
+                is_combined_actor = (
+                    settings.APIFY_SEARCH_ACTOR_ID == "M2FMdjRVeF1HPGFcc" or 
+                    "profile-search" in settings.APIFY_SEARCH_ACTOR_ID or
+                    "harvestapi" in settings.APIFY_SEARCH_ACTOR_ID
+                )
+                
+                if is_combined_actor:
+                    yield f"data: {json.dumps({'log': 'Starting combined search and scrape actor (M2FMdjRVeF1HPGFcc)...'})}\n\n"
+                    boolean_query = job.get("boolean_queries") or f'("{job.get("title")}")'
+                    search_input = {
+                        "profileScraperMode": "Full",
+                        "searchQuery": boolean_query,
+                        "maxItems": payload.count,
+                    }
+                    if settings.LINKEDIN_LI_AT_COOKIE.strip():
+                        search_input["cookies"] = [{"name": "li_at", "value": settings.LINKEDIN_LI_AT_COOKIE.strip()}]
+                        
+                    search_run = client.actor(settings.APIFY_SEARCH_ACTOR_ID).call(
+                        run_input=search_input,
+                        wait_duration=timedelta(seconds=settings.APIFY_TIMEOUT_SECONDS)
+                    )
+                    
+                    if not search_run:
+                        yield f"data: {json.dumps({'log': 'ERROR: Apify search run failed to start.'})}\n\n"
+                        return
+                        
+                    status = _get_run_field(search_run, "status", "status")
+                    if status != "SUCCEEDED":
+                        yield f"data: {json.dumps({'log': f'ERROR: Apify search run finished with status: {status}'})}\n\n"
+                        return
+                        
+                    dataset_id = _get_run_field(search_run, "default_dataset_id", "defaultDatasetId")
+                    yield f"data: {json.dumps({'log': f'Search actor completed successfully. Fetching dataset: {dataset_id}...'})}\n\n"
+                    scraped_items = list(client.dataset(dataset_id).iterate_items())
+                    profile_urls = [item.get("linkedinUrl") or item.get("url") for item in scraped_items if item.get("linkedinUrl") or item.get("url")]
+                else:
+                    yield f"data: {json.dumps({'log': 'Starting Apify talent search actor...'})}\n\n"
+                    boolean_query = job.get("boolean_queries") or f'("{job.get("title")}")'
+                    search_input = {
+                        "query": boolean_query,
+                        "queries": [boolean_query],
+                        "limit": payload.count,
+                        "maxItems": payload.count,
+                        "count": payload.count,
+                    }
+                    if settings.LINKEDIN_LI_AT_COOKIE.strip():
+                        search_input["cookies"] = [{"name": "li_at", "value": settings.LINKEDIN_LI_AT_COOKIE.strip()}]
+                        
+                    search_run = client.actor(settings.APIFY_SEARCH_ACTOR_ID).call(
+                        run_input=search_input,
+                        wait_duration=timedelta(seconds=settings.APIFY_TIMEOUT_SECONDS)
+                    )
+                    
+                    if not search_run:
+                        yield f"data: {json.dumps({'log': 'ERROR: Apify search run failed to start.'})}\n\n"
+                        return
+                        
+                    status = _get_run_field(search_run, "status", "status")
+                    if status != "SUCCEEDED":
+                        yield f"data: {json.dumps({'log': f'ERROR: Apify search run finished with status: {status}'})}\n\n"
+                        return
+                        
+                    dataset_id = _get_run_field(search_run, "default_dataset_id", "defaultDatasetId")
+                    search_items = list(client.dataset(dataset_id).iterate_items())
+                    profile_urls = []
+                    for item in search_items:
+                        url = item.get("url") or item.get("profileUrl") or item.get("link") or item.get("profileUrlLink") or item.get("profile_url")
+                        if url:
+                            profile_urls.append(url)
+                            if len(profile_urls) >= payload.count:
+                                break
+                                
+                    if not profile_urls:
+                        yield f"data: {json.dumps({'log': 'ERROR: LinkedIn search did not return any candidate profile URLs.'})}\n\n"
+                        return
+                        
+                    yield f"data: {json.dumps({'log': f'Search finished. Found {len(profile_urls)} profile URLs. Starting profile scraper Actor...'})}\n\n"
+                    
+                    scrape_input = {
+                        "profileUrls": profile_urls,
+                        "urls": profile_urls
+                    }
+                    if settings.LINKEDIN_LI_AT_COOKIE.strip():
+                        scrape_input["cookies"] = [{"name": "li_at", "value": settings.LINKEDIN_LI_AT_COOKIE.strip()}]
+                        
+                    scrape_run = client.actor(settings.APIFY_PROFILE_ACTOR_ID).call(
+                        run_input=scrape_input,
+                        wait_duration=timedelta(seconds=settings.APIFY_TIMEOUT_SECONDS)
+                    )
+                    
+                    if not scrape_run:
+                        yield f"data: {json.dumps({'log': 'ERROR: Apify profile scraper run failed to start.'})}\n\n"
+                        return
+                        
+                    status = _get_run_field(scrape_run, "status", "status")
+                    if status != "SUCCEEDED":
+                        yield f"data: {json.dumps({'log': f'ERROR: Apify profile scraper run finished with status: {status}'})}\n\n"
+                        return
+                        
+                    scrape_dataset_id = _get_run_field(scrape_run, "default_dataset_id", "defaultDatasetId")
+                    scraped_items = list(client.dataset(scrape_dataset_id).iterate_items())
+                
+                yield f"data: {json.dumps({'log': f'Scraped {len(scraped_items)} profile items. Invoking AI agent evaluation pipeline...'})}\n\n"
+                
+                # 3. Parse and run the complete AI agent evaluation pipeline for each profile
+                for index, item in enumerate(scraped_items):
+                    url = item.get("linkedinUrl") or item.get("url") or (profile_urls[index] if index < len(profile_urls) else "")
+                    profile_data = parse_apify_profile(item, url)
+                    candidate_name = profile_data["name"]
+                    candidate_email = profile_data["email"]
+                    
+                    yield f"data: {json.dumps({'log': f'Evaluating candidate: {candidate_name} ({candidate_email})...'})}\n\n"
+                    
+                    # Check for existing candidates to avoid duplicates
+                    if candidate_email in db.get("candidates", {}):
+                        yield f"data: {json.dumps({'log': f'Candidate {candidate_name} already exists in DB. Skipping.'})}\n\n"
+                        continue
+                        
+                    bias_artifacts = build_candidate_bias_artifacts(profile_data)
+                    
+                    yield f"data: {json.dumps({'log': 'Invoking Matching Agent committee debate...' })}\n\n"
+                    try:
+                        match_results = run_matching_agent(job, profile_data, controls, bias_artifacts["bias_analysis"])
+                    except Exception as e:
+                        yield f"data: {json.dumps({'log': f'Matching Agent warning: {e}. Falling back to deterministic fit.'})}\n\n"
+                        match_results = build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
+                        
+                    yield f"data: {json.dumps({'log': 'Invoking Candidate Interview Agent (Phase A)...' })}\n\n"
+                    try:
+                        custom_questions = run_interview_agent_phase_a(profile_data, match_results, job)
+                    except Exception as e:
+                        yield f"data: {json.dumps({'log': f'Interview Agent warning: {e}. Falling back to deterministic questions.'})}\n\n"
+                        title = job.get("title", "this position")
+                        requirements = job.get("requirements", [])
+                        primary_requirement = requirements[0] if requirements else "the core responsibilities"
+                        custom_questions = [
+                            f"Describe a specific example that shows your experience with {primary_requirement} for the {title} role.",
+                            f"What part of the {title} role best matches your recent work, and what evidence can you share?",
+                            f"What gap would you need to close first to succeed in this {title} position?"
+                        ]
+                        
+                    yield f"data: {json.dumps({'log': 'Invoking Report Agent (Outreach Pitch)...' })}\n\n"
+                    try:
+                        report_data = run_report_agent(profile_data, match_results, job)
+                        sourcing_pitch = report_data.get("sourcing_pitch", "")
+                        outreach_email = report_data.get("outreach_email", "")
+                    except Exception as e:
+                        yield f"data: {json.dumps({'log': f'Report Agent warning: {e}. Falling back to outreach templates.'})}\n\n"
+                        report_data = build_fast_outreach(profile_data, job)
+                        sourcing_pitch = report_data["sourcing_pitch"]
+                        outreach_email = report_data["outreach_email"]
+                        
+                    staged_candidate = {
+                        "name": candidate_name,
+                        "email": candidate_email,
+                        "status": "staged",
+                        "position_id": payload.position_id,
+                        "is_sourced": True,
+                        "source_type": "linkedin",
+                        "source_method": "apify_auto_source",
+                        "linkedin_url": profile_data.get("source_url") or f"https://www.linkedin.com/in/{candidate_name.lower().replace(' ', '-')}",
+                        "profile_data": profile_data,
+                        "bias_analysis": bias_artifacts["bias_analysis"],
+                        "neutralized_profile_data": bias_artifacts["neutralized_profile_data"],
+                        "sourcing_pitch": sourcing_pitch,
+                        "outreach_email": outreach_email,
+                        "match_results": match_results,
+                        "custom_questions": custom_questions,
+                        "answers": [],
+                        "evaluation": {},
+                        "notifications": [],
+                        "outreach_history": []
+                    }
+                    db.setdefault("candidates", {})[candidate_email] = staged_candidate
+                    generated.append(serialize_candidate(staged_candidate, candidate_email))
+                    yield f"data: {json.dumps({'log': f'Successfully evaluated and staged {candidate_name}!'})}\n\n"
+                    
+            except ApifyApiError as e:
+                approval_msg = ""
+                if e.data and isinstance(e.data, dict) and e.data.get("approvalUrl"):
+                    approval_msg = f" Please approve the actor permissions in your Apify Console: {e.data['approvalUrl']}"
+                yield f"data: {json.dumps({'log': f'ERROR: Apify API error: {e.message} (status: {e.status_code}).{approval_msg}'})}\n\n"
+                return
+            except Exception as e:
+                yield f"data: {json.dumps({'log': f'ERROR: Sourcing failed: {str(e)}'})}\n\n"
+                return
+                
+        else:
+            # Fall back to prototype auto-sourcing
+            yield f"data: {json.dumps({'log': 'Sourcing live Apify token is not configured. Falling back to prototype simulation...' })}\n\n"
+            sample_profiles = build_auto_source_profiles(job, max(1, min(payload.count, 10)))
 
-    for index, profile_data in enumerate(sample_profiles):
-        candidate_email = profile_data["email"]
-        bias_artifacts = build_candidate_bias_artifacts(profile_data, use_llm=False)
-        match_results = calibrate_auto_source_match(
-            build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"]),
-            profile_data,
-            job,
-            index
-        )
-        custom_questions = [
-            f"Describe your most relevant experience for the {job.get('title', 'selected')} role.",
-            f"What evidence shows you can meet the main requirements for {job.get('title', 'this position')}?",
-            "What gap would you want to close before starting this role?"
-        ]
-        report_data = build_fast_outreach(profile_data, job)
-        sourcing_pitch = report_data["sourcing_pitch"]
-        outreach_email = report_data["outreach_email"]
+            for index, profile_data in enumerate(sample_profiles):
+                candidate_email = profile_data["email"]
+                candidate_name = profile_data["name"]
+                
+                yield f"data: {json.dumps({'log': f'Simulating evaluation for prototype candidate: {candidate_name}...'})}\n\n"
+                bias_artifacts = build_candidate_bias_artifacts(profile_data, use_llm=False)
+                match_results = calibrate_auto_source_match(
+                    build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"]),
+                    profile_data,
+                    job,
+                    index
+                )
+                custom_questions = [
+                    f"Describe your most relevant experience for the {job.get('title', 'selected')} role.",
+                    f"What evidence shows you can meet the main requirements for {job.get('title', 'this position')}?",
+                    "What gap would you want to close before starting this role?"
+                ]
+                report_data = build_fast_outreach(profile_data, job)
+                sourcing_pitch = report_data["sourcing_pitch"]
+                outreach_email = report_data["outreach_email"]
 
-        candidate_record = {
-            "name": profile_data["name"],
-            "email": candidate_email,
-            "status": "staged",
-            "position_id": payload.position_id,
-            "is_sourced": True,
-            "source_type": "linkedin",
-            "source_method": "prototype_auto_source",
-            "linkedin_url": f"https://www.linkedin.com/in/{profile_data['name'].lower().replace(' ', '-')}",
-            "profile_data": profile_data,
-            "bias_analysis": bias_artifacts["bias_analysis"],
-            "neutralized_profile_data": bias_artifacts["neutralized_profile_data"],
-            "sourcing_pitch": sourcing_pitch,
-            "outreach_email": outreach_email,
-            "match_results": match_results,
-            "custom_questions": custom_questions,
-            "answers": [],
-            "evaluation": {},
-            "notifications": [],
-            "outreach_history": []
-        }
-        db.setdefault("candidates", {})[candidate_email] = candidate_record
-        generated.append(serialize_candidate(candidate_record, candidate_email))
+                candidate_record = {
+                    "name": candidate_name,
+                    "email": candidate_email,
+                    "status": "staged",
+                    "position_id": payload.position_id,
+                    "is_sourced": True,
+                    "source_type": "linkedin",
+                    "source_method": "prototype_auto_source",
+                    "linkedin_url": f"https://www.linkedin.com/in/{profile_data['name'].lower().replace(' ', '-')}",
+                    "profile_data": profile_data,
+                    "bias_analysis": bias_artifacts["bias_analysis"],
+                    "neutralized_profile_data": bias_artifacts["neutralized_profile_data"],
+                    "sourcing_pitch": sourcing_pitch,
+                    "outreach_email": outreach_email,
+                    "match_results": match_results,
+                    "custom_questions": custom_questions,
+                    "answers": [],
+                    "evaluation": {},
+                    "notifications": [],
+                    "outreach_history": []
+                }
+                db.setdefault("candidates", {})[candidate_email] = candidate_record
+                generated.append(serialize_candidate(candidate_record, candidate_email))
+                yield f"data: {json.dumps({'log': f'Staged prototype candidate {candidate_name}'})}\n\n"
+                
+        # Save DB and yield final results
+        save_db(db)
+        yield f"data: {json.dumps({'result': generated})}\n\n"
 
-    save_db(db)
-    return generated
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @router.post("/mock-bias-comparison")
 def add_mock_bias_comparison_candidates(payload: MockBiasComparisonPayload):

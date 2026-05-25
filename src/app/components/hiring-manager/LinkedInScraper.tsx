@@ -60,19 +60,6 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
     setErrorMessage('');
 
     try {
-      const logs = [
-        'Agent reading active position requirements...',
-        'Generating prototype search strategy...',
-        'Scanning simulated LinkedIn talent pool...',
-        'Ranking candidates by match fit and trajectory...',
-        'Drafting outreach email for top candidate...'
-      ];
-
-      for (const log of logs) {
-        setProcessingLogs(prev => [...prev, log]);
-        await new Promise(resolve => setTimeout(resolve, 350));
-      }
-
       const response = await fetch(`${API_BASE_URL}/candidates/auto-source`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -80,24 +67,94 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.detail || 'Automatic sourcing failed.');
       }
 
-      const data = await response.json();
-      const mapped = data.map(mapCandidate);
-      setStagedCandidates(mapped);
-      
-      const drafts: Record<string, string> = {};
-      mapped.forEach((c: any) => {
-        drafts[c.email] = c.recruitmentEmail || '';
-      });
-      setEmailDrafts(drafts);
-      setExpandedIndices({ 0: true });
+      if (!response.body) {
+        throw new Error('Response body is null.');
+      }
 
-      setProcessingLogs(prev => [...prev, `Auto-source found ${data.length} candidate profiles.`]);
-      toast.success(`Auto-source staged ${data.length} candidate profiles. Invitations were not sent.`);
-      data.forEach((candidate: any, index: number) => onAddCandidate({ ...mapCandidate(candidate), id: candidates.length + index + 1 } as ScrapedCandidate));
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        // Keep the last partial line in the buffer
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine) continue;
+
+          if (trimmedLine.startsWith('data: ')) {
+            const dataStr = trimmedLine.slice(6);
+            try {
+              const eventData = JSON.parse(dataStr);
+              if (eventData.log) {
+                setProcessingLogs(prev => [...prev, eventData.log]);
+              } else if (eventData.result) {
+                const results = eventData.result;
+                const mapped = results.map(mapCandidate);
+                setStagedCandidates(mapped);
+
+                const drafts: Record<string, string> = {};
+                mapped.forEach((c: any) => {
+                  drafts[c.email] = c.recruitmentEmail || '';
+                });
+                setEmailDrafts(drafts);
+                setExpandedIndices({ 0: true });
+
+                setProcessingLogs(prev => [...prev, `Auto-source found ${results.length} candidate profiles.`]);
+                toast.success(`Auto-source staged ${results.length} candidate profiles. Invitations were not sent.`);
+                results.forEach((candidate: any, index: number) => 
+                  onAddCandidate({ ...mapCandidate(candidate), id: candidates.length + index + 1 } as ScrapedCandidate)
+                );
+              }
+            } catch (parseErr) {
+              console.error('Error parsing SSE message:', dataStr, parseErr);
+            }
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        const trimmedLine = buffer.trim();
+        if (trimmedLine.startsWith('data: ')) {
+          const dataStr = trimmedLine.slice(6);
+          try {
+            const eventData = JSON.parse(dataStr);
+            if (eventData.log) {
+              setProcessingLogs(prev => [...prev, eventData.log]);
+            } else if (eventData.result) {
+              const results = eventData.result;
+              const mapped = results.map(mapCandidate);
+              setStagedCandidates(mapped);
+
+              const drafts: Record<string, string> = {};
+              mapped.forEach((c: any) => {
+                drafts[c.email] = c.recruitmentEmail || '';
+              });
+              setEmailDrafts(drafts);
+              setExpandedIndices({ 0: true });
+
+              setProcessingLogs(prev => [...prev, `Auto-source found ${results.length} candidate profiles.`]);
+              toast.success(`Auto-source staged ${results.length} candidate profiles. Invitations were not sent.`);
+              results.forEach((candidate: any, index: number) => 
+                onAddCandidate({ ...mapCandidate(candidate), id: candidates.length + index + 1 } as ScrapedCandidate)
+              );
+            }
+          } catch (parseErr) {
+            console.error('Error parsing SSE message from buffer:', dataStr, parseErr);
+          }
+        }
+      }
+
     } catch (err: any) {
       setErrorMessage(err.message || 'Automatic sourcing failed.');
       toast.error(err.message || 'Automatic sourcing failed.');

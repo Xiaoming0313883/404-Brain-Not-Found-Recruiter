@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = "your-app-specific-password"
     LINKEDIN_LI_AT_COOKIE: str = ""
     LINKEDIN_HEADLESS: bool = True
+    APIFY_API_TOKEN: str = ""
+    APIFY_PROFILE_ACTOR_ID: str = "curious_coder/linkedin-profile-scraper"
+    APIFY_SEARCH_ACTOR_ID: str = "curious_coder/linkedin-people-search-scraper"
+    APIFY_TIMEOUT_SECONDS: int = 90
 
     @field_validator("DEBUG", mode="before")
     @classmethod

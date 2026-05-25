@@ -9,6 +9,15 @@ from ..config import settings
 from .agents.matching_agent import build_position_fit_assessment
 
 
+def _get_run_field(run: Any, field_snake: str, field_camel: str) -> Any:
+    if run is None:
+        return None
+    if isinstance(run, dict):
+        return run.get(field_camel) or run.get(field_snake)
+    return getattr(run, field_snake, None) or getattr(run, field_camel, None)
+
+
+
 def normalize_linkedin_profile_url(linkedin_url: str) -> str:
     raw_url = (linkedin_url or "").strip()
     if not raw_url:
@@ -175,6 +184,177 @@ def _scrape_with_optional_cookie(linkedin_url: str) -> Dict[str, Any]:
         return {}
 
 
+def parse_apify_profile(item: Dict[str, Any], linkedin_url: str) -> Dict[str, Any]:
+    # Name
+    first_name = item.get("firstName") or ""
+    last_name = item.get("lastName") or ""
+    name = item.get("name") or item.get("fullName") or ""
+    if not name and (first_name or last_name):
+        name = f"{first_name} {last_name}".strip()
+    if not name:
+        name = _name_from_url(linkedin_url)
+        
+    # Headline
+    headline = item.get("headline") or item.get("subTitle") or item.get("position") or "LinkedIn Candidate"
+    if isinstance(headline, dict):
+        headline = headline.get("text") or "LinkedIn Candidate"
+    
+    # Location
+    location = item.get("location") or item.get("city") or "Pending manual verification"
+    if isinstance(location, dict):
+        location = location.get("linkedinText") or location.get("parsed", {}).get("text") or location.get("text") or "Pending manual verification"
+    
+    # About
+    about = item.get("about") or item.get("summary") or item.get("description") or ""
+    
+    # Profile picture
+    profile_image_url = item.get("avatar") or item.get("profilePicUrl") or item.get("profilePicture") or item.get("photo") or ""
+    if isinstance(profile_image_url, dict):
+        profile_image_url = profile_image_url.get("url") or ""
+    
+    # Experiences
+    experiences = []
+    apify_exp = item.get("experiences") or item.get("experience") or item.get("positions") or item.get("jobs") or []
+    for exp in apify_exp:
+        title = exp.get("title") or exp.get("position") or exp.get("position_title") or exp.get("role") or ""
+        company = exp.get("companyName") or exp.get("company") or exp.get("institution_name") or ""
+        
+        # duration
+        duration = exp.get("duration") or ""
+        if not duration:
+            start = exp.get("startDate") or ""
+            if isinstance(start, dict):
+                start = start.get("text") or start.get("year") or ""
+            end = exp.get("endDate") or "Present"
+            if isinstance(end, dict):
+                end = end.get("text") or end.get("year") or "Present"
+            if start:
+                if isinstance(start, str) and start.startswith("undefined "):
+                    start = start.replace("undefined ", "")
+                if isinstance(end, str) and end.startswith("undefined "):
+                    end = end.replace("undefined ", "")
+                duration = f"{start} - {end}"
+                
+        experiences.append({
+            "title": title,
+            "company": company,
+            "duration": duration,
+            "description": exp.get("description") or ""
+        })
+        
+    # Education
+    education = []
+    apify_edu = item.get("education") or item.get("educations") or item.get("schools") or []
+    for edu in apify_edu:
+        school = edu.get("schoolName") or edu.get("school") or edu.get("institution_name") or ""
+        
+        # degree name
+        degree = edu.get("degree") or edu.get("degreeName") or ""
+        field = edu.get("fieldOfStudy") or ""
+        if degree and field:
+            degree_str = f"{degree} in {field}"
+        elif degree:
+            degree_str = degree
+        else:
+            degree_str = field or "Degree details pending verification"
+            
+        # duration
+        duration = edu.get("duration") or edu.get("dateRange") or ""
+        if not duration:
+            start = edu.get("startDate") or ""
+            if isinstance(start, dict):
+                start = start.get("text") or start.get("year") or ""
+            end = edu.get("endDate") or "Present"
+            if isinstance(end, dict):
+                end = end.get("text") or end.get("year") or "Present"
+            if start:
+                if isinstance(start, str) and start.startswith("undefined "):
+                    start = start.replace("undefined ", "")
+                if isinstance(end, str) and end.startswith("undefined "):
+                    end = end.replace("undefined ", "")
+                duration = f"{start} - {end}"
+                
+        education.append({
+            "school": school,
+            "degree": degree_str,
+            "duration": duration,
+            "description": edu.get("description") or edu.get("activities") or ""
+        })
+        
+    # Email
+    email = item.get("email") or item.get("emailAddress") or ""
+    if not email:
+        emails = item.get("emails") or []
+        if isinstance(emails, list) and emails:
+            email = emails[0]
+    if not email:
+        contact_details = item.get("contactInfo", {})
+        if isinstance(contact_details, dict):
+            email = contact_details.get("email") or ""
+            
+    if not email:
+        slug = re.sub(r"[^a-z0-9]+", ".", name.lower()).strip(".") or "candidate"
+        email = f"{slug}@email.com"
+        
+    return {
+        "name": name,
+        "email": email,
+        "headline": headline,
+        "location": location,
+        "about": about,
+        "experiences": experiences,
+        "education": education,
+        "profile_image_url": profile_image_url,
+        "scrape_status": "apify_scraped",
+        "scrape_warning": "LinkedIn profile details were captured via Apify live scraper. Verify before outreach.",
+        "source_url": linkedin_url,
+        "source_type": "linkedin",
+        "source_method": "manual_apify"
+    }
+
+
+def scrape_linkedin_profile_apify(linkedin_url: str) -> Dict[str, Any] | None:
+    if not settings.APIFY_API_TOKEN.strip():
+        return None
+    try:
+        from apify_client import ApifyClient
+        from apify_client.errors import ApifyApiError
+        from datetime import timedelta
+        client = ApifyClient(settings.APIFY_API_TOKEN.strip())
+        
+        run_input = {
+            "profileUrls": [linkedin_url],
+            "urls": [linkedin_url]
+        }
+        if settings.LINKEDIN_LI_AT_COOKIE.strip():
+            run_input["cookies"] = [{"name": "li_at", "value": settings.LINKEDIN_LI_AT_COOKIE.strip()}]
+            
+        run = client.actor(settings.APIFY_PROFILE_ACTOR_ID).call(
+            run_input=run_input,
+            wait_duration=timedelta(seconds=settings.APIFY_TIMEOUT_SECONDS)
+        )
+        
+        if not run:
+            import logging
+            logging.getLogger(__name__).warning("Apify profile scraper run failed to start or return run object.")
+            return None
+            
+        status = _get_run_field(run, "status", "status")
+        if status != "SUCCEEDED":
+            import logging
+            logging.getLogger(__name__).warning("Apify profile scraper run finished with status: %s", status)
+            return None
+            
+        dataset_id = _get_run_field(run, "default_dataset_id", "defaultDatasetId")
+        dataset_items = list(client.dataset(dataset_id).iterate_items())
+        if dataset_items:
+            return parse_apify_profile(dataset_items[0], linkedin_url)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Apify profile scrape failed: %s", e)
+    return None
+
+
 def scrape_linkedin_profile(linkedin_url: str) -> Dict[str, Any]:
     """Best-effort LinkedIn profile read.
 
@@ -184,6 +364,12 @@ def scrape_linkedin_profile(linkedin_url: str) -> Dict[str, Any]:
     """
     linkedin_url = normalize_linkedin_profile_url(linkedin_url)
 
+    # 1. Prefer Apify live scraper if API key is configured
+    apify_profile = scrape_linkedin_profile_apify(linkedin_url)
+    if apify_profile:
+        return apify_profile
+
+    # 2. Fall back to local authenticated browser scrape
     authenticated_profile = _scrape_with_optional_cookie(linkedin_url)
     if authenticated_profile:
         return authenticated_profile
