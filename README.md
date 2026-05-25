@@ -50,7 +50,7 @@ The project was built by **404 Brain Not Found**, a team of **UTM KL Faculty of 
 
 The frontend lives on **Vercel** because it is a comfortable fit for Vite builds, preview deployments, and fast static asset delivery.
 
-The backend lives on **Railway** because it can run the Python FastAPI service directly from the repo with Railpack. This project does not require Docker for backend hosting; Railway reads `backend/railway.json`, installs `backend/requirements.txt`, and starts Uvicorn with Railway's `$PORT`.
+The backend lives on **Railway** because it can run the Python FastAPI service directly from the repo with Railpack. This project does not require Docker for backend hosting; Railway reads `backend/railway.json`, detects `backend/requirements.txt`, installs the Python dependencies, and starts Uvicorn with Railway's `$PORT`.
 
 Production frontend environment variable:
 
