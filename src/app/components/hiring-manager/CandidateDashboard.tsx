@@ -1352,8 +1352,13 @@ initial={{ opacity: 0, y: 16 }}
                                       {neutralize ? indicator.neutral_category : `${indicator.original} shown as ${indicator.neutral_category}`}
                                     </span>
                                     {indicator.qs_rank && (
-                                      <span className="bg-[#e8f2ee] text-[#2d6a55] px-1 py-0.2 rounded text-[9px] font-bold">
-                                        QS Rank: #{indicator.qs_rank}
+                                      <span className="bg-[#e8f2ee] text-[#2d6a55] px-1 py-0.2 rounded text-[9px] font-bold inline-flex items-center gap-1 flex-wrap">
+                                        <span>QS Rank: #{indicator.qs_rank}</span>
+                                        {indicator.qs_badge && (
+                                          <span className="bg-[#2d6a55] text-white px-1 py-0.2 rounded-[3px] text-[8px] font-extrabold uppercase">
+                                            {indicator.qs_badge}
+                                          </span>
+                                        )}
                                       </span>
                                     )}
                                   </span>
@@ -1840,8 +1845,13 @@ initial={{ opacity: 0, y: 16 }}
                                     <p className="text-sm text-[#1c1c1a] font-semibold flex items-center flex-wrap gap-2">
                                       <span>{neutralizeText(edu.school)}</span>
                                       {qsRank && (
-                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#e8f2ee] text-[#2d6a55]">
-                                          QS Rank: #{qsRank}
+                                        <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#e8f2ee] text-[#2d6a55] flex-wrap">
+                                          <span>QS Rank: #{qsRank}</span>
+                                          {matchedIndicator?.qs_badge && (
+                                            <span className="bg-[#2d6a55] text-white px-1 py-0.2 rounded-[3px] text-[8px] font-extrabold uppercase tracking-wide">
+                                              {matchedIndicator.qs_badge}
+                                            </span>
+                                          )}
                                         </span>
                                       )}
                                     </p>
