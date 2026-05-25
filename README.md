@@ -1,5 +1,9 @@
 # 404Hire
 
+**404 Brain Not Found. Talent Found. 👾**
+
+**404Hire — Because Great Talent Shouldn’t Be “Not Found.”**
+
 404Hire is an AI-assisted recruitment workspace built for hiring managers and candidates. It combines job intake, LinkedIn-style sourcing, resume validation, candidate account management, profile completion, screening questions, match scoring, and hiring-manager feedback in one local-first prototype.
 
 The project was built for coursework, demos, and rapid product validation. It uses a React/Vite frontend, a FastAPI backend, OpenAI-compatible agent services, local JSON storage, and local file uploads.
@@ -398,6 +402,8 @@ Manual LinkedIn URLs support common copied formats, including:
 
 LinkedIn often blocks unauthenticated scraping, so 404Hire stores source warnings and asks hiring managers to verify profile details before outreach.
 
+Manual URL scrape now requires live scraper configuration through `APIFY_API_TOKEN` or `LINKEDIN_LI_AT_COOKIE`. If live profile data cannot be fetched, 404Hire will not stage a URL-only candidate. Use Automatic Agent Search for demo/prototype sourcing without live LinkedIn access.
+
 ### Hiring Manager: Review Pipeline
 
 1. Open Candidate Pipeline.
@@ -641,6 +647,8 @@ POST /candidates/scrape
 }
 ```
 
+Manual scrape requires live LinkedIn profile data from Apify or an authenticated LinkedIn scraper session. Without `APIFY_API_TOKEN` or `LINKEDIN_LI_AT_COOKIE`, the API returns an error and does not create a fallback candidate.
+
 Automatic prototype sourcing:
 
 ```text
@@ -796,6 +804,12 @@ Check:
 ### LinkedIn profile URL is rejected
 
 Use a profile URL containing `/in/username` or `/pub/username`. The backend normalizes common copied formats, but it does not accept company pages, job pages, feed posts, or search result URLs.
+
+### Manual LinkedIn scrape says live data is unavailable
+
+Configure `APIFY_API_TOKEN` for Apify live scraping or `LINKEDIN_LI_AT_COOKIE` for authenticated LinkedIn scraping. Manual URL scrape intentionally does not create URL-only demo candidates; use Automatic Agent Search when you need prototype candidates without live LinkedIn access.
+
+If the error says the Apify actor requires full account access, open the actor in your Apify Console and approve its permissions before trying manual scrape again. This approval is controlled by Apify and cannot be bypassed from the app.
 
 ### Automatic sourcing returns prototype profiles
 

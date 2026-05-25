@@ -514,7 +514,7 @@ export function HiringManagerPortal() {
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center gap-3 mb-0.5">
-                <BrandLogo imageClassName="h-9" />
+                <BrandLogo imageClassName="h-14" />
                 <h1 className="text-[#1c1c1a] text-lg font-semibold">Hiring Manager Portal</h1>
               </div>
               <p className="text-xs text-[#6b7063]">AI-Powered Recruitment Workspace</p>

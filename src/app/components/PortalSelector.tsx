@@ -9,14 +9,17 @@ export function PortalSelector() {
 
         {/* Header */}
         <div className="text-center mb-16">
-          <BrandLogo className="justify-center mb-6" imageClassName="h-20 md:h-24" />
+          <BrandLogo className="justify-center mb-6" imageClassName="h-40 md:h-52 lg:h-64 max-w-[560px]" />
           <p className="text-xs tracking-[0.2em] uppercase text-[#2d6a55] mb-5">
-            AI-Powered Recruitment
+            404 Brain Not Found. Talent Found. 👾
           </p>
           <h1 className="text-[#1c1c1a] mb-4">
             404Hire Recruitment Workspace
           </h1>
           <p className="text-[#6b7063] max-w-md mx-auto leading-relaxed">
+            404Hire — Because Great Talent Shouldn’t Be “Not Found.”
+          </p>
+          <p className="text-sm text-[#6b7063] max-w-md mx-auto leading-relaxed mt-3">
             Hybrid dual-portal system with bias mitigation and trajectory-based candidate evaluation.
           </p>
         </div>

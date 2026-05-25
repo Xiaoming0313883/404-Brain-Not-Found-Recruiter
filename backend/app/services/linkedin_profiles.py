@@ -8,6 +8,14 @@ from typing import Any, Dict
 from ..config import settings
 from .agents.matching_agent import build_position_fit_assessment
 
+try:
+    from apify_client.errors import ApifyApiError
+except Exception:
+    class ApifyApiError(Exception):
+        pass
+
+LAST_APIFY_PROFILE_ERROR = ""
+
 
 def _get_run_field(run: Any, field_snake: str, field_camel: str) -> Any:
     if run is None:
@@ -314,11 +322,12 @@ def parse_apify_profile(item: Dict[str, Any], linkedin_url: str) -> Dict[str, An
 
 
 def scrape_linkedin_profile_apify(linkedin_url: str) -> Dict[str, Any] | None:
+    global LAST_APIFY_PROFILE_ERROR
+    LAST_APIFY_PROFILE_ERROR = ""
     if not settings.APIFY_API_TOKEN.strip():
         return None
     try:
         from apify_client import ApifyClient
-        from apify_client.errors import ApifyApiError
         from datetime import timedelta
         client = ApifyClient(settings.APIFY_API_TOKEN.strip())
         
@@ -336,22 +345,45 @@ def scrape_linkedin_profile_apify(linkedin_url: str) -> Dict[str, Any] | None:
         
         if not run:
             import logging
-            logging.getLogger(__name__).warning("Apify profile scraper run failed to start or return run object.")
+            LAST_APIFY_PROFILE_ERROR = "Apify profile scraper run failed to start or return a run object."
+            logging.getLogger(__name__).warning(LAST_APIFY_PROFILE_ERROR)
             return None
             
         status = _get_run_field(run, "status", "status")
         if status != "SUCCEEDED":
             import logging
-            logging.getLogger(__name__).warning("Apify profile scraper run finished with status: %s", status)
+            LAST_APIFY_PROFILE_ERROR = f"Apify profile scraper run finished with status: {status}."
+            logging.getLogger(__name__).warning(LAST_APIFY_PROFILE_ERROR)
             return None
             
         dataset_id = _get_run_field(run, "default_dataset_id", "defaultDatasetId")
         dataset_items = list(client.dataset(dataset_id).iterate_items())
         if dataset_items:
             return parse_apify_profile(dataset_items[0], linkedin_url)
+        LAST_APIFY_PROFILE_ERROR = "Apify profile scraper succeeded but returned an empty dataset."
+    except ApifyApiError as e:
+        import logging
+        approval_url = ""
+        if getattr(e, "data", None) and isinstance(e.data, dict):
+            approval_url = e.data.get("approvalUrl") or ""
+        message = getattr(e, "message", str(e))
+        if approval_url:
+            LAST_APIFY_PROFILE_ERROR = (
+                f"Apify actor permission approval is required before this scraper can run. "
+                f"Open this approval URL in your Apify account: {approval_url}"
+            )
+        elif "requires full access" in message.lower() or "approve" in message.lower():
+            LAST_APIFY_PROFILE_ERROR = (
+                "Apify actor permission approval is required before this scraper can run. "
+                f"Open the actor in Apify Console and approve permissions for {settings.APIFY_PROFILE_ACTOR_ID}."
+            )
+        else:
+            LAST_APIFY_PROFILE_ERROR = f"Apify API error: {message}"
+        logging.getLogger(__name__).warning(LAST_APIFY_PROFILE_ERROR)
     except Exception as e:
         import logging
-        logging.getLogger(__name__).warning("Apify profile scrape failed: %s", e)
+        LAST_APIFY_PROFILE_ERROR = f"Apify profile scrape failed: {e}"
+        logging.getLogger(__name__).warning(LAST_APIFY_PROFILE_ERROR)
     return None
 
 
@@ -419,6 +451,36 @@ def scrape_linkedin_profile(linkedin_url: str) -> Dict[str, Any]:
         "source_type": "linkedin",
         "source_method": "manual_public"
     }
+
+
+def scrape_live_linkedin_profile(linkedin_url: str) -> Dict[str, Any]:
+    """Read a LinkedIn profile only when a live scraper returns profile data."""
+    linkedin_url = normalize_linkedin_profile_url(linkedin_url)
+
+    apify_profile = scrape_linkedin_profile_apify(linkedin_url)
+    if apify_profile:
+        return apify_profile
+
+    authenticated_profile = _scrape_with_optional_cookie(linkedin_url)
+    if authenticated_profile:
+        return authenticated_profile
+
+    has_apify = bool(settings.APIFY_API_TOKEN.strip())
+    has_cookie = bool(settings.LINKEDIN_LI_AT_COOKIE.strip())
+    apify_detail = f" Apify detail: {LAST_APIFY_PROFILE_ERROR}" if has_apify and LAST_APIFY_PROFILE_ERROR else ""
+    if has_apify or has_cookie:
+        raise RuntimeError(
+            "Live LinkedIn profile scraping did not return usable profile data. "
+            "LinkedIn may be blocking the scraper, the Apify actor may need approval, "
+            "or the authenticated LinkedIn cookie may be expired."
+            f"{apify_detail}"
+        )
+
+    raise RuntimeError(
+        "Manual LinkedIn URL scrape requires live scraper credentials. "
+        "Set APIFY_API_TOKEN for Apify live scraping or LINKEDIN_LI_AT_COOKIE for authenticated LinkedIn scraping. "
+        "No URL-only candidate was staged."
+    )
 
 
 def build_fast_match_results(job: Dict[str, Any], profile_data: Dict[str, Any], bias_controls: Dict[str, Any] | None = None, prestige_analysis: Dict[str, Any] | None = None) -> Dict[str, Any]:

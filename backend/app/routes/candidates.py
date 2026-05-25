@@ -18,7 +18,7 @@ from ..database import load_db, save_db
 from ..config import settings
 from ..services.agents.base_agent import get_openai_client
 from ..services.job_windows import is_open_for_applications
-from ..services.linkedin_profiles import build_fast_match_results, build_fast_outreach, scrape_linkedin_profile, parse_apify_profile, _get_run_field
+from ..services.linkedin_profiles import build_fast_match_results, build_fast_outreach, scrape_live_linkedin_profile, parse_apify_profile, _get_run_field
 from ..services.bias_settings import get_bias_controls
 from ..services.agents.bias_agent import (
     analyze_prestige_indicators,
@@ -1686,17 +1686,21 @@ def submit_sandbox(email: str, payload: SandboxAnswers):
 @router.post("/scrape")
 def scrape_profile(payload: ScrapePayload):
     db = load_db()
-    try:
-        profile_data = scrape_linkedin_profile(payload.linkedin_url.strip())
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    candidate_name = profile_data["name"]
-    candidate_email = profile_data["email"]
 
     # Fetch job requirements
     job = db.get("positions", {}).get(str(payload.position_id))
     if not job:
         raise HTTPException(status_code=404, detail="Selected position not found.")
+
+    try:
+        profile_data = scrape_live_linkedin_profile(payload.linkedin_url.strip())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    candidate_name = profile_data["name"]
+    candidate_email = profile_data["email"]
     controls = get_bias_controls(db)
     bias_artifacts = build_candidate_bias_artifacts(profile_data)
 
@@ -1739,8 +1743,8 @@ def scrape_profile(payload: ScrapePayload):
         "position_id": payload.position_id,
         "is_sourced": True,
         "source_type": "linkedin",
-        "source_method": profile_data.get("source_method", "manual_public"),
-        "linkedin_url": payload.linkedin_url,
+        "source_method": profile_data.get("source_method", "manual_apify"),
+        "linkedin_url": profile_data.get("source_url") or payload.linkedin_url,
         "profile_data": profile_data,
         "bias_analysis": bias_artifacts["bias_analysis"],
         "neutralized_profile_data": bias_artifacts["neutralized_profile_data"],

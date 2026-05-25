@@ -174,9 +174,9 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
     setErrorMessage('');
 
     const initialLogs = [
-      'Initializing Playwright automated worker...',
-      'Navigating to LinkedIn profile directories...',
-      'Extracting HTML component nodes...',
+      'Initializing live LinkedIn scraper...',
+      'Checking Apify or authenticated LinkedIn scraper configuration...',
+      'Requesting verified profile data...',
       'Converting DOM structures to Pydantic records...',
       'Invoking Matching Agent Debate Panel...',
       'Invoking Candidate Interview Agent (Phase A)...',
@@ -208,9 +208,9 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
       
       setProcessingLogs(prev => [
         ...prev,
-        data.profile_data?.scrape_status === 'public_metadata'
-          ? 'Public LinkedIn metadata captured. Full profile still needs verification.'
-          : 'LinkedIn did not expose public profile details. Captured URL-derived identity only.',
+        data.profile_data?.source_method === 'manual_apify'
+          ? 'Live Apify profile data captured.'
+          : 'Authenticated LinkedIn profile data captured.',
         `Position Fit Score Calculated: ${data.match_results?.scores?.overall_position_fit || data.match_results?.scores?.technical || 80}%`,
         `Trajectory Slope Calculated: ${data.match_results?.scores?.trajectory_slope || 80}%`
       ]);
@@ -223,9 +223,10 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
       toast.success('Candidate staged. Review the draft before sending an invitation.');
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(err.message || 'LinkedIn profile extraction failed. No candidate was staged because unverified fallback data would be misleading.');
-      toast.error(err.message || 'LinkedIn profile extraction failed.');
-      setProcessingLogs(prev => [...prev, 'Profile extraction stopped. No simulated candidate was created.']);
+      const message = err.message || 'Live LinkedIn profile extraction failed. No candidate was staged.';
+      setErrorMessage(message);
+      toast.error(message);
+      setProcessingLogs(prev => [...prev, 'Profile extraction stopped. No URL-only or simulated candidate was staged.']);
     } finally {
       setIsProcessing(false);
     }
@@ -386,7 +387,7 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
             </button>
           </div>
           <p className="mt-2 text-xs text-[#a8a49d]">
-            Only public metadata can be read without a LinkedIn-authenticated scraper session.
+            Manual URL scrape requires APIFY_API_TOKEN or LINKEDIN_LI_AT_COOKIE so only live profile data is staged.
           </p>
         </div>
         )}

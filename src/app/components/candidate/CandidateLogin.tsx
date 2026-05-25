@@ -683,7 +683,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       <div className="max-w-lg w-full">
         {/* Header */}
         <div className="text-center mb-10">
-          <BrandLogo className="justify-center mb-5" imageClassName="h-16" />
+          <BrandLogo className="justify-center mb-5" imageClassName="h-20" />
           <p className="text-xs tracking-[0.2em] uppercase text-[#2d6a55] mb-4">Candidate Portal</p>
           <h1 className="text-[#1c1c1a] mb-3">Sign In to 404Hire</h1>
           <p className="text-sm text-[#6b7063]">

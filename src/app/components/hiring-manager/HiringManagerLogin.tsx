@@ -60,7 +60,7 @@ export function HiringManagerLogin({ onAuthenticate }: Props) {
       <div className="w-full max-w-sm">
         {/* Brand */}
         <div className="text-center mb-10">
-          <BrandLogo className="justify-center mb-5" imageClassName="h-16" />
+          <BrandLogo className="justify-center mb-5" imageClassName="h-20" />
           <p className="text-xs tracking-[0.2em] uppercase text-[#2d6a55] mb-2">Hiring Manager Portal</p>
           <h1 className="text-[#1c1c1a]">Sign In to 404Hire</h1>
           <p className="text-sm text-[#6b7063] mt-2">Access your recruitment workspace</p>
