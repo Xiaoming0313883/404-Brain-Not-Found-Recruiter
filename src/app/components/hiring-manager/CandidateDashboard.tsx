@@ -1221,6 +1221,81 @@ initial={{ opacity: 0, y: 16 }}
                             {(candidate.scoreExplanation || candidate.scoreContributors?.length) && (
                               <div className="mt-4 pt-4 border-t border-[#c8e6d8]">
                                 <p className="text-xs tracking-wider uppercase text-[#2d6a55] mb-2 font-semibold">Match Score Calculation</p>
+                                
+                                {/* Side-by-side Fair vs Biased Scoring Comparison Grid */}
+                                <div className="bg-[#fcfbf9] border border-[#e4e1da] rounded-2xl p-4 mb-4 shadow-sm text-left">
+                                  <p className="text-xs tracking-wider uppercase text-[#1c1c1a] mb-3.5 font-bold">Transparent Score Comparison</p>
+                                  <div className="grid md:grid-cols-2 gap-4">
+                                    {/* Fair Scoring Card */}
+                                    <div className="bg-[#f0f9f4] border border-[#c8e6d8] rounded-xl p-4 flex flex-col justify-between shadow-sm">
+                                      <div>
+                                        <div className="flex items-center gap-1.5 mb-1.5">
+                                          <span className="w-2.5 h-2.5 rounded-full bg-[#2d6a55]" />
+                                          <p className="text-xs text-[#2d6a55] font-bold uppercase tracking-wider">Fair Scoring (Blind Merit)</p>
+                                        </div>
+                                        <p className="text-xs text-[#6b7063] leading-relaxed">
+                                          Zero bias scoring mode. Focuses entirely on candidate skills and role-relevant experience. Pedigree indicators (schools and big company brands) are completely ignored.
+                                        </p>
+                                      </div>
+                                      <div className="mt-5">
+                                        <p className="text-3xl font-extrabold text-[#2d6a55]">
+                                          {candidate.biasControl?.fair_score ?? candidate.matchScore}%
+                                        </p>
+                                        <span className="text-[10px] text-[#a8a49d] font-semibold">Ranked by pure merit & capability</span>
+                                      </div>
+                                    </div>
+
+                                    {/* Biased Scoring Card */}
+                                    <div className="bg-[#fff7ed] border border-[#ffedd5] rounded-xl p-4 flex flex-col justify-between shadow-sm">
+                                      <div>
+                                        <div className="flex items-center gap-1.5 mb-1.5">
+                                          <span className="w-2.5 h-2.5 rounded-full bg-[#c2410c]" />
+                                          <p className="text-xs text-[#c2410c] font-bold uppercase tracking-wider">Prestige-Aware (Biased)</p>
+                                        </div>
+                                        <p className="text-xs text-[#6b7063] leading-relaxed">
+                                          Pedigree reputation scoring active. Candidate scores are adjusted by university and employer prestige indicators, adding positive pedigree weight.
+                                        </p>
+                                      </div>
+                                      <div className="mt-5">
+                                        <p className="text-3xl font-extrabold text-[#c2410c]">
+                                          {candidate.biasControl?.biased_score ?? candidate.matchScore}%
+                                        </p>
+                                        <span className="text-[10px] text-[#a8a49d] font-semibold">Includes institutional pedigree signals</span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Three-Tier Scoring Separated Display */}
+                                  <div className="mt-4 pt-4 border-t border-[#e4e1da]">
+                                    <p className="text-xs tracking-wider uppercase text-[#1c1c1a] mb-3 font-bold">Category Scoring Separation</p>
+                                    <div className="grid grid-cols-3 gap-2">
+                                      <div className="bg-white border border-[#e4e1da] rounded-xl p-3 text-center shadow-sm">
+                                        <p className="text-[10px] tracking-wider uppercase text-[#6b7063] font-semibold">Skills Score</p>
+                                        <p className="text-lg font-bold text-[#2d6a55] mt-1">
+                                          {candidate.biasControl?.three_tier_scores?.skills_score ?? (candidate.scoreContributors?.find((i: any) => i.factor.includes('Must-have') || i.factor.includes('Skill'))?.score ?? 80)}/100
+                                        </p>
+                                      </div>
+                                      <div className="bg-white border border-[#e4e1da] rounded-xl p-3 text-center shadow-sm">
+                                        <p className="text-[10px] tracking-wider uppercase text-[#6b7063] font-semibold">Experience Score</p>
+                                        <p className="text-lg font-bold text-[#2d6a55] mt-1">
+                                          {candidate.biasControl?.three_tier_scores?.experience_score ?? (
+                                            Math.round(
+                                              (candidate.scoreContributors?.find((i: any) => i.factor.includes('Domain'))?.score ?? 75) * 0.6 + 
+                                              (candidate.scoreContributors?.find((i: any) => i.factor.includes('Trajectory'))?.score ?? 75) * 0.4
+                                            )
+                                          )}/100
+                                        </p>
+                                      </div>
+                                      <div className="bg-white border border-[#e4e1da] rounded-xl p-3 text-center shadow-sm">
+                                        <p className="text-[10px] tracking-wider uppercase text-[#6b7063] font-semibold">Reputation Score</p>
+                                        <p className="text-lg font-bold text-[#c9a84c] mt-1">
+                                          {candidate.biasControl?.three_tier_scores?.reputation_score ?? (candidate.biasControl?.prestige_score ?? candidate.prestigeAnalysis?.prestige_score ?? 35)}/100
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+
                                 {candidate.scoreExplanation && (
                                   <p className="text-xs text-[#3d5a4a] leading-relaxed mb-3">
                                     {neutralizeText(candidate.scoreExplanation)}
@@ -1272,8 +1347,15 @@ initial={{ opacity: 0, y: 16 }}
                             {candidate.prestigeAnalysis?.prestige_indicators?.length ? (
                               <div className="flex flex-wrap gap-2 mb-3">
                                 {candidate.prestigeAnalysis.prestige_indicators.slice(0, 6).map((indicator, indicatorIndex) => (
-                                  <span key={`${indicator.original}-${indicatorIndex}`} className="px-2 py-1 rounded-full bg-white border border-[#e4e1da] text-[11px] text-[#6b7063]">
-                                    {neutralize ? indicator.neutral_category : `${indicator.original} shown as ${indicator.neutral_category}`}
+                                  <span key={`${indicator.original}-${indicatorIndex}`} className="px-2.5 py-1 rounded-full bg-white border border-[#e4e1da] text-[11px] text-[#6b7063] inline-flex items-center gap-1.5 flex-wrap">
+                                    <span>
+                                      {neutralize ? indicator.neutral_category : `${indicator.original} shown as ${indicator.neutral_category}`}
+                                    </span>
+                                    {indicator.qs_rank && (
+                                      <span className="bg-[#e8f2ee] text-[#2d6a55] px-1 py-0.2 rounded text-[9px] font-bold">
+                                        QS Rank: #{indicator.qs_rank}
+                                      </span>
+                                    )}
                                   </span>
                                 ))}
                               </div>
@@ -1742,15 +1824,31 @@ initial={{ opacity: 0, y: 16 }}
 
                         {/* Education */}
                         {candidate.education?.length > 0 && (
-                          <div className="bg-white border border-[#e4e1da] rounded-xl p-4 shadow-sm">
+                          <div className="bg-white border border-[#e4e1da] rounded-xl p-4 shadow-sm text-left">
                             <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-3 font-semibold">Education</p>
                             <div className="space-y-2">
-                              {candidate.education.map((edu, idx) => (
-                                <div key={idx}>
-                                  <p className="text-sm text-[#1c1c1a] font-semibold">{neutralizeText(edu.school)}</p>
-                                  <p className="text-xs text-[#6b7063]">{edu.degree}</p>
-                                </div>
-                              ))}
+                              {candidate.education.map((edu, idx) => {
+                                const matchedIndicator = candidate.prestigeAnalysis?.prestige_indicators?.find(
+                                  (ind: any) => ind.type === 'university' && 
+                                  (ind.original.toLowerCase() === edu.school.toLowerCase() || 
+                                   edu.school.toLowerCase().includes(ind.original.toLowerCase()) || 
+                                   ind.original.toLowerCase().includes(edu.school.toLowerCase()))
+                                );
+                                const qsRank = matchedIndicator?.qs_rank;
+                                return (
+                                  <div key={idx}>
+                                    <p className="text-sm text-[#1c1c1a] font-semibold flex items-center flex-wrap gap-2">
+                                      <span>{neutralizeText(edu.school)}</span>
+                                      {qsRank && (
+                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#e8f2ee] text-[#2d6a55]">
+                                          QS Rank: #{qsRank}
+                                        </span>
+                                      )}
+                                    </p>
+                                    <p className="text-xs text-[#6b7063]">{edu.degree}</p>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         )}
