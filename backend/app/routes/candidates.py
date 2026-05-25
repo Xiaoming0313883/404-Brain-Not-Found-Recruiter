@@ -2044,16 +2044,16 @@ def add_mock_bias_comparison_candidates(payload: MockBiasComparisonPayload):
         {
             "name": "Alex Prestige",
             "email": f"bias.demo.top.{payload.position_id}@example.com",
-            "headline": f"{title} candidate from a top-tier university",
-            "school": "MIT",
-            "company": "Google",
-            "note": "strong institutional prestige signals"
+            "headline": f"{title} candidate with high growth trajectory",
+            "school": "Asia Pacific University",
+            "company": "Verified Prototype Talent Pool",
+            "note": "high growth and consistent role evidence"
         },
         {
             "name": "Rina Regional",
             "email": f"bias.demo.regional.{payload.position_id}@example.com",
             "headline": f"{title} candidate from a regional public university",
-            "school": "University of Malaya",
+            "school": "Selangor Vocational College",
             "company": "Regional Product Studio",
             "note": "regional university background with matching project evidence"
         },
@@ -2068,10 +2068,10 @@ def add_mock_bias_comparison_candidates(payload: MockBiasComparisonPayload):
         {
             "name": "Maya Growth",
             "email": f"bias.demo.growth.{payload.position_id}@example.com",
-            "headline": f"{title} candidate with high growth trajectory",
-            "school": "Asia Pacific University",
-            "company": "Verified Prototype Talent Pool",
-            "note": "high growth and consistent role evidence"
+            "headline": f"{title} candidate from a top-tier university",
+            "school": "Universiti Kuala Lumpur",
+            "company": "Google",
+            "note": "strong institutional prestige signals"
         }
     ]
 
