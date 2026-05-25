@@ -1,16 +1,23 @@
-# 404Hire
+# 404Hire -  Recruitment Workspace
 
 **Group:** 404 Brain Not Found  
 **Affiliation:** UTM KL Faculty of AI students  
 **Event:** APU AI Marathon 2026: LLM Everywhere  
 **Track:** Problem Statement 2 - The Intelligent Recruiter  
-**Tagline:** 404 Brain Not Found. Talent Found.  
 
-404Hire is an LLM-powered intelligent recruiter workspace that connects hiring managers with candidates through agentic job intake, resume understanding, candidate matching, screening, outreach, and fair-hiring controls.
+<div align="center">
+  <img src="src/assets/404hire-logo.jpeg" alt="DaddiesTrip Logo" width="300">
+  <p>
+  <b><h3>404 Brain Not Found. Talent Found. 👾<br>
+  Because Great Talent Shouldn’t Be "Not Found."</b></h3>
+  <br>
+    <a href="https://404hire.vercel.app/"><strong>Live Demo</strong></a>
+  </p>
+</div>
 
-The project was built by **404 Brain Not Found**, a team of **UTM KL Faculty of AI students**, for **APU AI Marathon 2026: LLM Everywhere**. It follows the Intelligent Recruiter challenge by taking job requirements plus candidate data, identifying strong matches, generating recruiter-facing reasoning, and supporting LinkedIn-style sourcing through live or simulated integrations.
+404Hire is our AI-powered recruiter workspace for making hiring feel a little less like sorting spreadsheets and a little more like finding real people with real potential. It connects hiring managers and candidates through agentic job intake, resume understanding, candidate matching, screening, outreach, and fair-hiring controls.
 
-![404Hire logo](src/assets/404hire-logo.jpeg)
+The project was built by **404 Brain Not Found**, a team of **UTM KL Faculty of AI students**, for **APU AI Marathon 2026: LLM Everywhere**. The idea is simple: give a hiring manager a role, give the system candidate data, and let the agents help explain who looks promising, why they look promising, what risks to verify, and how to move the process forward fairly.
 
 ## Table Of Contents
 
@@ -41,9 +48,9 @@ The project was built by **404 Brain Not Found**, a team of **UTM KL Faculty of 
 | Frontend website | Vercel | [https://404hire.vercel.app](https://404hire.vercel.app) | Hosts the React/Vite web application and serves the public user interface. |
 | Backend API | Render | [https://four04hire.onrender.com](https://four04hire.onrender.com) | Runs the FastAPI backend and exposes the API over HTTPS. |
 
-The frontend is deployed on **Vercel** because it is optimized for Vite frontend builds, preview deployments, and fast static asset delivery.
+The frontend lives on **Vercel** because it is a comfortable fit for Vite builds, preview deployments, and fast static asset delivery.
 
-The backend is deployed on **Render** because it can run the Python FastAPI service as a web service and provide a public API endpoint for the Vercel frontend.
+The backend lives on **Render** because it can run the Python FastAPI service as a web service and expose a public API endpoint for the Vercel frontend.
 
 Production frontend environment variable:
 
@@ -53,7 +60,7 @@ VITE_API_URL=https://four04hire.onrender.com/api/v1
 
 ## Marathon Alignment
 
-APU AI Marathon 2026 is themed **LLM Everywhere**, with emphasis on practical LLM use, agentic workflows, tool integration, and working prototypes.
+APU AI Marathon 2026 is themed **LLM Everywhere**, so the focus is practical: use LLMs where they actually help, connect them to tools, and ship a working prototype people can try.
 
 404Hire addresses the **Intelligent Recruiter** track:
 
@@ -64,7 +71,7 @@ APU AI Marathon 2026 is themed **LLM Everywhere**, with emphasis on practical LL
 
 ## Project Overview
 
-404Hire provides two connected portals:
+404Hire has two connected portals: one for the hiring manager, and one for the candidate. Both sides share the same pipeline, but each gets an experience built around what they need to do next.
 
 ### Hiring Manager Portal
 
@@ -94,7 +101,7 @@ Candidates can:
 
 ## Core Features
 
-- Dual-portal React/Vite application.
+- Dual-portal React/Vite application for hiring managers and candidates.
 - FastAPI backend under `/api/v1`.
 - LLM-compatible agent layer using an OpenAI-style chat completions client.
 - Adaptive job intake and role requirement generation.
@@ -105,7 +112,7 @@ Candidates can:
 - Automatic candidate sourcing through Apify or prototype simulation.
 - Streaming sourcing progress through Server-Sent Events.
 - Position-specific matching with explainable score contributors.
-- Interview question generation and answer evaluation.
+- Interview Agent Phase A question generation and Phase B answer evaluation.
 - Candidate upskilling roadmap generation.
 - Bias Agent for prestige indicator detection and profile neutralization.
 - Bias controls for blind merit, anonymized hiring, and prestige-aware comparison.
@@ -117,7 +124,7 @@ Candidates can:
 
 ## AI Agent Workflow
 
-404Hire uses a six-agent workflow. The agents are the active reasoning layer between both user sides: hiring managers define and review talent requirements, while candidates submit resumes, profiles, and screening answers.
+404Hire uses six named agents, with the Interview Agent implemented as two executable phases: **5A** generates targeted screening questions and **5B** evaluates submitted answers. Think of them as a small hiring desk: one agent shapes the job, one reads resumes, one checks bias signals, one scores fit, one handles screening, and one writes the human-readable reports.
 
 ```mermaid
 flowchart LR
@@ -161,7 +168,8 @@ Each agent has a focused responsibility and a fallback path so the demo remains 
 | Resume Agent | `backend/app/services/agents/resume_agent.py` | Resume text extracted from PDF/OCR | Candidate profile fields, skills, education, experience, summary | Converts unstructured resumes into searchable candidate data. |
 | Bias Agent | `backend/app/services/agents/bias_agent.py` | Candidate profile and resume text | Prestige indicators, neutralized profile, reputation score | Detects school/company pedigree signals and supports fair-hiring controls. |
 | Matching Agent | `backend/app/services/agents/matching_agent.py` | Job requirements, candidate profile, bias controls | Position-fit score, score contributors, advocate and critical recruiter views | Scores fit using role evidence, domain context, success signals, and trajectory. |
-| Interview Agent | `backend/app/services/agents/interview_agent.py` | Candidate profile, match results, job requirements, answers | Screening questions, answer critiques, screening score, recommendation | Creates and evaluates position-specific screening. |
+| Interview Agent Phase A | `backend/app/services/agents/interview_agent.py` | Candidate profile, match results, job requirements | Exactly 3 targeted screening questions | Creates position-specific screening questions from the current job and matching concerns. |
+| Interview Agent Phase B | `backend/app/services/agents/interview_agent.py` | Screening questions, candidate answers, job requirements | Answer critiques, score breakdown, screening score, verdict, recommendation | Evaluates submitted answers against the selected position using the role-alignment rubric. |
 | Report Agent | `backend/app/services/agents/report_agent.py` | Candidate profile, match results, job requirements | Sourcing pitch, outreach email, upskilling roadmap | Produces human-readable recruiter and candidate artifacts. |
 
 ### Two-Sided Agent Orchestration
@@ -177,7 +185,7 @@ flowchart TB
         HM6["Generate prototype profiles<br/>for demo mode"]
         HM7["AGENT: BIAS AGENT<br/>detects prestige indicators"]
         HM8["AGENT: MATCHING AGENT<br/>scores role fit"]
-        HM9["AGENT: INTERVIEW AGENT<br/>generates screening questions"]
+        HM9["AGENT: INTERVIEW AGENT PHASE A<br/>generates screening questions"]
         HM10["AGENT: REPORT AGENT<br/>writes pitch and outreach"]
         HM11["Staged candidate appears in pipeline"]
         HM12["Review, invite, schedule, reject, complete, or hire"]
@@ -314,9 +322,9 @@ flowchart TD
 4. Backend checks the selected position exists, is open, and has not already been applied to by the same candidate.
 5. Bias Agent attaches fair-hiring metadata and neutralized profile data.
 6. Matching Agent produces a position-fit assessment for that selected job.
-7. Interview Agent generates screening questions for that selected job.
+7. Interview Agent Phase A generates screening questions for that selected job.
 8. Candidate can save draft answers or submit final answers.
-9. Interview Agent evaluates final answers and Report Agent creates an upskilling roadmap.
+9. Interview Agent Phase B evaluates final answers and Report Agent creates an upskilling roadmap.
 10. Hiring manager reviews the result in the pipeline while the candidate tracks status and notifications.
 
 ### 4. Sourcing Flow
@@ -326,7 +334,7 @@ flowchart TD
 3. For automatic sourcing, the backend streams progress through Server-Sent Events.
 4. If Apify is configured, the backend searches/scrapes live profile data.
 5. If Apify is not configured, the backend generates prototype candidates aligned to the job.
-6. Bias analysis, matching, interview question generation, and report generation run for each candidate.
+6. Bias analysis, matching, Interview Agent Phase A question generation, and report generation run for each candidate.
 7. Candidates are saved as `staged` until the hiring manager sends an invitation.
 
 ### 5. Hiring Manager Review Flow
@@ -393,7 +401,7 @@ flowchart TD
 | Resume upload | File must be PDF, 10MB or smaller, and contain readable resume-like text | Resume Agent can process the profile. |
 | Position availability | Position must exist and be open for applications | Candidate can apply. |
 | Duplicate application | Candidate cannot apply twice to the same position | Backend returns a conflict response. |
-| Screening submission | Answers must be submitted once and each answer must be at least 10 characters | Interview Agent evaluates answers. |
+| Screening submission | Answers must be submitted once and each answer must be at least 10 characters | Interview Agent Phase B evaluates answers. |
 
 ### Matching Score Logic
 
@@ -457,7 +465,7 @@ The audit checks:
 
 ### Screening Evaluation Logic
 
-The Interview Agent evaluates answers against the actual position, not generic interview quality.
+Interview Agent Phase A generates exactly three targeted questions for the current position. Interview Agent Phase B evaluates answers against the actual position, not generic interview quality.
 
 Screening score breakdown:
 
@@ -479,13 +487,13 @@ Recommendation logic:
 
 ### Candidate Status Logic
 
-Candidate applications can move through:
+Candidate applications do not follow one single linear path. Inbound applicants usually move from a profile account into an applied application and then screening after answers are submitted. Sourced candidates are staged first and can be invited before later candidate-side activity. The hiring manager can then mark screening as completed, schedule an interview, hire, reject, or revert the latest status change.
 
 ```text
-profile -> staged -> invited -> applied -> screening -> completed -> interview_scheduled -> hired
-                                               |
-                                               v
-                                            rejected
+Inbound: profile -> applied -> screening -> completed -> interview_scheduled -> hired
+Sourced: staged -> invited -> applied -> screening -> completed -> interview_scheduled -> hired
+
+Any active application can be rejected.
 ```
 
 Supported backend statuses:
@@ -602,6 +610,8 @@ Local JSON database and upload folders
 
 ## Local Setup
 
+You can run everything locally with one backend terminal and one frontend terminal. Nothing fancy, just the usual two-window ritual.
+
 ### Prerequisites
 
 - Node.js 20 or newer
@@ -622,7 +632,7 @@ Install frontend dependencies:
 npm install
 ```
 
-For a clean clone or CI install:
+For a clean clone or CI install, use the lockfile:
 
 ```powershell
 npm ci
@@ -718,7 +728,7 @@ APIFY_SEARCH_ACTOR_ID=M2FMdjRVeF1HPGFcc
 APIFY_TIMEOUT_SECONDS=90
 ```
 
-Do not commit real API keys, SMTP passwords, cookies, or personal secrets.
+Tiny but important reminder: do not commit real API keys, SMTP passwords, cookies, or personal secrets. Future-you will be grateful.
 
 When using live Apify LinkedIn scraping, some actors may require manual approval in the Apify account on first use. If the sourcing console shows a permission error with an approval URL, open the URL in Apify Console and approve the actor permissions.
 
@@ -750,7 +760,7 @@ hiring@company.com
 password
 ```
 
-Candidate accounts are created through the Candidate Portal.
+Candidate accounts are created through the Candidate Portal, because the candidate flow includes email verification, resume upload, and profile completion.
 
 ## API Reference
 
@@ -799,6 +809,7 @@ POST   /candidates/signup
 POST   /candidates/login
 POST   /candidates/{email}/password
 POST   /candidates/{email}/reset-password
+PATCH  /candidates/{email}/account
 POST   /candidates/{email}/verify-email
 POST   /candidates/{email}/resend-verification
 PATCH  /candidates/{email}/profile
@@ -894,6 +905,8 @@ This storage model is easy to inspect during development, but it is not intended
 
 ## Troubleshooting
 
+If something breaks, start here. Most demo issues are either the backend not running, the frontend pointing to the wrong API URL, or a resume PDF that does not contain readable text.
+
 ### Backend cannot import `main`
 
 Use the root command with `--app-dir backend`:
@@ -964,7 +977,7 @@ or:
 LINKEDIN_LI_AT_COOKIE=your_linkedin_cookie
 ```
 
-Without live credentials, Automatic Agent Search falls back to prototype candidate generation.
+Without live credentials, Automatic Agent Search falls back to prototype candidate generation, so the demo can still keep moving.
 
 ### Large Vite chunk warning
 
@@ -972,7 +985,7 @@ Without live credentials, Automatic Agent Search falls back to prototype candida
 
 ## Production Notes
 
-Before a real production release, improve the following:
+This is a hackathon-friendly prototype, not a hardened production hiring system yet. Before a real production release, improve the following:
 
 - Replace demo hiring-manager login with real authentication.
 - Move JSON storage to PostgreSQL, MySQL, or another production database.
@@ -989,7 +1002,7 @@ Before a real production release, improve the following:
 
 ## Verification Checklist
 
-After setup, verify:
+After setup, give the full flow a quick test drive:
 
 - Backend health check returns online status.
 - Frontend opens at the Vite dev URL.
@@ -1006,3 +1019,8 @@ After setup, verify:
 - Bias controls can switch between blind merit and prestige-aware scoring.
 - Fairness audit returns a score and risk level after candidate data exists.
 - Interview scheduling and rejection flows update candidate notifications.
+<div align="center">
+  <i>Engineered by ❤️ from UTM's FAI Studens</i>
+  <br />
+  <blockquote><strong>404 Brain Not Found. Talent Found. 👾<br>Because Great Talent Shouldn’t Be "Not Found."</strong></blockquote>
+</div>
