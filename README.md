@@ -46,11 +46,11 @@ The project was built by **404 Brain Not Found**, a team of **UTM KL Faculty of 
 | Service | Platform | URL | Purpose |
 | --- | --- | --- | --- |
 | Frontend website | Vercel | [https://404hire.vercel.app](https://404hire.vercel.app) | Hosts the React/Vite web application and serves the public user interface. |
-| Backend API | Railway | `https://<your-railway-service>.up.railway.app` | Runs the FastAPI backend and exposes the API over HTTPS using `backend/railway.json`. |
+| Backend API | Railway | `https://<your-railway-service>.up.railway.app` | Runs the FastAPI backend and exposes the API over HTTPS using `backend/railway.json` or `backend/Dockerfile`. |
 
 The frontend lives on **Vercel** because it is a comfortable fit for Vite builds, preview deployments, and fast static asset delivery.
 
-The backend lives on **Railway** because it can run the Python FastAPI service directly from the repo with Railpack. This project does not require Docker for backend hosting; Railway reads `backend/railway.json`, detects `backend/requirements.txt`, installs the Python dependencies, and starts Uvicorn with Railway's `$PORT`.
+The backend lives on **Railway** because it can run the Python FastAPI service directly from the repo. The default method uses Railpack with `backend/railway.json`, but a Docker method is also available through `backend/Dockerfile`.
 
 Production frontend environment variable:
 
@@ -768,6 +768,44 @@ Railway uses this start command:
 
 ```bash
 uvicorn main:app --host 0.0.0.0 --port $PORT
+```
+
+### Docker Backend Hosting
+
+The backend also includes a Dockerfile at `backend/Dockerfile`.
+
+Build the backend image locally:
+
+```powershell
+docker build -t 404hire-backend ./backend
+```
+
+Run it locally:
+
+```powershell
+docker run --rm -p 8000:8000 --env-file backend\.env 404hire-backend
+```
+
+If you need the Playwright browser installed for live scraping, build with:
+
+```powershell
+docker build --build-arg INSTALL_PLAYWRIGHT=true -t 404hire-backend ./backend
+```
+
+For Railway Docker deployment:
+
+1. Set the Railway service root directory to `/backend`.
+2. Clear the Railway config file path if it is set to `/backend/railway.json`.
+3. Set the Dockerfile path to `/backend/Dockerfile`, or let Railway detect `backend/Dockerfile` from the `/backend` service root.
+4. Leave custom Build Command, Install Command, and Start Command empty.
+5. Add the backend environment variables from `backend/.env.example` in Railway Variables.
+6. Set `DEBUG=False` for production.
+7. Deploy the service.
+
+The Docker container starts with:
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
 ```
 
 ## Demo Accounts
