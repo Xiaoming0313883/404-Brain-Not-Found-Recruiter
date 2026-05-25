@@ -37,8 +37,8 @@ UNIVERSITY_QS_RANKS = {
     "university of malaya": 60,
     "um": 60,
     "universiti malaya": 60,
-    "apu": 611,
-    "asia pacific university": 611,
+    "apu": 597,
+    "asia pacific university": 597,
     "unikl": 801,
     "universiti kuala lumpur": 801,
     "selangor vocational college": 1000,
@@ -88,6 +88,7 @@ def _add_indicator(indicators: List[Dict[str, Any]], seen: set[str], original: s
         return
     seen.add(key)
     qs_rank = get_university_qs_rank(cleaned) if indicator_type == "university" else None
+    qs_badge = "Top 2% University in the World" if qs_rank == 597 else None
     indicators.append({
         "type": indicator_type,
         "original": cleaned,
@@ -96,7 +97,8 @@ def _add_indicator(indicators: List[Dict[str, Any]], seen: set[str], original: s
         "prestige_score": score,
         "source": source,
         "reason": f"{cleaned} was classified as {category} for transparent bias controls.",
-        "qs_rank": qs_rank
+        "qs_rank": qs_rank,
+        "qs_badge": qs_badge
     })
 
 
@@ -179,6 +181,7 @@ Do not infer protected classes or demographic identity."""
                 if original:
                     item_type = item.get("type") or "other"
                     qs_rank = get_university_qs_rank(original) if item_type == "university" else None
+                    qs_badge = "Top 2% University in the World" if qs_rank == 597 else None
                     merged[original.lower()] = {
                         "type": item_type,
                         "original": original,
@@ -187,7 +190,8 @@ Do not infer protected classes or demographic identity."""
                         "prestige_score": max(0, min(100, int(item.get("prestige_score", 60) or 60))),
                         "source": item.get("source") or "profile",
                         "reason": item.get("reason") or "Detected by Bias Agent.",
-                        "qs_rank": qs_rank
+                        "qs_rank": qs_rank,
+                        "qs_badge": qs_badge
                     }
             indicators = list(merged.values())[:24]
             scored = [item.get("prestige_score", 50) for item in indicators]
