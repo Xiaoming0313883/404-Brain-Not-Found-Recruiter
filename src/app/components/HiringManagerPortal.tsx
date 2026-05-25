@@ -8,6 +8,7 @@ import { HiringManagerLogin } from './hiring-manager/HiringManagerLogin';
 import { InterviewCalendar } from './hiring-manager/InterviewCalendar';
 import { CandidateAccountsPage } from './hiring-manager/CandidateAccountsPage';
 import { BrandLogo } from './BrandLogo';
+import { API_BASE_URL } from '../api';
 
 export interface Job {
   id: number;
@@ -125,8 +126,6 @@ interface AuthUser {
   email: string;
   role: string;
 }
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 export interface BiasControls {
   neutralize_prestige: boolean;

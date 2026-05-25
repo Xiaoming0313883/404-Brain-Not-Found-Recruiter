@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
 import { PdfResumeViewer } from '../PdfResumeViewer';
 import { CandidateNav } from './CandidateNav';
+import { API_BASE_URL, API_ORIGIN } from '../../api';
 
 interface Props {
   candidateData: CandidateData;
@@ -11,8 +12,6 @@ interface Props {
   onSignOut: () => void;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
-const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1$/, '');
 const MAX_RESUME_BYTES = 10 * 1024 * 1024;
 const MAX_PROFILE_IMAGE_BYTES = 5 * 1024 * 1024;
 const requiredProfileFields = [
@@ -43,6 +42,7 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
   });
   const [resume, setResume] = useState<File | null>(null);
   const [picture, setPicture] = useState<File | null>(null);
+  const resumeInputRef = useRef<HTMLInputElement>(null);
   const pictureInputRef = useRef<HTMLInputElement>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -212,12 +212,12 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
           {errorMessage && <div className="mb-4 rounded-xl border border-[#f5c2c2] bg-[#fdf2f2] p-3 text-sm text-[#b91c1c]">{errorMessage}</div>}
           <div className={`mb-5 rounded-xl border p-4 ${missingFields.length ? 'border-[#f2d3a4] bg-[#fff8ed]' : 'border-[#c8e6d8] bg-[#e8f2ee]'}`}>
             <p className={`text-sm font-semibold ${missingFields.length ? 'text-[#8a5a14]' : 'text-[#2d6a55]'}`}>
-              Missing Information Assistant
+              {missingFields.length ? 'Missing Information Assistant' : 'Profile Information Complete'}
             </p>
             <p className="mt-1 text-xs text-[#6b7063] leading-relaxed">
               {missingFields.length
                 ? `Complete ${missingFields.map(([, label]) => label.toLowerCase()).join(', ')} below, then save your details.`
-                : 'Your required profile information is complete.'}
+                : 'All required profile details are filled in.'}
             </p>
           </div>
 
@@ -269,7 +269,28 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
                 <PdfResumeViewer url={`${API_ORIGIN}${candidateData.resumeUrl}`} filename={candidateData.resumeData?.filename || 'resume.pdf'} />
               </div>
             )}
-            <input type="file" accept=".pdf" onChange={(event) => setResume(event.target.files?.[0] || null)} className="text-sm" />
+            <input
+              type="file"
+              ref={resumeInputRef}
+              accept=".pdf"
+              onChange={(event) => setResume(event.target.files?.[0] || null)}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => resumeInputRef.current?.click()}
+              disabled={isSaving}
+              className={`w-full rounded-xl border-2 border-dashed px-4 py-5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                resume
+                  ? 'border-[#2d6a55]/40 bg-[#f0f9f4] text-[#2d6a55]'
+                  : 'border-[#e4e1da] text-[#6b7063] hover:border-[#2d6a55]/30 hover:bg-[#f7f6f3]'
+              }`}
+            >
+              <span className="inline-flex items-center justify-center gap-2">
+                <Upload className="w-4 h-4" />
+                {resume ? resume.name : 'Choose resume file'}
+              </span>
+            </button>
             {uploadProgress !== null && (
               <div className="mt-3">
                 <div className="flex items-center justify-between mb-1">

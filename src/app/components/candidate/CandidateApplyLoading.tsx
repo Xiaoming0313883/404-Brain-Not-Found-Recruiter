@@ -4,13 +4,12 @@ import * as Progress from '@radix-ui/react-progress';
 import { Bot, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
+import { API_BASE_URL } from '../../api';
 
 interface Props {
   candidateData: CandidateData;
   onUpdateCandidate: (data: CandidateData) => void;
 }
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 export function CandidateApplyLoading({ candidateData, onUpdateCandidate }: Props) {
   const navigate = useNavigate();

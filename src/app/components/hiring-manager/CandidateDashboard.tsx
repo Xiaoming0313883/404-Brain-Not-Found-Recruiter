@@ -30,6 +30,7 @@ import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Responsive
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import { PdfResumeViewer } from '../PdfResumeViewer';
+import { API_BASE_URL, API_ORIGIN } from '../../api';
 
 const getCandidatePhase = (status: string, answers?: string[]): string => {
   if (status === 'hired') return 'Hired';
@@ -58,9 +59,6 @@ interface Props {
   onRevertStatus?: (email: string, positionId?: number) => Promise<void>;
   view?: 'overview' | 'candidates';
 }
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
-const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1$/, '');
 
 // Predefined outreach templates for Feature 6
 const OUTREACH_TEMPLATES = [

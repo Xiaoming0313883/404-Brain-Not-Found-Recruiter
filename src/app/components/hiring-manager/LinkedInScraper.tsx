@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Job, ScrapedCandidate } from '../HiringManagerPortal';
 import { Link2, Play, Send, CheckCircle2, AlertCircle, Loader2, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
+import { API_BASE_URL } from '../../api';
 
 interface Props {
   jobs: Job[];
@@ -9,8 +10,6 @@ interface Props {
   onAddCandidate: (candidate: ScrapedCandidate) => void;
   onUpdateStatus: (candidateId: number, status: ScrapedCandidate['status']) => void;
 }
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStatus }: Props) {
   const [mode, setMode] = useState<'auto' | 'manual'>('auto');

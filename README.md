@@ -46,16 +46,16 @@ The project was built by **404 Brain Not Found**, a team of **UTM KL Faculty of 
 | Service | Platform | URL | Purpose |
 | --- | --- | --- | --- |
 | Frontend website | Vercel | [https://404hire.vercel.app](https://404hire.vercel.app) | Hosts the React/Vite web application and serves the public user interface. |
-| Backend API | Render | [https://four04hire.onrender.com](https://four04hire.onrender.com) | Runs the FastAPI backend and exposes the API over HTTPS. |
+| Backend API | Railway | `https://<your-railway-service>.up.railway.app` | Runs the FastAPI backend and exposes the API over HTTPS using `backend/railway.json`. |
 
 The frontend lives on **Vercel** because it is a comfortable fit for Vite builds, preview deployments, and fast static asset delivery.
 
-The backend lives on **Render** because it can run the Python FastAPI service as a web service and expose a public API endpoint for the Vercel frontend.
+The backend lives on **Railway** because it can run the Python FastAPI service directly from the repo with Railpack. This project does not require Docker for backend hosting; Railway reads `backend/railway.json`, installs `backend/requirements.txt`, and starts Uvicorn with Railway's `$PORT`.
 
 Production frontend environment variable:
 
 ```env
-VITE_API_URL=https://four04hire.onrender.com/api/v1
+VITE_API_URL=https://<your-railway-service>.up.railway.app/api/v1
 ```
 
 ## Marathon Alignment
@@ -743,7 +743,29 @@ VITE_API_URL=http://localhost:8000/api/v1
 For production on Vercel:
 
 ```env
-VITE_API_URL=https://four04hire.onrender.com/api/v1
+VITE_API_URL=https://<your-railway-service>.up.railway.app/api/v1
+```
+
+### Railway Backend Hosting
+
+The backend is configured for Railway with `backend/railway.json`. No Dockerfile is needed.
+
+1. Create a new Railway project from this GitHub repo.
+2. Set the Railway service root directory to `/backend`.
+3. Set the Railway config file path to `/backend/railway.json`.
+4. Add the backend environment variables from `backend/.env.example` in Railway Variables.
+5. Set `DEBUG=False` for production.
+6. Deploy the service.
+7. Copy the Railway public domain and set the Vercel frontend variable to:
+
+```env
+VITE_API_URL=https://<your-railway-service>.up.railway.app/api/v1
+```
+
+Railway uses this start command:
+
+```bash
+python -m uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
 ## Demo Accounts
@@ -773,7 +795,7 @@ http://localhost:8000/api/v1
 Production API base URL:
 
 ```text
-https://four04hire.onrender.com/api/v1
+https://<your-railway-service>.up.railway.app/api/v1
 ```
 
 ### Jobs
@@ -932,7 +954,7 @@ VITE_API_URL=http://localhost:8000/api/v1
 For production, Vercel should use:
 
 ```env
-VITE_API_URL=https://four04hire.onrender.com/api/v1
+VITE_API_URL=https://<your-railway-service>.up.railway.app/api/v1
 ```
 
 ### `npm install` fails

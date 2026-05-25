@@ -4,6 +4,7 @@ import { BarChart3, Bell, Briefcase, CheckCircle2, FileText, Loader2, MessageSqu
 import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
 import { CandidateNav } from './CandidateNav';
+import { API_BASE_URL, API_ORIGIN } from '../../api';
 
 interface Props {
   candidateData: CandidateData;
@@ -12,8 +13,6 @@ interface Props {
   view?: 'overview' | 'applications' | 'jobs' | 'profile';
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
-const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1$/, '');
 const profileFieldConfig = [
   { field: 'name', label: 'full name', question: 'What is your full name as it should appear on your application?' },
   { field: 'age', label: 'age', question: 'What is your age?' },

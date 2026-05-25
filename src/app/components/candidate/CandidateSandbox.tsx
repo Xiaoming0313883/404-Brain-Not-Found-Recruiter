@@ -4,14 +4,13 @@ import { CandidateData } from '../CandidatePortal';
 import * as Progress from '@radix-ui/react-progress';
 import { CheckCircle2, AlertCircle, Loader2, Mic, MicOff } from 'lucide-react';
 import { toast } from 'sonner';
+import { API_BASE_URL } from '../../api';
 
 interface Props {
   candidateData: CandidateData;
   onComplete: (answers: string[], score: number, evaluation: any, agentWarnings?: string[]) => void;
   onAgentError?: (answers: string[], message: string) => void;
 }
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 const defaultQuestions = [
   "How would you approach designing a fault-tolerant message distribution system with less than 50ms latency using Node.js?",

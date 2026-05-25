@@ -3,6 +3,7 @@ import { Loader2, RefreshCcw, ShieldCheck, Trash2, UserCheck, UserCog, KeyRound,
 import { PdfResumeViewer } from '../PdfResumeViewer';
 import { motion } from 'motion/react';
 import { ScrapedCandidate } from '../HiringManagerPortal';
+import { API_ORIGIN } from '../../api';
 
 interface Props {
   candidates: ScrapedCandidate[];
@@ -14,8 +15,6 @@ interface Props {
   onResetPassword: (email: string) => Promise<string>;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
-const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1$/, '');
 const PAGE_SIZE = 10;
 const getCandidatePhase = (status: string, answers?: string[]): string => {
   if (status === 'hired') return 'Hired';

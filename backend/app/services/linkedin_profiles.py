@@ -85,7 +85,7 @@ def _fetch_public_metadata(linkedin_url: str) -> Dict[str, str]:
     request = urllib.request.Request(
         linkedin_url,
         headers={
-            "User-Agent": "Mozilla/5.0 (compatible; RecruitingWorkspace/1.0; +https://localhost)",
+            "User-Agent": "Mozilla/5.0 (compatible; RecruitingWorkspace/1.0)",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
     )

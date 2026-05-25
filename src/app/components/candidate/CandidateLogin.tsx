@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router';
 import { Lock, Mail, Upload, ArrowRight, ArrowLeft, Loader2, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
 import { BrandLogo } from '../BrandLogo';
 import * as Progress from '@radix-ui/react-progress';
+import { API_BASE_URL, BACKEND_FETCH_ERROR_MESSAGE } from '../../api';
 
 interface Props {
   onAuthenticate: (data: CandidateData) => void;
@@ -12,10 +13,8 @@ interface Props {
   initialEmail?: string;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 const MAX_RESUME_BYTES = 10 * 1024 * 1024;
-const API_UNREACHABLE_MESSAGE =
-  'Cannot reach the API server. Start the FastAPI backend on http://localhost:8000, then try again.';
+const API_UNREACHABLE_MESSAGE = BACKEND_FETCH_ERROR_MESSAGE;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const mockJobs = [
@@ -27,6 +26,7 @@ const mockJobs = [
 
 export function CandidateLogin({ onAuthenticate, forceNewApplication = false, initialEmail = '' }: Props) {
   const navigate = useNavigate();
+  const resumeInputRef = useRef<HTMLInputElement>(null);
   const [email, setEmail] = useState(initialEmail);
   const [lookupComplete, setLookupComplete] = useState(forceNewApplication);
   const [candidateType, setCandidateType] = useState<'invited' | 'inbound' | 'account' | null>(forceNewApplication ? 'inbound' : null);
@@ -441,7 +441,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       navigate('/candidate/home');
     } catch (err: any) {
       console.error(err);
-      setErrorMessage(err instanceof TypeError ? API_UNREACHABLE_MESSAGE : err.message || 'Connection error with API server.');
+      setErrorMessage(err instanceof TypeError ? API_UNREACHABLE_MESSAGE : err.message || BACKEND_FETCH_ERROR_MESSAGE);
       setIsSubmitting(false);
       setUploadProgress(0);
       setProcessingMessage('');
@@ -951,17 +951,20 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
               <input
                 type="file"
                 accept=".pdf"
+                ref={resumeInputRef}
                 onChange={(e) => setResume(e.target.files?.[0] || null)}
                 className="hidden"
                 id="resume-upload"
               />
-              <label
-                htmlFor="resume-upload"
+              <button
+                type="button"
+                onClick={() => resumeInputRef.current?.click()}
+                disabled={isSubmitting}
                 className={`flex items-center justify-center w-full py-8 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
                   resume
                     ? 'border-[#2d6a55]/40 bg-[#f0f9f4]'
                     : 'border-[#e4e1da] hover:border-[#2d6a55]/30 hover:bg-[#f7f6f3]'
-                }`}
+                } disabled:cursor-not-allowed disabled:opacity-60`}
               >
                 <div className="text-center">
                   <Upload className={`w-6 h-6 mx-auto mb-2 ${resume ? 'text-[#2d6a55]' : 'text-[#a8a49d]'}`} />
@@ -974,7 +977,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
                   </p>
                   <p className="text-xs text-[#a8a49d] mt-1">PDF up to 10MB</p>
                 </div>
-              </label>
+              </button>
             </div>
 
             <button

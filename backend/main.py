@@ -23,7 +23,7 @@ app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 # Set up CORS to enable React/Vite frontend client calls
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify frontend host URL (e.g. http://localhost:5173)
+    allow_origins=["*"],  # In production, specify the deployed frontend host URL.
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

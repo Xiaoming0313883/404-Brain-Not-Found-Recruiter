@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Job, ScrapedCandidate } from '../HiringManagerPortal';
 import { Plus, Briefcase, Calendar, X, Loader2, Edit3, Power, Bot, Send, Clock, Users, Trash2 } from 'lucide-react';
+import { API_BASE_URL, BACKEND_FETCH_ERROR_MESSAGE } from '../../api';
 
 interface Props {
   jobs: Job[];
@@ -10,9 +11,7 @@ interface Props {
   onDeleteJob: (jobId: number) => Promise<void>;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
-const API_UNREACHABLE_MESSAGE =
-  'Cannot reach the FastAPI backend at http://localhost:8000. Start the backend server, then try again.';
+const API_UNREACHABLE_MESSAGE = BACKEND_FETCH_ERROR_MESSAGE;
 
 const toDateTimeLocalValue = (value?: string | Date) => {
   if (!value) return '';

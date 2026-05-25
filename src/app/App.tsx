@@ -3,10 +3,12 @@ import { Toaster } from 'sonner';
 import { CandidatePortal } from './components/CandidatePortal';
 import { HiringManagerPortal } from './components/HiringManagerPortal';
 import { PortalSelector } from './components/PortalSelector';
+import { ButtonLoadingIndicator } from './components/ButtonLoadingIndicator';
 
 export default function App() {
   return (
     <BrowserRouter>
+      <ButtonLoadingIndicator />
       <Routes>
         <Route path="/" element={<PortalSelector />} />
         <Route path="/candidate/*" element={<CandidatePortal />} />
