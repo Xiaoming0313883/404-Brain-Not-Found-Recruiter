@@ -6,10 +6,9 @@ export function PortalSelector() {
   return (
     <div className="min-h-screen bg-[#f7f6f3] flex items-center justify-center p-6">
       <div className="max-w-4xl w-full">
-
         {/* Header */}
         <div className="text-center mb-16">
-          <BrandLogo className="justify-center mb-6" imageClassName="h-40 md:h-52 lg:h-64 max-w-[560px]" />
+          <BrandLogo className="justify-center mb-1 overflow-hidden" imageClassName="w-52 md:w-64 lg:w-72 h-35 -my-3 max-w-[560px]" />
           <p className="text-xs tracking-[0.2em] uppercase text-[#2d6a55] mb-5">
             404 Brain Not Found. Talent Found. 👾
           </p>
