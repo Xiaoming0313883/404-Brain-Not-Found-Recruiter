@@ -612,6 +612,10 @@ class RecruitingAgentGraph:
 
     def _store_tool_result(self, state: Dict[str, Any], tool_name: str, result: Any) -> None:
         artifacts = state.setdefault("artifacts", {})
+        if isinstance(result, dict) and result.get("agent_warnings"):
+            state.setdefault("agent_warnings", []).extend(
+                str(warning) for warning in result.get("agent_warnings", []) if warning
+            )
         if tool_name == "parse_resume":
             artifacts["candidate_profile"] = result
         elif tool_name == "build_requirements":

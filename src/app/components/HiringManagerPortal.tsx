@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react';
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router';
 import { motion } from 'motion/react';
-import { Briefcase, Users, BarChart3, ArrowLeft, LogOut, Calendar, UserCog, ClipboardList } from 'lucide-react';
+import { Briefcase, Users, BarChart3, ArrowLeft, LogOut, Calendar, UserCog } from 'lucide-react';
 import { JobBuilder } from './hiring-manager/JobBuilder';
 import { LinkedInScraper } from './hiring-manager/LinkedInScraper';
 import { CandidateDashboard } from './hiring-manager/CandidateDashboard';
@@ -387,8 +387,8 @@ export function HiringManagerPortal() {
     return normalized;
   };
 
-  const handleNeutralizeToggle = (active: boolean) => {
-    updateBiasControls({ neutralize_prestige: active }).catch(error => console.error(error));
+  const handleNeutralizeToggle = async (active: boolean) => {
+    await updateBiasControls({ neutralize_prestige: active });
   };
 
   const addJob = async (job: Omit<Job, 'id' | 'createdAt'>) => {
@@ -562,8 +562,10 @@ export function HiringManagerPortal() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ position_id: positionId, outreach_email: outreachEmail, hr_feedback: hrFeedback })
     });
-    if (!res.ok) throw new Error('Failed to update outreach details and internal notes.');
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.detail || 'Failed to update outreach details and internal notes.');
     await fetchCandidates();
+    return data;
   };
 
   if (!authUser) {
@@ -576,7 +578,6 @@ export function HiringManagerPortal() {
     { path: '/hiring-manager/jobs', label: 'Job Builder', icon: Briefcase },
     { path: '/hiring-manager/sourcing', label: 'LinkedIn Sourcing', icon: Users },
     { path: '/hiring-manager/dashboard', label: 'Overview', icon: BarChart3 },
-    { path: '/hiring-manager/candidates', label: 'Candidates', icon: ClipboardList },
     { path: '/hiring-manager/accounts', label: 'Candidate Accounts', icon: UserCog },
     { path: '/hiring-manager/calendar', label: 'Interview Calendar', icon: Calendar },
   ];
@@ -730,6 +731,7 @@ export function HiringManagerPortal() {
                 <CandidateAccountsPage
                   candidates={candidates}
                   neutralize={neutralizeActive}
+                  anonymizedMode={biasControls.anonymized_blind_hiring}
                   isLoading={isLoading}
                   onRefresh={() => fetchCandidates()}
                   onDelete={deleteCandidateByEmail}

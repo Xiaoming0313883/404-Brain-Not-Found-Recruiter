@@ -38,6 +38,7 @@ from ..services.agents import (
 )
 from ..services.agents.graph import recruiting_agent_graph, run_agent_graph
 from ..services.agents.resume_agent import parse_resume_text_fallback
+from ..services.agents.tools import plan_candidate_email, send_agent_email
 from ..services.mailer import is_smtp_configured, send_candidate_verification_email, send_recruitment_email
 
 router = APIRouter(prefix="/candidates", tags=["Candidates"])
@@ -287,6 +288,49 @@ def record_outreach_history(candidate: Dict[str, Any], message: str, status: str
     candidate.setdefault("outreach_history", []).insert(0, item)
     candidate["outreach_history"] = candidate["outreach_history"][:50]
     return item
+
+def send_agent_planned_feedback_email(
+    email: str,
+    candidate: Dict[str, Any],
+    application: Optional[Dict[str, Any]],
+    db: Dict[str, Any],
+    hr_feedback: str,
+    position_id: Optional[int],
+) -> Dict[str, Any]:
+    if not hr_feedback.strip():
+        return {
+            "sent": False,
+            "smtp_configured": is_smtp_configured(),
+            "reason": "No candidate-visible HR feedback was provided, so no email was sent.",
+        }
+
+    job = db.get("positions", {}).get(str(position_id), {}) if position_id else {}
+    evidence = application or candidate
+    state = {
+        "task_type": "hr_feedback_update",
+        "candidate_email": email,
+        "position_id": position_id,
+        "hiring_recommendation": evidence.get("hiring_recommendation", ""),
+        "screening_score": evidence.get("screening_score", 0),
+    }
+    payload = {
+        "candidate_email": email,
+        "to_email": email,
+        "position_id": position_id,
+        "candidate_name": candidate.get("name", "Candidate"),
+        "job_requirements": job,
+        "hr_feedback": hr_feedback,
+        "action_type": "status_update",
+    }
+    email_plan = plan_candidate_email(payload, state)
+    if not email_plan.get("should_send"):
+        return {
+            "sent": False,
+            "smtp_configured": is_smtp_configured(),
+            "email_plan": email_plan,
+            "reason": email_plan.get("reason", "Email planner decided not to send a feedback update."),
+        }
+    return send_agent_email(email_plan, state)
 
 def build_application_id(position_id: int) -> str:
     return f"position-{position_id}"
@@ -682,11 +726,14 @@ def serialize_neutralized_candidate(candidate: Dict[str, Any], email: str, appli
         candidate.get("resume_text", ""),
         candidate.get("bias_analysis")
     )
-    email_hash = get_anonymized_hash(candidate.get("email") or email)
+    original_profile = candidate.get("profile_data", {}) if isinstance(candidate.get("profile_data"), dict) else {}
     profile = {
         **artifacts["neutralized_profile_data"],
-        "name": email_hash,
-        "location": artifacts["neutralized_profile_data"].get("location", "Anonymous City")
+        "name": original_profile.get("name") or candidate.get("name", ""),
+        "email": original_profile.get("email") or candidate.get("email") or email,
+        "phone": original_profile.get("phone", ""),
+        "address": original_profile.get("address", ""),
+        "location": original_profile.get("location", artifacts["neutralized_profile_data"].get("location", ""))
     }
     match_results = application.get("match_results", {}) if application else candidate.get("match_results", {})
     debate = match_results.get("debate", {})
@@ -700,9 +747,9 @@ def serialize_neutralized_candidate(candidate: Dict[str, Any], email: str, appli
         "score_explanation": agent_neutralize_text(match_results.get("score_explanation", ""), artifacts["bias_analysis"])
     }
     working.update({
-        "name": email_hash,
-        "email": f"{email_hash.lower().replace(' ', '_').replace('#', '')}@anonymous.com",
-        "linkedin_url": "https://www.linkedin.com/in/anonymous-profile",
+        "name": candidate.get("name", profile.get("name", "")),
+        "email": candidate.get("email", email),
+        "linkedin_url": candidate.get("linkedin_url", ""),
         "profile_data": profile,
         "bias_analysis": artifacts["bias_analysis"],
         "neutralized_profile_data": artifacts["neutralized_profile_data"],
@@ -3307,6 +3354,8 @@ def update_candidate_outreach_notes(email: str, payload: UpdateCandidateOutreach
         raise HTTPException(status_code=404, detail="Candidate not found.")
 
     application = find_application(candidate, payload.position_id)
+    previous_feedback = (application or candidate).get("hr_feedback", "")
+    feedback_email_receipt: Optional[Dict[str, Any]] = None
     
     if payload.outreach_email is not None:
         candidate["outreach_email"] = payload.outreach_email
@@ -3318,11 +3367,39 @@ def update_candidate_outreach_notes(email: str, payload: UpdateCandidateOutreach
         candidate["hr_feedback"] = payload.hr_feedback
         if application:
             application["hr_feedback"] = payload.hr_feedback
+        if payload.hr_feedback.strip() and payload.hr_feedback.strip() != str(previous_feedback or "").strip():
+            add_notification(
+                candidate,
+                "Hiring manager feedback",
+                "The hiring team added new feedback to your application. Please check your candidate portal for details.",
+                "feedback",
+                payload.position_id
+            )
+            feedback_email_receipt = send_agent_planned_feedback_email(
+                email_clean,
+                candidate,
+                application,
+                db,
+                payload.hr_feedback,
+                payload.position_id or candidate.get("position_id")
+            )
+            record_outreach_history(
+                candidate,
+                feedback_email_receipt.get("body", payload.hr_feedback) if isinstance(feedback_email_receipt, dict) else payload.hr_feedback,
+                "sent" if _email_sent(feedback_email_receipt or {}) else "failed",
+                feedback_email_receipt.get("reason", "Candidate feedback notification processed by Email Planning Agent.") if isinstance(feedback_email_receipt, dict) else "",
+                payload.position_id
+            )
             
     if application:
         sync_current_application(candidate, application)
 
     save_db(db)
+    result = serialize_application_candidate(candidate, email_clean, application) if application else serialize_candidate(candidate, email_clean)
+    if feedback_email_receipt is not None:
+        result["feedback_email_sent"] = _email_sent(feedback_email_receipt)
+        result["feedback_email_receipt"] = feedback_email_receipt
+        result["smtp_configured"] = is_smtp_configured()
     if application:
-        return serialize_application_candidate(candidate, email_clean, application)
-    return serialize_candidate(candidate, email_clean)
+        return result
+    return result

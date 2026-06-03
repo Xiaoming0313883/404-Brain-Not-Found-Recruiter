@@ -8,6 +8,7 @@ import { API_ORIGIN } from '../../api';
 interface Props {
   candidates: ScrapedCandidate[];
   neutralize: boolean;
+  anonymizedMode: boolean;
   isLoading?: boolean;
   onRefresh: () => Promise<void> | void;
   onDelete: (email: string) => Promise<void>;
@@ -41,13 +42,13 @@ const getVisiblePages = (currentPage: number, totalPages: number) => {
 export function CandidateAccountsPage({
   candidates,
   neutralize,
+  anonymizedMode,
   isLoading,
   onRefresh,
   onDelete,
   onUpdateAccount,
   onResetPassword
 }: Props) {
-  const [anonymizedMode] = useState(false);
   const [busyEmail, setBusyEmail] = useState('');
   const [actionError, setActionError] = useState('');
   const [accountSearch, setAccountSearch] = useState('');
@@ -60,10 +61,10 @@ export function CandidateAccountsPage({
     candidate.managementEmail || candidate.email;
 
   const getDisplayName = (candidate: ScrapedCandidate): string =>
-    anonymizedMode || neutralize ? `Candidate #${candidate.id.toString().padStart(4, '0')}` : candidate.name;
+    anonymizedMode ? `Candidate #${candidate.id.toString().padStart(4, '0')}` : candidate.name;
 
   const getDisplayEmail = (candidate: ScrapedCandidate): string =>
-    anonymizedMode || neutralize ? `candidate${candidate.id}@anonymized.local` : getActionEmail(candidate);
+    anonymizedMode ? `candidate${candidate.id}@anonymized.local` : getActionEmail(candidate);
 
   const candidateAccounts = useMemo(() => {
     const accounts = new Map<string, ScrapedCandidate>();
@@ -241,8 +242,9 @@ export function CandidateAccountsPage({
                             phase === 'Screening Completed' ? 'bg-[#fff7ed] text-[#c2410c]' :
                             phase === 'Waiting for Interview' ? 'bg-[#fef9c3] text-[#854d0e]' :
                             phase === 'Interview In Progress' ? 'bg-[#e0e7ff] text-[#3730a3]' :
+                            phase === 'Rejected' ? 'bg-[#b91c1c] text-white border border-[#991b1b]' :
                             phase === 'Hired' ? 'bg-[#dcfce7] text-[#15803d]' :
-                            'bg-[#fee2e2] text-[#b91c1c]'; // Rejected
+                            'bg-[#f0ede8] text-[#6b7063]';
                           return (
                             <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${classes}`}>
                               {phase}

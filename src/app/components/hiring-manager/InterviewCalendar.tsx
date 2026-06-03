@@ -55,6 +55,12 @@ export function InterviewCalendar({ jobs, candidates, onScheduleInterview }: Pro
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
+  const [editTarget, setEditTarget] = useState<ScrapedCandidate | null>(null);
+  const [editDate, setEditDate] = useState('');
+  const [editTime, setEditTime] = useState('');
+  const [editLocation, setEditLocation] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [isEditing, setIsEditing] = useState(false);
 
   // Candidates eligible for scheduling (screening or completed)
   const eligibleCandidates = candidates.filter(c =>
@@ -131,6 +137,61 @@ export function InterviewCalendar({ jobs, candidates, onScheduleInterview }: Pro
     }
   };
 
+  const openEditInterview = (candidate: ScrapedCandidate) => {
+    const slot = candidate.interviewSlot;
+    if (!slot) return;
+    setSelectedEvent(null);
+    setEditTarget(candidate);
+    setEditDate(slot.date || '');
+    setEditTime(slot.time || '');
+    setEditLocation(slot.location || 'To be confirmed');
+    setEditNotes(slot.notes || '');
+    setErrorMessage('');
+  };
+
+  const closeEditInterview = () => {
+    if (isEditing) return;
+    setEditTarget(null);
+    setEditDate('');
+    setEditTime('');
+    setEditLocation('');
+    setEditNotes('');
+  };
+
+  const handleUpdateInterview = async () => {
+    if (!editTarget || !editDate || !editTime) {
+      const message = 'Please choose a date and time before saving.';
+      setErrorMessage(message);
+      toast.warning(message);
+      return;
+    }
+    setIsEditing(true);
+    setErrorMessage('');
+    setSuccessMessage('');
+    try {
+      const email = editTarget.managementEmail || editTarget.email;
+      const result = await onScheduleInterview(email, editTarget.jobId, editDate, editTime, editLocation || 'To be confirmed', editNotes);
+      const message = result?.interview_email_sent
+        ? `Interview updated for ${editTarget.name}. A notification email has been sent.`
+        : result?.smtp_configured === false
+          ? `Interview updated for ${editTarget.name}. SMTP is not configured, so no email was sent.`
+          : `Interview updated for ${editTarget.name}. Email delivery was not confirmed.`;
+      setSuccessMessage(message);
+      toast.success(message);
+      setEditTarget(null);
+      setEditDate('');
+      setEditTime('');
+      setEditLocation('');
+      setEditNotes('');
+    } catch (err: any) {
+      const message = err.message || 'Failed to update interview.';
+      setErrorMessage(message);
+      toast.error(message);
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
   const eventStyleGetter = (event: CalendarEvent) => ({
     style: {
       backgroundColor: event.resource.isConflict ? '#d97706' : '#2d6a55',
@@ -138,7 +199,8 @@ export function InterviewCalendar({ jobs, candidates, onScheduleInterview }: Pro
       color: 'white',
       borderRadius: '6px',
       fontSize: '12px',
-      fontWeight: 500
+      fontWeight: 500,
+      cursor: 'pointer'
     }
   });
 
@@ -289,7 +351,13 @@ export function InterviewCalendar({ jobs, candidates, onScheduleInterview }: Pro
                     const slotKey = `${slot.date}|${slot.time}`;
                     const isConflict = (slotMap.get(slotKey) || 0) > 1;
                     return (
-                      <div key={c.email} className={`border rounded-xl p-4 ${isConflict ? 'border-[#d97706] bg-[#fffbeb]' : 'border-[#e4e1da] bg-[#f7f6f3]'}`}>
+                      <button
+                        key={c.email}
+                        type="button"
+                        onClick={() => openEditInterview(c)}
+                        className={`w-full text-left border rounded-xl p-4 transition-colors hover:border-[#2d6a55] hover:bg-[#f0f9f4] focus:outline-none focus:ring-2 focus:ring-[#2d6a55]/20 ${isConflict ? 'border-[#d97706] bg-[#fffbeb]' : 'border-[#e4e1da] bg-[#f7f6f3]'}`}
+                        aria-label={`Edit interview for ${c.name}`}
+                      >
                         {isConflict && (
                           <div className="flex items-center gap-1.5 text-xs text-[#d97706] font-semibold mb-2">
                             <AlertTriangle className="w-3.5 h-3.5" /> Time conflict detected
@@ -305,7 +373,8 @@ export function InterviewCalendar({ jobs, candidates, onScheduleInterview }: Pro
                           <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{slot.date} {slot.time}</span>
                           <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{slot.location}</span>
                         </div>
-                      </div>
+                        <p className="mt-2 text-[11px] font-semibold text-[#2d6a55]">Click to edit date, time, location, or notes</p>
+                      </button>
                     );
                   })}
               </div>
@@ -332,7 +401,7 @@ export function InterviewCalendar({ jobs, candidates, onScheduleInterview }: Pro
               startAccessor="start"
               endAccessor="end"
               eventPropGetter={eventStyleGetter}
-              onSelectEvent={(event) => setSelectedEvent(event as CalendarEvent)}
+              onSelectEvent={(event) => openEditInterview((event as CalendarEvent).resource.candidate)}
               tooltipAccessor={(event) => {
                 const e = event as CalendarEvent;
                 return `${e.resource.candidate.name} — ${e.resource.slot.date} at ${e.resource.slot.time}${e.resource.isConflict ? ' ⚠ Conflict' : ''}`;
@@ -359,8 +428,9 @@ export function InterviewCalendar({ jobs, candidates, onScheduleInterview }: Pro
                           phase === 'Screening Completed' ? 'bg-[#fff7ed] text-[#c2410c]' :
                           phase === 'Waiting for Interview' ? 'bg-[#fef9c3] text-[#854d0e]' :
                           phase === 'Interview In Progress' ? 'bg-[#e0e7ff] text-[#3730a3]' :
+                          phase === 'Rejected' ? 'bg-[#b91c1c] text-white border border-[#991b1b]' :
                           phase === 'Hired' ? 'bg-[#dcfce7] text-[#15803d]' :
-                          'bg-[#fee2e2] text-[#b91c1c]'; // Rejected
+                          'bg-[#f0ede8] text-[#6b7063]';
                         return (
                           <span className={`inline-block mt-0.5 px-2 py-0.5 rounded-full text-xs font-semibold ${classes}`}>
                             {phase}
@@ -416,6 +486,101 @@ export function InterviewCalendar({ jobs, candidates, onScheduleInterview }: Pro
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {editTarget && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={closeEditInterview}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full border border-[#e4e1da]" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4 p-5 border-b border-[#e4e1da] bg-[#f7f6f3] rounded-t-2xl">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
+                  <CalendarCheck className="w-4 h-4 text-[#2d6a55]" />
+                </div>
+                <div>
+                  <h3 className="text-[#1c1c1a] font-semibold">Edit Interview</h3>
+                  <p className="text-xs text-[#6b7063]">
+                    {editTarget.name} - {jobs.find(j => j.id === editTarget.jobId)?.title || `Position #${editTarget.jobId}`}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeEditInterview}
+                disabled={isEditing}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#a8a49d] transition-colors hover:bg-white hover:text-[#1c1c1a] disabled:opacity-50"
+                aria-label="Close edit interview dialog"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {errorMessage && (
+                <div className="p-3 bg-[#fdf2f2] border border-[#f5c2c2] rounded-xl text-sm text-[#b91c1c]">{errorMessage}</div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-[#a8a49d] mb-1 font-medium">Date *</label>
+                  <input
+                    type="date"
+                    value={editDate}
+                    onChange={e => setEditDate(e.target.value)}
+                    className="w-full px-3 py-2.5 border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-[#a8a49d] mb-1 font-medium">Time *</label>
+                  <input
+                    type="time"
+                    value={editTime}
+                    onChange={e => setEditTime(e.target.value)}
+                    className="w-full px-3 py-2.5 border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-[#a8a49d] mb-1 font-medium">Location</label>
+                <input
+                  type="text"
+                  value={editLocation}
+                  onChange={e => setEditLocation(e.target.value)}
+                  placeholder="Google Meet, Zoom link, office room..."
+                  className="w-full px-3 py-2.5 border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-[#a8a49d] mb-1 font-medium">Notes</label>
+                <textarea
+                  value={editNotes}
+                  onChange={e => setEditNotes(e.target.value)}
+                  rows={3}
+                  placeholder="Panel details, preparation notes, meeting instructions..."
+                  className="w-full px-3 py-2.5 border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55] resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 p-5 pt-0">
+              <button
+                type="button"
+                onClick={closeEditInterview}
+                disabled={isEditing}
+                className="flex-1 px-4 py-2.5 bg-white border border-[#e4e1da] text-[#6b7063] rounded-lg hover:bg-[#f7f6f3] text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleUpdateInterview}
+                disabled={isEditing || !editDate || !editTime}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+              >
+                {isEditing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarCheck className="w-4 h-4" />}
+                {isEditing ? 'Saving...' : 'Save Interview'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -62,11 +62,28 @@ const getQuestionFeedbackItems = (candidate: ScrapedCandidate): any[] => {
   }));
 };
 
+const hasInterviewFeedbackDetails = (candidate: ScrapedCandidate): boolean =>
+  hasSubmittedInterviewAnswers(candidate.answers)
+  || Boolean(candidate.evaluation?.question_feedback?.length)
+  || Boolean(candidate.evaluation?.critiques?.length);
+
+const scoreBreakdownHelp: Record<string, string> = {
+  Role: 'Role alignment measures how directly the answer addresses the selected job requirements and responsibilities.',
+  Depth: 'Depth measures technical correctness, specificity, and whether the candidate explains the reasoning behind their answer.',
+  Evidence: 'Evidence measures whether the candidate supports claims with concrete examples, metrics, tools, projects, or outcomes.',
+  Impact: 'Impact measures the business or product value shown in the answer, not just activity or effort.',
+  Clarity: 'Clarity measures how clearly and professionally the candidate communicates the answer.',
+};
+
+const positionFitHelp = 'How closely this candidate matches the selected job. It looks at their skills, experience, resume evidence, and interview answers.';
+const velocityHelp = 'How quickly this candidate appears able to learn and grow. Higher velocity means stronger signs of adapting, improving, and picking up new skills.';
+const trajectoryHelp = 'A growth-potential view of the candidate. It is similar to velocity and helps HR spot candidates who may improve quickly after joining.';
+
 interface Props {
   jobs: Job[];
   candidates: ScrapedCandidate[];
   neutralize: boolean;
-  onToggleNeutralize: (active: boolean) => void;
+  onToggleNeutralize: (active: boolean) => Promise<void> | void;
   biasControls: BiasControls;
   onUpdateBiasControls: (updates: Partial<BiasControls>) => Promise<BiasControls>;
   isLoading?: boolean;
@@ -76,7 +93,7 @@ interface Props {
   onDelete: (email: string) => Promise<void>;
   onReject: (email: string, positionId?: number, hrFeedback?: string, rejectionMessage?: string) => Promise<void>;
   onScheduleInterview: (email: string, positionId: number | undefined, date: string, time: string, location: string, notes?: string) => Promise<any>;
-  onUpdateOutreachNotes: (email: string, positionId?: number, outreachEmail?: string, hrFeedback?: string) => Promise<void>;
+  onUpdateOutreachNotes: (email: string, positionId?: number, outreachEmail?: string, hrFeedback?: string) => Promise<any>;
   onRevertStatus?: (email: string, positionId?: number) => Promise<void>;
   view?: 'overview' | 'candidates';
 }
@@ -194,6 +211,7 @@ export function CandidateDashboard({
   const [selectedTrajectoryCandidate, setSelectedTrajectoryCandidate] = useState<ScrapedCandidate | null>(null);
   const [fairnessAudit, setFairnessAudit] = useState<any>(null);
   const [fairnessLoading, setFairnessLoading] = useState(false);
+  const [biasControlsSaving, setBiasControlsSaving] = useState(false);
   const [localPrestigeWeight, setLocalPrestigeWeight] = useState(biasControls.prestige_weight);
   const [isSeedingBiasMockData, setIsSeedingBiasMockData] = useState(false);
 
@@ -445,11 +463,17 @@ export function CandidateDashboard({
           <p className="text-sm text-[#1c1c1a] mb-2 font-semibold">{data.name}</p>
           <div className="space-y-1">
             <div className="flex justify-between gap-4 text-xs font-medium">
-              <span className="text-[#6b7063]">Position Fit</span>
+              <span className="text-[#6b7063] inline-flex items-center gap-1.5">
+                <span>Position Fit</span>
+                <KnowledgeTooltip label="Explain position fit">{positionFitHelp}</KnowledgeTooltip>
+              </span>
               <span className="text-[#2d6a55]">{data.matchScore}%</span>
             </div>
             <div className="flex justify-between gap-4 text-xs font-medium">
-              <span className="text-[#6b7063]">Trajectory</span>
+              <span className="text-[#6b7063] inline-flex items-center gap-1.5">
+                <span>Trajectory</span>
+                <KnowledgeTooltip label="Explain trajectory">{trajectoryHelp}</KnowledgeTooltip>
+              </span>
               <span className="text-[#c9a84c]">{data.trajectoryScore}%</span>
             </div>
             <p className="text-[10px] text-[#a8a49d] pt-1">Click to open candidate profile</p>
@@ -488,15 +512,33 @@ export function CandidateDashboard({
   }, [selectedPositionId, candidates.length, biasControls.scoring_mode, biasControls.prestige_weight, view]);
 
   const updateBiasControl = async (updates: Partial<BiasControls>, options: { notify?: boolean } = {}) => {
+    if (biasControlsSaving) return;
+    setBiasControlsSaving(true);
     try {
       await onUpdateBiasControls(updates);
       if (options.notify !== false) toast.success('Bias controls updated.');
     } catch (error: any) {
       toast.error(error.message || 'Failed to update bias controls.');
+    } finally {
+      setBiasControlsSaving(false);
+    }
+  };
+
+  const handleNeutralizeControl = async (checked: boolean) => {
+    if (biasControlsSaving) return;
+    setBiasControlsSaving(true);
+    try {
+      await onToggleNeutralize(checked);
+      toast.success('Bias controls updated.');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to update bias controls.');
+    } finally {
+      setBiasControlsSaving(false);
     }
   };
 
   const commitPrestigeWeight = () => {
+    if (biasControlsSaving) return;
     if (localPrestigeWeight !== biasControls.prestige_weight) {
       updateBiasControl({ prestige_weight: localPrestigeWeight }, { notify: false });
     }
@@ -548,6 +590,12 @@ export function CandidateDashboard({
           </div>
           <p className="text-sm text-[#6b7063]">Choose what hiring managers see and how much reputation affects scores.</p>
         </div>
+        {biasControlsSaving && (
+          <div className="ml-auto inline-flex items-center gap-2 rounded-full border border-[#c8e6d8] bg-[#e8f2ee] px-3 py-1.5 text-xs font-semibold text-[#2d6a55]">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Updating...
+          </div>
+        )}
       </div>
 
       <div className="space-y-2.5">
@@ -573,8 +621,9 @@ export function CandidateDashboard({
           <Switch.Root
             id="prestige-toggle"
             checked={neutralize}
-            onCheckedChange={onToggleNeutralize}
-            className="w-14 h-7 bg-[#e4e1da] rounded-full relative data-[state=checked]:bg-[#2d6a55] transition-colors outline-none cursor-pointer flex-shrink-0"
+            onCheckedChange={handleNeutralizeControl}
+            disabled={biasControlsSaving}
+            className="w-14 h-7 bg-[#e4e1da] rounded-full relative data-[state=checked]:bg-[#2d6a55] transition-colors outline-none cursor-pointer flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Switch.Thumb className="block w-6 h-6 bg-white rounded-full shadow transition-transform duration-200 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[30px]" />
           </Switch.Root>
@@ -603,7 +652,8 @@ export function CandidateDashboard({
             id="anonymous-toggle"
             checked={anonymizedMode}
             onCheckedChange={(checked) => updateBiasControl({ anonymized_blind_hiring: checked })}
-            className="w-14 h-7 bg-[#e4e1da] rounded-full relative data-[state=checked]:bg-[#2d6a55] transition-colors outline-none cursor-pointer flex-shrink-0"
+            disabled={biasControlsSaving}
+            className="w-14 h-7 bg-[#e4e1da] rounded-full relative data-[state=checked]:bg-[#2d6a55] transition-colors outline-none cursor-pointer flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Switch.Thumb className="block w-6 h-6 bg-white rounded-full shadow transition-transform duration-200 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[30px]" />
           </Switch.Root>
@@ -632,12 +682,13 @@ export function CandidateDashboard({
               ].map(option => (
                 <button
                   key={option.value}
+                  disabled={biasControlsSaving || biasControls.scoring_mode === option.value}
                   onClick={() => updateBiasControl({ scoring_mode: option.value as BiasControls['scoring_mode'] })}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
                     biasControls.scoring_mode === option.value
                       ? 'bg-[#2d6a55] text-white'
                       : 'text-[#6b7063] hover:text-[#1c1c1a]'
-                  }`}
+                  } disabled:cursor-not-allowed disabled:opacity-70`}
                 >
                   {option.label}
                 </button>
@@ -671,7 +722,8 @@ export function CandidateDashboard({
                 onKeyUp={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') commitPrestigeWeight();
                 }}
-                className="w-full accent-[#2d6a55]"
+                disabled={biasControlsSaving}
+                className="w-full accent-[#2d6a55] disabled:cursor-not-allowed disabled:opacity-60"
               />
               <div className="flex justify-between text-[11px] text-[#a8a49d] mt-1">
                 <span>0%</span>
@@ -753,11 +805,38 @@ export function CandidateDashboard({
   );
 
   const kpiCards = [
-    { label: selectedJob ? 'Selected Position Pool' : 'Active Positions', value: selectedJob ? totalCandidates : activePositions, icon: Briefcase },
-    { label: 'Active Pipeline', value: activePipelineCount, icon: Users },
-    { label: 'Screening Completed', value: screeningCompleted, icon: CheckCircle2 },
-    { label: 'Hired', value: hiredCandidates, icon: Award },
-    { label: 'Average Position Fit', value: `${averageMatch}%`, icon: Target },
+    {
+      label: selectedJob ? 'Selected Position Pool' : 'Active Positions',
+      value: selectedJob ? totalCandidates : activePositions,
+      icon: Briefcase,
+      help: selectedJob
+        ? 'Candidates currently associated with the selected role.'
+        : 'Open roles currently active in the recruiting workspace.',
+    },
+    {
+      label: 'Active Pipeline',
+      value: activePipelineCount,
+      icon: Users,
+      help: 'Candidates still under consideration, excluding hired or rejected records.',
+    },
+    {
+      label: 'Screening Completed',
+      value: screeningCompleted,
+      icon: CheckCircle2,
+      help: 'Candidates who submitted interview or sandbox answers and have an evaluation available.',
+    },
+    {
+      label: 'Hired',
+      value: hiredCandidates,
+      icon: Award,
+      help: 'Candidates marked as hired after the recruiting decision workflow.',
+    },
+    {
+      label: 'Average Position Fit',
+      value: `${averageMatch}%`,
+      icon: Target,
+      help: 'The average Position Fit for the candidates currently shown. It helps HR see whether this visible pool generally matches the selected job.',
+    },
   ];
 
   return (
@@ -885,7 +964,7 @@ export function CandidateDashboard({
 
       {/* KPI Strip */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        {kpiCards.map(({ label, value, icon: Icon }, idx) => (
+        {kpiCards.map(({ label, value, icon: Icon, help }, idx) => (
           <motion.div
             key={label}
             initial={{ opacity: 0, y: 16 }}
@@ -899,7 +978,10 @@ export function CandidateDashboard({
               </div>
             </div>
             <p className="text-3xl text-[#1c1c1a] mb-1 font-semibold">{value}</p>
-            <p className="text-sm text-[#6b7063]">{label}</p>
+            <p className="text-sm text-[#6b7063] inline-flex items-center gap-1.5">
+              <span>{label}</span>
+              <KnowledgeTooltip label={`Explain ${label}`}>{help}</KnowledgeTooltip>
+            </p>
           </motion.div>
         ))}
       </div>
@@ -919,7 +1001,12 @@ export function CandidateDashboard({
             <Target className="w-4.5 h-4.5 text-[#2d6a55]" style={{ width: '18px', height: '18px' }} />
           </div>
           <div>
-            <h3 className="text-[#1c1c1a] font-semibold text-base">Trajectory Analysis</h3>
+            <div className="inline-flex items-center gap-1.5">
+              <h3 className="text-[#1c1c1a] font-semibold text-base">Trajectory Analysis</h3>
+              <KnowledgeTooltip label="Explain trajectory analysis">
+                This chart compares job match today with growth potential. It helps HR see who is ready now and who may improve quickly.
+              </KnowledgeTooltip>
+            </div>
             <p className="text-xs text-[#6b7063]">Current-position fit vs. learning velocity</p>
           </div>
         </div>
@@ -970,7 +1057,12 @@ export function CandidateDashboard({
               <div className="bg-[#f0f9f4] border border-[#c8e6d8] rounded-xl p-4 shadow-sm">
                 <div className="flex items-center gap-2 mb-1.5">
                   <div className="w-2 h-2 rounded-full bg-[#2d6a55]" />
-                  <p className="text-xs text-[#2d6a55] uppercase tracking-wider font-semibold">High Position Fit + High Trajectory</p>
+                  <p className="text-xs text-[#2d6a55] uppercase tracking-wider font-semibold inline-flex items-center gap-1.5">
+                    <span>High Position Fit + High Trajectory</span>
+                    <KnowledgeTooltip label="Explain high fit and high trajectory">
+                      These candidates look strong for the job now and also show signs they can keep learning quickly.
+                    </KnowledgeTooltip>
+                  </p>
                 </div>
                 <p className="text-xs text-[#3d5a4a] leading-relaxed">
                   Ideal candidates with strong fit and exceptional growth potential
@@ -979,7 +1071,12 @@ export function CandidateDashboard({
               <div className="bg-[#fdf8ee] border border-[#e8d8a0] rounded-xl p-4 shadow-sm">
                 <div className="flex items-center gap-2 mb-1.5">
                   <div className="w-2 h-2 rounded-full bg-[#c9a84c]" />
-                  <p className="text-xs text-[#c9a84c] uppercase tracking-wider font-semibold">Hidden Gems</p>
+                  <p className="text-xs text-[#c9a84c] uppercase tracking-wider font-semibold inline-flex items-center gap-1.5">
+                    <span>Hidden Gems</span>
+                    <KnowledgeTooltip label="Explain hidden gems">
+                      Candidates who may not look perfect at first glance, but show strong signs of learning, growth, or useful potential.
+                    </KnowledgeTooltip>
+                  </p>
                 </div>
                 <p className="text-xs text-[#5a4d2a] leading-relaxed">
                   Fast learners with high potential worth considering despite gaps
@@ -1176,8 +1273,15 @@ export function CandidateDashboard({
               const saveFeedbackField = async () => {
                 setIsSavingField(prev => ({ ...prev, [candidate.email]: true }));
                 try {
-                  await onUpdateOutreachNotes(actionEmail, candidate.jobId, undefined, draftFeedback);
-                  setInviteSuccessMessage(`Internal notes saved successfully for ${candidate.name}!`);
+                  const result = await onUpdateOutreachNotes(actionEmail, candidate.jobId, undefined, draftFeedback);
+                  const emailMessage = result?.feedback_email_sent
+                    ? ' Candidate was notified by email.'
+                    : result?.smtp_configured === false
+                      ? ' SMTP is not configured, so no email was sent.'
+                      : result?.feedback_email_receipt
+                        ? ' Email delivery was not confirmed.'
+                        : '';
+                  setInviteSuccessMessage(`Notes & feedback saved for ${candidate.name}.${emailMessage}`);
                   setTimeout(() => setInviteSuccessMessage(''), 4000);
                 } catch (err: any) {
                   setActionError(err.message || 'Failed to update HR notes.');
@@ -1258,8 +1362,9 @@ export function CandidateDashboard({
                                     phase === 'Screening Completed' ? 'bg-[#fff7ed] text-[#c2410c]' :
                                     phase === 'Waiting for Interview' ? 'bg-[#fef9c3] text-[#854d0e]' :
                                     phase === 'Interview In Progress' ? 'bg-[#e0e7ff] text-[#3730a3]' :
+                                    phase === 'Rejected' ? 'bg-[#b91c1c] text-white border border-[#991b1b]' :
                                     phase === 'Hired' ? 'bg-[#dcfce7] text-[#15803d]' :
-                                    'bg-[#fee2e2] text-[#b91c1c]'; // Rejected
+                                    'bg-[#f0ede8] text-[#6b7063]';
                                   return (
                                     <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${classes}`}>
                                       {phase}
@@ -1286,11 +1391,17 @@ export function CandidateDashboard({
                                   candidate.matchScore >= 60 ? 'text-[#c9a84c]' :
                                   'text-[#6b7063]'
                                 }`}>{candidate.matchScore}</div>
-                                <div className="text-xs text-[#a8a49d]">Position Fit</div>
+                                <div className="text-xs text-[#a8a49d] inline-flex items-center justify-center gap-1">
+                                  <span>Position Fit</span>
+                                  <KnowledgeTooltip label="Explain position fit">{positionFitHelp}</KnowledgeTooltip>
+                                </div>
                               </div>
                               <div className="text-center">
                                 <div className="text-lg text-[#c9a84c] font-semibold">{candidate.trajectoryScore}</div>
-                                <div className="text-xs text-[#a8a49d]">Velocity</div>
+                                <div className="text-xs text-[#a8a49d] inline-flex items-center justify-center gap-1">
+                                  <span>Velocity</span>
+                                  <KnowledgeTooltip label="Explain velocity">{velocityHelp}</KnowledgeTooltip>
+                                </div>
                               </div>
                             </div>
                           </div>
@@ -1308,6 +1419,124 @@ export function CandidateDashboard({
                             <p className="text-sm text-[#6b7063] leading-relaxed italic">
                               "{neutralizeText(candidate.sourcingPitch)}"
                             </p>
+                          </div>
+                        )}
+
+                        {view === 'overview' && hasInterviewFeedbackDetails(candidate) && (
+                          <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-4 shadow-sm text-left">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-4">
+                              <div>
+                                <div className="inline-flex items-center gap-1.5">
+                                  <p className="text-xs tracking-wider uppercase text-[#2d6a55] font-semibold">Interview Questions, Answers & Agent Feedback</p>
+                                  <KnowledgeTooltip label="Explain interview feedback">
+                                    This is the per-candidate screening transcript. The agent evaluates each submitted answer against the exact question and selected job requirements.
+                                  </KnowledgeTooltip>
+                                </div>
+                                <p className="text-xs text-[#6b7063] mt-1">Detailed HR review attached to this candidate's pipeline record.</p>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {candidate.screeningScore !== undefined && (
+                                  <span className="rounded-full bg-white border border-[#e4e1da] px-2.5 py-1 text-xs font-semibold text-[#1c1c1a] inline-flex items-center gap-1.5">
+                                    <span>Score: {candidate.screeningScore}/100</span>
+                                    <KnowledgeTooltip label="Explain screening score">
+                                      Overall screening score from this candidate's submitted answers. Improper, blank, or unrelated answers should score zero.
+                                    </KnowledgeTooltip>
+                                  </span>
+                                )}
+                                {(() => {
+                                  const feedbackPhase = getCandidatePhase(candidate.status, candidate.answers);
+                                  const feedbackPhaseClasses = feedbackPhase === 'Rejected'
+                                    ? 'bg-[#b91c1c] border-[#991b1b] text-white'
+                                    : 'bg-[#e8f2ee] border-[#c8e6d8] text-[#2d6a55]';
+                                  return (
+                                    <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${feedbackPhaseClasses}`}>
+                                      {feedbackPhase}
+                                    </span>
+                                  );
+                                })()}
+                              </div>
+                            </div>
+
+                            {candidate.evaluation?.role_alignment_summary && (
+                              <p className="text-xs text-[#6b7063] leading-relaxed mb-4 border-t border-[#e4e1da] pt-3">
+                                {candidate.evaluation.role_alignment_summary}
+                              </p>
+                            )}
+
+                            <div className="space-y-3">
+                              {questionFeedbackItems.map((item: any, critiqueIndex: number) => {
+                                const answer = item.candidate_answer || candidate.answers?.[critiqueIndex] || item.candidate_answer_excerpt || '';
+                                return (
+                                  <div key={`${candidate.email}-overview-pipeline-feedback-${critiqueIndex}`} className="bg-white border border-[#e4e1da] rounded-lg p-3">
+                                    <div className="flex items-center justify-between gap-3 mb-2">
+                                      <p className="text-xs text-[#2d6a55] font-semibold">Question {critiqueIndex + 1}</p>
+                                      {item.per_answer_score !== undefined && (
+                                        <span className="text-xs text-[#1c1c1a] font-semibold inline-flex items-center gap-1.5">
+                                          <span>{item.per_answer_score}/100</span>
+                                          <KnowledgeTooltip label="Explain per-question score">
+                                            This score rates only this answer against its question, requirement focus, evidence, and communication quality.
+                                          </KnowledgeTooltip>
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-[#1c1c1a] font-medium leading-relaxed">
+                                      {cleanQuestionText(item.question || candidate.customQuestions?.[critiqueIndex] || `Screening question ${critiqueIndex + 1}`, critiqueIndex)}
+                                    </p>
+                                    <div className="mt-2 rounded-lg border border-[#e4e1da] bg-[#f7f6f3] p-3">
+                                      <p className="text-[10px] font-semibold uppercase text-[#a8a49d] mb-1">Candidate Answer</p>
+                                      <p className="text-xs text-[#52574e] leading-relaxed whitespace-pre-wrap">{answer || 'No answer submitted'}</p>
+                                    </div>
+                                    <div className="mt-2 rounded-lg border border-[#c8e6d8] bg-[#f0f7f4] p-3">
+                                      <p className="text-[10px] font-semibold uppercase text-[#2d6a55] mb-1 inline-flex items-center gap-1.5">
+                                        <span>Agent feedback</span>
+                                        <KnowledgeTooltip label="Explain agent feedback">
+                                          Professional interviewer-style critique that cites the answer, explains the score, and identifies what HR should verify next.
+                                        </KnowledgeTooltip>
+                                      </p>
+                                      <p className="text-xs text-[#245747] leading-relaxed">
+                                        {alignScoreMentions(item.critique || item.feedback || item.hiring_manager_note || 'Feedback has not been generated for this question yet.', item.per_answer_score)}
+                                      </p>
+                                    </div>
+                                    {item.strengths?.length ? (
+                                      <div className="mt-3">
+                                        <p className="text-[10px] text-[#2d6a55] uppercase tracking-wider font-semibold mb-1.5">Evidence supporting the score</p>
+                                        <ul className="space-y-1">
+                                          {item.strengths.map((strength: string, strengthIndex: number) => (
+                                            <li key={strengthIndex} className="text-xs text-[#3d5a4a] leading-relaxed flex items-start gap-1.5">
+                                              <CheckCircle2 className="w-3 h-3 text-[#2d6a55] flex-shrink-0 mt-0.5" />
+                                              <span>{strength}</span>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : null}
+                                    {item.weaknesses?.length ? (
+                                      <div className="mt-3">
+                                        <p className="text-[10px] text-[#c25a2a] uppercase tracking-wider font-semibold mb-1.5">Risks or missing proof</p>
+                                        <ul className="space-y-1">
+                                          {item.weaknesses.map((weakness: string, weaknessIndex: number) => (
+                                            <li key={weaknessIndex} className="text-xs text-[#6b7063] leading-relaxed flex items-start gap-1.5">
+                                              <AlertCircle className="w-3 h-3 text-[#c25a2a] flex-shrink-0 mt-0.5" />
+                                              <span>{weakness}</span>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : null}
+                                    {item.suggested_improvement && (
+                                      <p className="mt-3 rounded-lg border border-[#e4e1da] bg-[#f7f6f3] p-3 text-xs text-[#6b7063] leading-relaxed">
+                                        <span className="font-semibold text-[#1c1c1a] inline-flex items-center gap-1.5">
+                                          <span>Suggested probe:</span>
+                                          <KnowledgeTooltip label="Explain suggested probe">
+                                            A follow-up question HR can ask to verify weak evidence, clarify risk, or test role-specific depth.
+                                          </KnowledgeTooltip>
+                                        </span> {item.suggested_improvement}
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
 
@@ -1735,7 +1964,7 @@ export function CandidateDashboard({
                           </div>
                         </div>
 
-                        {/* F1: Outreach Email Editable Area & F2: Standalone Internal Notes / Feedback */}
+                        {/* F1: Outreach Email Editable Area & F2: Candidate-visible HR feedback */}
                         <div className="grid md:grid-cols-2 gap-4">
                           {/* F6: Editable Outreach email text area */}
                           <div className="bg-white border border-[#e4e1da] rounded-xl p-4 shadow-sm space-y-3">
@@ -1797,16 +2026,16 @@ export function CandidateDashboard({
                               </div>
                             ) : null}
                           </div>
-                          {/* F2: Standalone Internal notes / HR feedback */}
+                          {/* F2: Candidate-visible HR feedback */}
                           <div className="bg-white border border-[#e4e1da] rounded-xl p-4 shadow-sm space-y-3">
                             <div className="flex items-center justify-between">
-                              <span className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Internal HR Notes & Feedback</span>
-                              <span className="text-[10px] text-[#3730a3] font-semibold">Hiring Team Notes</span>
+                              <span className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">HR Notes & Feedback</span>
+                              <span className="text-[10px] text-[#3730a3] font-semibold">Candidate will be emailed</span>
                             </div>
                             <textarea
                               value={draftFeedback}
                               onChange={(e) => setEditedFeedback(prev => ({ ...prev, [candidate.email]: e.target.value }))}
-                              placeholder="Add internal candidate performance notes, feedback, or interview impressions..."
+                              placeholder="Add candidate-facing feedback or interview impressions. Saving this will notify the candidate by email."
                               rows={5}
                               className="w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-xs text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55] resize-none"
                             />
@@ -1822,7 +2051,7 @@ export function CandidateDashboard({
                             </div>
                             {candidate.hrFeedback ? (
                               <div className="border-t border-[#e4e1da] pt-3 space-y-2">
-                                <p className="text-[10px] text-[#a8a49d] uppercase tracking-wider font-semibold">Active Saved Notes</p>
+                                <p className="text-[10px] text-[#a8a49d] uppercase tracking-wider font-semibold">Active Candidate Feedback</p>
                                 <div className="rounded-lg bg-[#f5f3ff] border border-[#e0dbff] p-3 space-y-2">
                                   <div className="flex items-center justify-between gap-2">
                                     <span className="text-[10px] font-bold uppercase tracking-wider text-[#3730a3]">Saved Feedback Note</span>
@@ -2080,7 +2309,7 @@ export function CandidateDashboard({
                         </div>
 
                         {/* Screening Results / Interview Session */}
-                        {((['completed', 'screening', 'hired', 'interview_scheduled'].includes(candidate.status)) || isPendingInterview(candidate.status, candidate.answers)) && (
+                        {view !== 'overview' && ((['completed', 'screening', 'hired', 'interview_scheduled'].includes(candidate.status)) || isPendingInterview(candidate.status, candidate.answers)) && (
                           <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-4 shadow-sm text-left">
                             {isPendingInterview(candidate.status, candidate.answers) ? (
                               <div className="text-center py-6 bg-white border border-[#e4e1da] rounded-xl">
@@ -2125,7 +2354,12 @@ export function CandidateDashboard({
                                       ['Clarity', candidate.evaluation.score_breakdown.communication_clarity, 10]
                                     ].map(([label, value, max]) => (
                                       <div key={label} className="bg-white border border-[#e4e1da] rounded-lg p-2">
-                                        <p className="text-[10px] text-[#a8a49d] uppercase tracking-wider font-semibold">{label}</p>
+                                        <p className="text-[10px] text-[#a8a49d] uppercase tracking-wider font-semibold inline-flex items-center gap-1">
+                                          <span>{label}</span>
+                                          <KnowledgeTooltip label={`Explain ${label}`}>
+                                            {scoreBreakdownHelp[String(label)]}
+                                          </KnowledgeTooltip>
+                                        </p>
                                         <p className="text-sm text-[#1c1c1a] font-semibold mt-0.5">{value || 0}/{max}</p>
                                       </div>
                                     ))}
@@ -2145,8 +2379,11 @@ export function CandidateDashboard({
                                                   Question {critiqueIndex + 1}
                                                 </span>
                                                 {item.per_answer_score !== undefined && (
-                                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#e8f2ee] text-[#2d6a55] border border-[#c8e6d8]">
-                                                    Score: {item.per_answer_score}/100
+                                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#e8f2ee] text-[#2d6a55] border border-[#c8e6d8] inline-flex items-center gap-1">
+                                                    <span>Score: {item.per_answer_score}/100</span>
+                                                    <KnowledgeTooltip label="Explain per-question score">
+                                                      Per-answer score based on relevance, correctness, evidence, impact, and communication quality for this exact question.
+                                                    </KnowledgeTooltip>
                                                   </span>
                                                 )}
                                               </div>
@@ -2167,7 +2404,12 @@ export function CandidateDashboard({
                                               </div>
 
                                               <div className="bg-[#f0f7f4] rounded-lg p-3 border border-[#c8e6d8]">
-                                                <p className="text-[10px] font-semibold uppercase text-[#2d6a55] mb-1">AI Feedback</p>
+                                                <p className="text-[10px] font-semibold uppercase text-[#2d6a55] mb-1 inline-flex items-center gap-1.5">
+                                                  <span>AI Feedback</span>
+                                                  <KnowledgeTooltip label="Explain AI feedback">
+                                                    The agent's interviewer-style assessment of what the answer proves, what is missing, and how confident HR should be.
+                                                  </KnowledgeTooltip>
+                                                </p>
                                                 <p className="text-xs text-[#245747] leading-relaxed">
                                                   {alignScoreMentions(item.critique || item.feedback || 'Agent feedback has not been generated yet.', item.per_answer_score)}
                                                 </p>
@@ -2175,7 +2417,12 @@ export function CandidateDashboard({
 
                                               {item.strengths?.length ? (
                                                 <div className="mt-2 pl-1">
-                                                  <p className="text-[10px] text-[#2d6a55] uppercase tracking-wider font-semibold mb-1">Evidence supporting the score</p>
+                                                  <p className="text-[10px] text-[#2d6a55] uppercase tracking-wider font-semibold mb-1 inline-flex items-center gap-1.5">
+                                                    <span>Evidence supporting the score</span>
+                                                    <KnowledgeTooltip label="Explain evidence supporting the score">
+                                                      Specific strengths found in the candidate's answer that justify credit in the screening score.
+                                                    </KnowledgeTooltip>
+                                                  </p>
                                                   <ul className="space-y-0.5">
                                                     {item.strengths.map((strength: string, strengthIndex: number) => (
                                                       <li key={strengthIndex} className="text-xs text-[#3d5a4a] leading-relaxed flex items-start gap-1.5">
@@ -2188,7 +2435,12 @@ export function CandidateDashboard({
                                               ) : null}
                                               {item.weaknesses?.length ? (
                                                 <div className="mt-2 pl-1">
-                                                  <p className="text-[10px] text-[#c25a2a] uppercase tracking-wider font-semibold mb-1">Risks or missing proof</p>
+                                                  <p className="text-[10px] text-[#c25a2a] uppercase tracking-wider font-semibold mb-1 inline-flex items-center gap-1.5">
+                                                    <span>Risks or missing proof</span>
+                                                    <KnowledgeTooltip label="Explain risks or missing proof">
+                                                      Gaps, unsupported claims, weak details, or answer quality issues that reduce confidence in the candidate's response.
+                                                    </KnowledgeTooltip>
+                                                  </p>
                                                   <ul className="space-y-0.5">
                                                     {item.weaknesses.map((weakness: string, weaknessIndex: number) => (
                                                       <li key={weaknessIndex} className="text-xs text-[#6b7063] leading-relaxed flex items-start gap-1.5">
@@ -2203,12 +2455,22 @@ export function CandidateDashboard({
                                                 <div className="mt-2 rounded-lg border border-[#e4e1da] bg-[#f7f6f3] p-2.5">
                                                   {item.hiring_manager_note && (
                                                     <p className="text-xs text-[#1c1c1a] leading-relaxed">
-                                                      <span className="font-semibold text-[10px]">Hiring manager note:</span> {item.hiring_manager_note}
+                                                      <span className="font-semibold text-[10px] inline-flex items-center gap-1.5">
+                                                        <span>Hiring manager note:</span>
+                                                        <KnowledgeTooltip label="Explain hiring manager note">
+                                                          A concise summary HR can use when deciding whether to advance, reject, or investigate further.
+                                                        </KnowledgeTooltip>
+                                                      </span> {item.hiring_manager_note}
                                                     </p>
                                                   )}
                                                   {item.suggested_improvement && (
                                                     <p className="text-xs text-[#6b7063] leading-relaxed mt-1">
-                                                      <span className="font-semibold text-[#1c1c1a] text-[10px]">Suggested probe:</span> {item.suggested_improvement}
+                                                      <span className="font-semibold text-[#1c1c1a] text-[10px] inline-flex items-center gap-1.5">
+                                                        <span>Suggested probe:</span>
+                                                        <KnowledgeTooltip label="Explain suggested probe">
+                                                          A follow-up interview question that helps HR verify the candidate's weak or uncertain evidence.
+                                                        </KnowledgeTooltip>
+                                                      </span> {item.suggested_improvement}
                                                     </p>
                                                   )}
                                                 </div>
@@ -2518,15 +2780,30 @@ export function CandidateDashboard({
             <div className="p-5 overflow-y-auto max-h-[calc(90vh-105px)] space-y-5">
               <div className="grid sm:grid-cols-3 gap-3">
                 <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-4">
-                  <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Position Fit</p>
+                  <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold inline-flex items-center gap-1.5">
+                    <span>Position Fit</span>
+                    <KnowledgeTooltip label="Explain position fit">
+                      {positionFitHelp}
+                    </KnowledgeTooltip>
+                  </p>
                   <p className="text-2xl text-[#2d6a55] font-semibold mt-1">{selectedTrajectoryCandidate.matchScore}%</p>
                 </div>
                 <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-4">
-                  <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Trajectory</p>
+                  <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold inline-flex items-center gap-1.5">
+                    <span>Trajectory</span>
+                    <KnowledgeTooltip label="Explain trajectory">
+                      {trajectoryHelp}
+                    </KnowledgeTooltip>
+                  </p>
                   <p className="text-2xl text-[#c9a84c] font-semibold mt-1">{selectedTrajectoryCandidate.trajectoryScore}%</p>
                 </div>
                 <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-4">
-                  <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Screening</p>
+                  <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold inline-flex items-center gap-1.5">
+                    <span>Screening</span>
+                    <KnowledgeTooltip label="Explain screening">
+                      Screening is the interview-answer evaluation score after the candidate completes the sandbox questions.
+                    </KnowledgeTooltip>
+                  </p>
                   <p className="text-2xl text-[#1c1c1a] font-semibold mt-1">{selectedTrajectoryCandidate.screeningScore ?? '--'}</p>
                 </div>
               </div>
@@ -2550,7 +2827,12 @@ export function CandidateDashboard({
                       ['Clarity', selectedTrajectoryCandidate.evaluation.score_breakdown.communication_clarity, 10]
                     ].map(([label, val, max]) => (
                       <div key={label} className="rounded-lg border border-[#e4e1da] bg-white p-2.5 text-center">
-                        <p className="text-[10px] text-[#a8a49d] uppercase tracking-wider font-bold">{label}</p>
+                        <p className="text-[10px] text-[#a8a49d] uppercase tracking-wider font-bold inline-flex items-center justify-center gap-1">
+                          <span>{label}</span>
+                          <KnowledgeTooltip label={`Explain ${label}`}>
+                            {scoreBreakdownHelp[String(label)]}
+                          </KnowledgeTooltip>
+                        </p>
                         <p className="text-xs text-[#1c1c1a] font-bold mt-1">{val || 0}/{max}</p>
                       </div>
                     ))}
@@ -2568,8 +2850,11 @@ export function CandidateDashboard({
                         <p className="text-xs text-[#6b7063] mt-1">Detailed transcript and critique from the interview session.</p>
                       </div>
                       {selectedTrajectoryCandidate.screeningScore !== undefined && (
-                        <span className="rounded-full bg-white border border-[#e4e1da] px-2.5 py-1 text-xs font-semibold text-[#1c1c1a]">
-                          Score: {selectedTrajectoryCandidate.screeningScore}/100
+                        <span className="rounded-full bg-white border border-[#e4e1da] px-2.5 py-1 text-xs font-semibold text-[#1c1c1a] inline-flex items-center gap-1.5">
+                          <span>Score: {selectedTrajectoryCandidate.screeningScore}/100</span>
+                          <KnowledgeTooltip label="Explain screening score">
+                            Overall interview-screening score generated from the candidate's submitted answers and detailed question feedback.
+                          </KnowledgeTooltip>
                         </span>
                       )}
                     </div>
@@ -2584,8 +2869,11 @@ export function CandidateDashboard({
                                   Question {critiqueIndex + 1}
                                 </span>
                                 {item.per_answer_score !== undefined && (
-                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#e8f2ee] text-[#2d6a55] border border-[#c8e6d8]">
-                                    Score: {item.per_answer_score}/100
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#e8f2ee] text-[#2d6a55] border border-[#c8e6d8] inline-flex items-center gap-1">
+                                    <span>Score: {item.per_answer_score}/100</span>
+                                    <KnowledgeTooltip label="Explain per-question score">
+                                      Score for this individual answer based on role alignment, technical depth, evidence, impact, and clarity.
+                                    </KnowledgeTooltip>
                                   </span>
                                 )}
                               </div>
@@ -2606,7 +2894,12 @@ export function CandidateDashboard({
                               </div>
 
                               <div className="bg-[#f0f7f4] rounded-lg p-3 border border-[#c8e6d8]">
-                                <p className="text-[10px] font-semibold uppercase text-[#2d6a55] mb-1">AI Feedback</p>
+                                <p className="text-[10px] font-semibold uppercase text-[#2d6a55] mb-1 inline-flex items-center gap-1.5">
+                                  <span>AI Feedback</span>
+                                  <KnowledgeTooltip label="Explain AI feedback">
+                                    Interviewer-style feedback explaining what the candidate answer proves and what it does not prove.
+                                  </KnowledgeTooltip>
+                                </p>
                                 <p className="text-xs text-[#245747] leading-relaxed">
                                   {alignScoreMentions(item.critique || item.feedback || item.hiring_manager_note || 'Agent feedback has not been generated for this question yet.', item.per_answer_score)}
                                 </p>
@@ -2614,7 +2907,12 @@ export function CandidateDashboard({
 
                               {item.strengths?.length ? (
                                 <div className="mt-2 pl-1">
-                                  <p className="text-[10px] text-[#2d6a55] uppercase tracking-wider font-semibold mb-1">Evidence supporting the score</p>
+                                  <p className="text-[10px] text-[#2d6a55] uppercase tracking-wider font-semibold mb-1 inline-flex items-center gap-1.5">
+                                    <span>Evidence supporting the score</span>
+                                    <KnowledgeTooltip label="Explain evidence supporting the score">
+                                      Answer details that support awarding points, such as relevant examples, tools, outcomes, or reasoning.
+                                    </KnowledgeTooltip>
+                                  </p>
                                   <ul className="space-y-0.5">
                                     {item.strengths.map((strength: string, strengthIndex: number) => (
                                       <li key={strengthIndex} className="text-xs text-[#3d5a4a] leading-relaxed flex items-start gap-1.5">
@@ -2627,7 +2925,12 @@ export function CandidateDashboard({
                               ) : null}
                               {item.weaknesses?.length ? (
                                 <div className="mt-2 pl-1">
-                                  <p className="text-[10px] text-[#c25a2a] uppercase tracking-wider font-semibold mb-1">Risks or missing proof</p>
+                                  <p className="text-[10px] text-[#c25a2a] uppercase tracking-wider font-semibold mb-1 inline-flex items-center gap-1.5">
+                                    <span>Risks or missing proof</span>
+                                    <KnowledgeTooltip label="Explain risks or missing proof">
+                                      Missing evidence, vague claims, off-topic content, or concerns HR should verify before advancing the candidate.
+                                    </KnowledgeTooltip>
+                                  </p>
                                   <ul className="space-y-0.5">
                                     {item.weaknesses.map((weakness: string, weaknessIndex: number) => (
                                       <li key={weaknessIndex} className="text-xs text-[#6b7063] leading-relaxed flex items-start gap-1.5">
@@ -2642,12 +2945,22 @@ export function CandidateDashboard({
                                 <div className="mt-2 rounded-lg border border-[#e4e1da] bg-[#f7f6f3] p-2.5">
                                   {item.hiring_manager_note && (
                                     <p className="text-xs text-[#1c1c1a] leading-relaxed">
-                                      <span className="font-semibold text-[10px]">Hiring manager note:</span> {item.hiring_manager_note}
+                                      <span className="font-semibold text-[10px] inline-flex items-center gap-1.5">
+                                        <span>Hiring manager note:</span>
+                                        <KnowledgeTooltip label="Explain hiring manager note">
+                                          A decision-ready note summarizing what HR should take away from this answer.
+                                        </KnowledgeTooltip>
+                                      </span> {item.hiring_manager_note}
                                     </p>
                                   )}
                                   {item.suggested_improvement && (
                                     <p className="text-xs text-[#6b7063] leading-relaxed mt-1">
-                                      <span className="font-semibold text-[#1c1c1a] text-[10px]">Suggested probe:</span> {item.suggested_improvement}
+                                      <span className="font-semibold text-[#1c1c1a] text-[10px] inline-flex items-center gap-1.5">
+                                        <span>Suggested probe:</span>
+                                        <KnowledgeTooltip label="Explain suggested probe">
+                                          A recommended follow-up question to test uncertain areas or gather stronger evidence.
+                                        </KnowledgeTooltip>
+                                      </span> {item.suggested_improvement}
                                     </p>
                                   )}
                                 </div>

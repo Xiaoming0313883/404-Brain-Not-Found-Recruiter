@@ -324,6 +324,28 @@ def build_candidate_email_fallback(payload: Dict[str, Any], state: Dict[str, Any
     screening_score = int(payload.get("screening_score") or state.get("screening_score") or 0)
     recommendation = str(payload.get("hiring_recommendation") or state.get("hiring_recommendation") or "").lower()
     task_type = state.get("task_type")
+    hr_feedback = str(payload.get("hr_feedback") or "").strip()
+
+    if task_type == "hr_feedback_update" and hr_feedback:
+        body = (
+            f"Hello,\n\n"
+            f"The hiring team has added feedback for your application to {title}.\n\n"
+            f"Feedback from the hiring team:\n{hr_feedback}\n\n"
+            "You can also review this update in your candidate portal."
+        )
+        return {
+            "ok": True,
+            "should_send": True,
+            "candidate_email": candidate_email,
+            "to_email": candidate_email,
+            "email_type": "status_update",
+            "level": "informational",
+            "subject": f"Hiring team feedback for {title}",
+            "body": body,
+            "action_type": "status_update",
+            "hr_feedback": hr_feedback,
+            "reason": "HR updated candidate-visible feedback, so the candidate should be notified by email.",
+        }
 
     if task_type == "sourced_candidate" and fit_score >= settings.AGENT_INVITE_MIN_FIT_SCORE:
         body = (

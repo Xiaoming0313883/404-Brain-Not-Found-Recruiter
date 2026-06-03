@@ -251,7 +251,7 @@ Return ONLY valid JSON. No markdown code fences.
     if client:
         try:
             request = {
-                "model": settings.OPENAI_MODEL,
+                "model": settings.AGENT_WORKER_MODEL or settings.OPENAI_MODEL,
                 "temperature": settings.INTERVIEW_AGENT_TEMP,
                 "messages": [
                     {"role": "system", "content": system_prompt},
@@ -271,9 +271,25 @@ Return ONLY valid JSON. No markdown code fences.
             parsed = parse_llm_json(response.choices[0].message.content)
             return normalize_interview_evaluation(parsed, questions, answers, job_requirements)
         except Exception as e:
-            print(f"Interview Agent Phase B API error: {sanitize_provider_error(e, 'Interview Agent unavailable; falling back to rule evaluator.')}")
+            warning = sanitize_provider_error(
+                e,
+                "Interview Agent Phase B used the deterministic HR evaluator because the LLM provider was unavailable.",
+            )
+            fallback = build_position_specific_evaluation(questions, answers, job_requirements)
+            fallback["agent_warnings"] = [warning]
+            fallback["decision_reason"] = (
+                f"{fallback.get('decision_reason', '')} "
+                "The deterministic HR evaluator was used after the LLM provider failed, so scoring still followed the strict role-specific rubric."
+            ).strip()
+            return fallback
 
-    return build_position_specific_evaluation(questions, answers, job_requirements)
+    fallback = build_position_specific_evaluation(questions, answers, job_requirements)
+    fallback["agent_warnings"] = ["Interview Agent Phase B used the deterministic HR evaluator because no LLM client is configured."]
+    fallback["decision_reason"] = (
+        f"{fallback.get('decision_reason', '')} "
+        "The deterministic HR evaluator was used because no LLM client is configured, so scoring still followed the strict role-specific rubric."
+    ).strip()
+    return fallback
 
 def _answer_excerpt(answer: str, limit: int = 180) -> str:
     return " ".join(str(answer or "").split())
