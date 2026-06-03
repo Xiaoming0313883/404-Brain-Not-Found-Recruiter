@@ -1,1140 +1,392 @@
-# 404Hire -  Recruitment Workspace
+# 404Hire - Agentic Recruiting Workspace
 
 **Group:** 404 Brain Not Found  
-**Affiliation:** UTM KL Faculty of AI students  
+**Affiliation:** UTM KL Faculty of AI Students  
 **Event:** APU AI Marathon 2026: LLM Everywhere  
 **Track:** Problem Statement 2 - The Intelligent Recruiter  
 
 <div align="center">
-  <img src="src/assets/404hire-logo.jpeg" alt="DaddiesTrip Logo" width="300">
+  <img src="src/assets/404hire-logo.jpeg" alt="404Hire Logo" width="280">
   <p>
-  <b><h3>404 Brain Not Found. Talent Found. 👾<br>
-  Because Great Talent Shouldn’t Be "Not Found."</b></h3>
-  <br>
-    <a href="https://404hire.vercel.app/"><strong>Live Demo</strong></a>
+    <b>404 Brain Not Found. Talent Found. 👾</b><br>
+    <i>Because Great Talent Shouldn’t Be "Not Found."</i>
+    <br><br>
+    <a href="https://404hire.vercel.app/"><strong>Live Demo Portal</strong></a>
   </p>
 </div>
 
-404Hire is our AI-powered recruiter workspace for making hiring feel a little less like sorting spreadsheets and a little more like finding real people with real potential. It connects hiring managers and candidates through agentic job intake, resume understanding, candidate matching, screening, outreach, and fair-hiring controls.
-
-The project was built by **404 Brain Not Found**, a team of **UTM KL Faculty of AI students**, for **APU AI Marathon 2026: LLM Everywhere**. The idea is simple: give a hiring manager a role, give the system candidate data, and let the agents help explain who looks promising, why they look promising, what risks to verify, and how to move the process forward fairly.
-
-## Table Of Contents
-
-- [Live Deployment](#live-deployment)
-- [Marathon Alignment](#marathon-alignment)
-- [Project Overview](#project-overview)
-- [Core Features](#core-features)
-- [AI Agent Workflow](#ai-agent-workflow)
-- [Process Flow](#process-flow)
-- [Decision Logic](#decision-logic)
-- [System Architecture](#system-architecture)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Local Setup](#local-setup)
-- [Environment Variables](#environment-variables)
-- [Demo Accounts](#demo-accounts)
-- [API Reference](#api-reference)
-- [Data And Storage](#data-and-storage)
-- [Validation And Safety](#validation-and-safety)
-- [Troubleshooting](#troubleshooting)
-- [Production Notes](#production-notes)
-- [Verification Checklist](#verification-checklist)
-
-## Live Deployment
-
-| Service | Platform | URL | Purpose |
-| --- | --- | --- | --- |
-| Frontend website | Vercel | [https://404hire.vercel.app](https://404hire.vercel.app) | Hosts the React/Vite web application and serves the public user interface. |
-| Backend API | Railway | `https://<your-railway-service>.up.railway.app` | Runs the FastAPI backend and exposes the API over HTTPS using `backend/railway.json` or `backend/Dockerfile`. |
-
-The frontend lives on **Vercel** because it is a comfortable fit for Vite builds, preview deployments, and fast static asset delivery.
-
-The backend lives on **Railway** because it can run the Python FastAPI service directly from the repo. The default method uses Railpack with `backend/railway.json`, but a Docker method is also available through `backend/Dockerfile`.
-
-Production frontend environment variable:
-
-```env
-VITE_API_URL=https://<your-railway-service>.up.railway.app/api/v1
-```
-
-## Marathon Alignment
-
-APU AI Marathon 2026 is themed **LLM Everywhere**, so the focus is practical: use LLMs where they actually help, connect them to tools, and ship a working prototype people can try.
-
-404Hire addresses the **Intelligent Recruiter** track:
-
-- **Problem:** Traditional job boards are static and do not actively bridge hiring managers with diverse candidate profiles.
-- **Mission:** Use candidate data from resumes, profiles, and sourced talent pools to identify strong matches for a job description.
-- **Agentic twist:** Go beyond ranking. Generate recruiter explanations, personalized sourcing pitches, screening questions, outreach emails, and fair-hiring analysis.
-- **Prototype focus:** Demonstrate an end-to-end recruiter workflow with real LLM calls when configured and deterministic fallback logic when APIs are unavailable.
-
-## Project Overview
-
-404Hire has two connected portals: one for the hiring manager, and one for the candidate. Both sides share the same pipeline, but each gets an experience built around what they need to do next.
-
-### Hiring Manager Portal
-
-Hiring managers can:
-
-- Create and manage job positions.
-- Use an adaptive Requirement Agent for job intake.
-- Source candidates automatically through live Apify/LinkedIn integration when configured.
-- Fall back to prototype candidate sourcing for demos.
-- Review candidate match scores, evidence, risks, screening answers, and status.
-- Toggle fair-hiring controls such as blind merit scoring, prestige neutralization, anonymized review, and reputation-aware scoring.
-- Run a fairness audit over candidate outcomes.
-- Schedule interviews, reject candidates, complete reviews, and mark hires.
-
-### Candidate Portal
-
-Candidates can:
-
-- Verify email before account creation.
-- Upload a PDF resume.
-- Let the Resume Agent extract profile details.
-- Complete missing required profile fields with the profile assistant.
-- Apply to open positions.
-- Answer AI-generated screening questions.
-- Review feedback, score breakdowns, and upskilling guidance.
-- Receive notifications about application progress.
-
-## Core Features
-
-- Dual-portal React/Vite application for hiring managers and candidates.
-- FastAPI backend under `/api/v1`.
-- LLM-compatible agent layer using an OpenAI-style chat completions client.
-- Adaptive job intake and role requirement generation.
-- Resume parsing with LLM extraction, PDF text extraction, OCR fallbacks, and rule-based fallback parsing.
-- Candidate profile completion and verification.
-- Position windows with open and close dates.
-- Manual LinkedIn profile scraping when live scraper credentials are configured.
-- Automatic candidate sourcing through Apify or prototype simulation.
-- Streaming sourcing progress through Server-Sent Events.
-- Position-specific matching with explainable score contributors.
-- Interview Agent Phase A question generation and Phase B answer evaluation.
-- Candidate upskilling roadmap generation.
-- Bias Agent for prestige indicator detection and profile neutralization.
-- Bias controls for blind merit, anonymized hiring, and prestige-aware comparison with visible score formulas.
-- Fairness audit for prestige-related outcome patterns.
-- Candidate account administration.
-- Interview calendar.
-- SMTP verification and optional email notifications.
-- Supabase-backed persistence for candidates, applications, agent traces, action receipts, integration settings, and email events.
-- Refresh-safe clean routes for both portals through Vercel SPA rewrites.
-- Scoped chat scrolling so agent chats scroll inside their own message panes.
-
-## AI Agent Workflow
-
-404Hire uses six named agents, with the Interview Agent implemented as two executable phases: **5A** generates targeted screening questions and **5B** evaluates submitted answers. Think of them as a small hiring desk: one agent shapes the job, one reads resumes, one checks bias signals, one scores fit, one handles screening, and one writes the human-readable reports.
-
-```mermaid
-flowchart LR
-    HM["HIRING MANAGER SIDE"] --> RQ["AGENT 1: REQUIREMENT AGENT"]
-    RQ --> JOB["Structured job profile"]
-    JOB --> SRC{"Source path"}
-    SRC -->|Live configured| LIVE["Apify or LinkedIn profile data"]
-    SRC -->|No live token| MOCK["Prototype candidate profiles"]
-    LIVE --> BA1["AGENT 3: BIAS AGENT"]
-    MOCK --> BA1
-    BA1 --> MA1["AGENT 4: MATCHING AGENT"]
-    MA1 --> IA1["AGENT 5A: INTERVIEW AGENT QUESTIONS"]
-    IA1 --> RA1["AGENT 6: REPORT AGENT"]
-    RA1 --> STAGED["Staged candidate for review"]
-
-    CAND["CANDIDATE SIDE"] --> PDF["Email verification and PDF resume"]
-    PDF --> RES["AGENT 2: RESUME AGENT"]
-    RES --> BA2["AGENT 3: BIAS AGENT"]
-    BA2 --> PROFILE{"Profile complete?"}
-    PROFILE -->|No| ASSIST["Profile assistant collects missing fields"]
-    ASSIST --> PROFILE
-    PROFILE -->|Yes| JOBS["Candidate browses active jobs"]
-    JOBS --> CHOOSE["Candidate chooses one job to apply"]
-    CHOOSE --> APPLY["Apply to selected position"]
-    APPLY --> MA2["AGENT 4: MATCHING AGENT"]
-    MA2 --> IA2["AGENT 5A: INTERVIEW AGENT QUESTIONS"]
-    IA2 --> ANSWERS["Candidate submits answers"]
-    ANSWERS --> IA3["AGENT 5B: INTERVIEW AGENT EVALUATION"]
-    IA3 --> RA2["AGENT 6: REPORT AGENT"]
-    RA2 --> REVIEW["Hiring manager review"]
-
-    classDef agent fill:#e8f2ee,stroke:#2d6a55,stroke-width:2px,color:#12382d;
-    class RQ,RES,BA1,BA2,MA1,MA2,IA1,IA2,IA3,RA1,RA2 agent;
-```
-
-Each agent has a focused responsibility and a fallback path so the demo remains usable even when an external LLM or scraping service is unavailable.
-
-| Agent | File | Input | Output | Role |
-| --- | --- | --- | --- | --- |
-| Requirement Agent | `backend/app/services/agents/requirement_agent.py` | Job title, department, hiring-manager intake | Job description, requirements, role family, pillars, behavioral signals, Boolean query | Turns a loose hiring request into structured recruiting criteria. |
-| Resume Agent | `backend/app/services/agents/resume_agent.py` | Resume text extracted from PDF/OCR | Candidate profile fields, skills, education, experience, summary | Converts unstructured resumes into searchable candidate data. |
-| Bias Agent | `backend/app/services/agents/bias_agent.py` | Candidate profile and resume text | Prestige indicators, neutralized profile, reputation score | Detects school/company pedigree signals and supports fair-hiring controls. |
-| Matching Agent | `backend/app/services/agents/matching_agent.py` | Job requirements, candidate profile, bias controls | Position-fit score, score contributors, advocate and critical recruiter views | Scores fit using role evidence, domain context, success signals, and trajectory. |
-| Interview Agent Phase A | `backend/app/services/agents/interview_agent.py` | Candidate profile, match results, job requirements | Exactly 3 targeted screening questions | Creates position-specific screening questions from the current job and matching concerns. |
-| Interview Agent Phase B | `backend/app/services/agents/interview_agent.py` | Screening questions, candidate answers, job requirements | Answer critiques, score breakdown, screening score, verdict, recommendation | Evaluates submitted answers against the selected position using the role-alignment rubric. |
-| Report Agent | `backend/app/services/agents/report_agent.py` | Candidate profile, match results, job requirements | Sourcing pitch, outreach email, upskilling roadmap | Produces human-readable recruiter and candidate artifacts. |
-
-### Agentic Criteria Proof
-
-404Hire now exposes a guarded supervisor graph in `backend/app/services/agents/graph.py`.
-
-| Criterion | Implementation Evidence |
-| --- | --- |
-| Dynamic decision making | The supervisor node selects the next tool from the available recruiting tools for requirement intake, inbound applications, sourced candidates, and screening evaluation. It uses the OpenAI-compatible client when configured and falls back to deterministic routing for reliability. |
-| Guardrails | `backend/app/services/agents/guardrails.py` blocks prompt injection, protected-class hiring instructions, unauthorized data access, and unauthorized email/data actions before tools run. Blocked events are written to Supabase `agent_events`. |
-| Access to tools | `backend/app/services/agents/tools.py` exposes the six existing agents plus Supabase writes, status updates, agent event logging, and autonomous email tools. |
-| Real-world agency | Supabase rows are updated for candidates/applications/actions/events, Apify/LinkedIn sourcing is used when configured, and SMTP sends labeled autonomous emails when bounded policy thresholds approve. |
-| Scalability | Runtime persistence uses Supabase tables from `backend/supabase_schema.sql`; `/api/v1/settings/integrations/status` reports OpenAI, Supabase, Apify, SMTP, and graph readiness. |
-
-### Two-Sided Agent Orchestration
-
-```mermaid
-flowchart TB
-    subgraph HM_SIDE["Hiring Manager Side"]
-        HM1["Create or update position"]
-        HM2["AGENT: REQUIREMENT AGENT<br/>asks intake questions and builds criteria"]
-        HM3["Start sourcing"]
-        HM4{"Live sourcing available?"}
-        HM5["Scrape live LinkedIn profiles<br/>through Apify/cookie workflow"]
-        HM6["Generate prototype profiles<br/>for demo mode"]
-        HM7["AGENT: BIAS AGENT<br/>detects prestige indicators"]
-        HM8["AGENT: MATCHING AGENT<br/>scores role fit"]
-        HM9["AGENT: INTERVIEW AGENT PHASE A<br/>generates screening questions"]
-        HM10["AGENT: REPORT AGENT<br/>writes pitch and outreach"]
-        HM11["Staged candidate appears in pipeline"]
-        HM12["Review, invite, schedule, reject, complete, or hire"]
-    end
-
-    subgraph CAND_SIDE["Candidate Side"]
-        C1["Verify email"]
-        C2["Upload PDF resume"]
-        C3["Extract resume text<br/>pypdf, PyMuPDF, pdfminer, OCR, vision fallback"]
-        C4["AGENT: RESUME AGENT<br/>extracts structured profile"]
-        C5["AGENT: BIAS AGENT<br/>creates neutralized profile metadata"]
-        C6{"Required profile fields complete?"}
-        C7["Profile assistant collects missing details"]
-        C8["Open Jobs page"]
-        C9["Browse active positions from GET /jobs?active_only=true"]
-        C10["Candidate chooses one job"]
-        C11["Click Apply"]
-        C12["AGENT: MATCHING AGENT<br/>scores selected job fit"]
-        C13["AGENT: INTERVIEW AGENT PHASE A<br/>creates screening questions"]
-        C14["Review questions"]
-        C15["Save draft answers<br/>optional user control"]
-        C16["Submit final screening answers"]
-        C17["AGENT: INTERVIEW AGENT PHASE B<br/>evaluates answers"]
-        C18["AGENT: REPORT AGENT<br/>creates upskilling roadmap"]
-        C19["Application visible to hiring manager"]
-        C20["Candidate tracks status, feedback, notifications, and roadmap"]
-    end
-
-    HM1 --> HM2 --> HM3 --> HM4
-    HM4 -->|Yes| HM5 --> HM7
-    HM4 -->|No| HM6 --> HM7
-    HM7 --> HM8 --> HM9 --> HM10 --> HM11 --> HM12
-
-    C1 --> C2 --> C3 --> C4 --> C5 --> C6
-    C6 -->|No| C7 --> C6
-    C6 -->|Yes| C8 --> C9 --> C10 --> C11 --> C12 --> C13 --> C14 --> C15 --> C16 --> C17 --> C18 --> C19 --> C20
-    C19 -. "same review dashboard" .-> HM12
-
-    classDef agent fill:#e8f2ee,stroke:#2d6a55,stroke-width:2px,color:#12382d;
-    class HM2,HM7,HM8,HM9,HM10,C4,C5,C12,C13,C17,C18 agent;
-```
-
-## Process Flow
-
-```mermaid
-flowchart TD
-    START["User enters 404Hire"] --> SIDE{"Which portal?"}
-    SIDE -->|Hiring manager| HM_LOGIN["Demo login"]
-    SIDE -->|Candidate| C_VERIFY["Email verification"]
-
-    HM_LOGIN --> JOB_FLOW["Job creation flow"]
-    JOB_FLOW --> RQA["AGENT: REQUIREMENT AGENT"]
-    RQA --> SOURCE_FLOW["Sourcing flow"]
-    SOURCE_FLOW --> EVAL_PIPE["AGENT PIPELINE:<br/>Bias -> Matching -> Interview Questions -> Report"]
-    EVAL_PIPE --> HM_REVIEW["Hiring-manager review flow"]
-
-    C_VERIFY --> RESUME_FLOW["Candidate signup flow"]
-    RESUME_FLOW --> RSA["AGENT PIPELINE:<br/>Resume -> Bias"]
-    RSA --> PROFILE_GATE{"Profile complete?"}
-    PROFILE_GATE -->|No| PROFILE_ASSIST["Profile assistant"]
-    PROFILE_ASSIST --> PROFILE_GATE
-    PROFILE_GATE -->|Yes| JOB_LIST["Jobs page:<br/>candidate browses active positions"]
-    JOB_LIST --> JOB_CHOICE["Candidate chooses one job"]
-    JOB_CHOICE --> APPLY_FLOW["Apply to selected position"]
-    APPLY_FLOW --> CAND_PIPE["AGENT PIPELINE:<br/>Matching -> Interview Questions"]
-    CAND_PIPE --> SCREEN_FLOW["Candidate screening flow"]
-    SCREEN_FLOW --> DRAFTS{"Save draft or submit?"}
-    DRAFTS -->|Save draft| DRAFT_SAVE["Draft answers saved<br/>candidate can continue later"]
-    DRAFT_SAVE --> SCREEN_FLOW
-    DRAFTS -->|Submit final| SCREEN_AGENTS["AGENT PIPELINE:<br/>Interview Evaluation -> Report Roadmap"]
-    SCREEN_AGENTS --> HM_REVIEW
-
-    HM_REVIEW --> DECISION["Decision flow:<br/>invite, schedule, complete, hire, reject, or revert"]
-
-    classDef agent fill:#e8f2ee,stroke:#2d6a55,stroke-width:2px,color:#12382d;
-    class RQA,EVAL_PIPE,RSA,CAND_PIPE,SCREEN_AGENTS agent;
-```
-
-### Candidate User Control Flow
-
-```mermaid
-flowchart TD
-    A["Candidate Home"] --> B{"Email verified?"}
-    B -->|No| B1["User must verify email before applying"]
-    B -->|Yes| C{"Required profile details complete?"}
-    C -->|No| C1["User completes missing fields:<br/>name, age, phone, address, origin, work experience, qualification, grades"]
-    C1 --> C
-    C -->|Yes| D["Jobs tab shows active positions"]
-    D --> E["User reviews title, department, location, window, and requirements"]
-    E --> F{"User chooses a job?"}
-    F -->|No| D
-    F -->|Yes| G["User clicks Apply"]
-    G --> H{"Already applied to this job?"}
-    H -->|Yes| H1["Application blocked as duplicate"]
-    H -->|No| I["AGENT: MATCHING AGENT<br/>scores fit for this exact job"]
-    I --> J["AGENT: INTERVIEW AGENT PHASE A<br/>creates job-specific questions"]
-    J --> K["User answers screening questions"]
-    K --> L{"User action"}
-    L -->|Save draft| M["Draft saved through PATCH /draft-answers"]
-    M --> K
-    L -->|Submit final| N{"Each answer at least 10 characters?"}
-    N -->|No| N1["User must improve short answers"]
-    N1 --> K
-    N -->|Yes| O["AGENT: INTERVIEW AGENT PHASE B<br/>evaluates submitted answers"]
-    O --> P["AGENT: REPORT AGENT<br/>creates feedback roadmap"]
-    P --> Q["User tracks score, feedback, roadmap, status, and notifications"]
-
-    classDef agent fill:#e8f2ee,stroke:#2d6a55,stroke-width:2px,color:#12382d;
-    class I,J,O,P agent;
-```
-
-### 1. Job Creation Flow
-
-1. Hiring manager enters title, department, address, active status, and application window.
-2. Requirement Agent asks adaptive follow-up questions.
-3. The manager reviews generated description, requirements, sourcing criteria, Boolean query, pillars, and behavioral signals.
-4. The backend validates the application window before saving the position.
-5. Saved jobs become available through `GET /jobs` and active jobs through `GET /jobs?active_only=true`.
-
-### 2. Candidate Signup Flow
-
-1. Candidate starts email verification.
-2. Backend creates a verification code and either sends it through SMTP or exposes it in prototype mode.
-3. Candidate verifies the pending email.
-4. Candidate submits name, password, and PDF resume.
-5. Backend extracts resume text, validates that the resume is readable, runs Resume Agent, saves the PDF, and creates the candidate account.
-6. If required fields are missing, the Candidate Portal guides the user through completion before application.
-
-### 3. Candidate Application Flow
-
-1. Candidate opens the Jobs page after email and profile checks pass.
-2. Frontend loads active jobs through `GET /jobs?active_only=true`.
-3. Candidate reviews the available positions and chooses one job to apply for.
-4. Backend checks the selected position exists, is open, and has not already been applied to by the same candidate.
-5. Bias Agent attaches fair-hiring metadata and neutralized profile data.
-6. Matching Agent produces a position-fit assessment for that selected job.
-7. Interview Agent Phase A generates screening questions for that selected job.
-8. Candidate can save draft answers or submit final answers.
-9. Interview Agent Phase B evaluates final answers and Report Agent creates an upskilling roadmap.
-10. Hiring manager reviews the result in the pipeline while the candidate tracks status and notifications.
-
-### 4. Sourcing Flow
-
-1. Hiring manager selects a position in LinkedIn Sourcing.
-2. For manual sourcing, the backend validates and normalizes a LinkedIn profile URL.
-3. For automatic sourcing, the backend streams progress through Server-Sent Events.
-4. If Apify is configured, the backend searches/scrapes live profile data.
-5. If Apify is not configured, the backend generates prototype candidates aligned to the job.
-6. Bias analysis, matching, Interview Agent Phase A question generation, and report generation run for each candidate.
-7. Candidates are saved as `staged` until the hiring manager sends an invitation.
-
-### 5. Hiring Manager Review Flow
-
-1. Hiring manager filters candidates by position and review state.
-2. The dashboard shows score contributors, match debate, screening feedback, prestige/bias controls, and candidate details.
-3. Hiring manager may invite, schedule interview, reject, mark completed, mark hired, or revert the latest status change.
-4. Notifications and optional SMTP emails are sent for major decisions.
-
-## Decision Logic
-
-```mermaid
-flowchart TD
-    A["Candidate or sourced profile enters pipeline"] --> B{"Source type"}
-    B -->|Candidate signup| C{"Email verified?"}
-    C -->|No| C_STOP["Stop: verify email first"]
-    C -->|Yes| D{"Valid readable PDF resume?"}
-    D -->|No| D_STOP["Stop: upload readable PDF"]
-    D -->|Yes| E["AGENT: RESUME AGENT"]
-
-    B -->|Manual or auto sourcing| F{"Live profile data available?"}
-    F -->|Yes| G["Parse live profile"]
-    F -->|No| H["Use prototype generated profile"]
-
-    E --> I1["AGENT: BIAS AGENT"]
-    I1 --> SELECT["Candidate browses active jobs"]
-    SELECT --> CHOICE{"Candidate selected a job?"}
-    CHOICE -->|No| WAIT["Stay on Jobs page"]
-    CHOICE -->|Yes| J{"Selected job exists and is open?"}
-    J -->|No| J_STOP["Stop: invalid or closed job"]
-    J -->|Yes| K{"Already applied to this job?"}
-    K -->|Yes| K_STOP["Stop: conflict response"]
-    K -->|No| L["AGENT: MATCHING AGENT"]
-
-    G --> I2["AGENT: BIAS AGENT"]
-    H --> I2
-    I2 --> SPOS{"Hiring manager selected sourcing position exists?"}
-    SPOS -->|No| SPOS_STOP["Stop: invalid sourcing position"]
-    SPOS -->|Yes| L
-    L --> M{"Bias scoring mode"}
-    M -->|blind_merit| N["Use fair score only"]
-    M -->|prestige_aware| O["Blend fair score with prestige score"]
-    N --> P["AGENT: INTERVIEW AGENT PHASE A"]
-    O --> P
-    P --> Q["Screening questions shown"]
-    Q --> R{"Answers submitted once and >= 10 chars?"}
-    R -->|No| R_STOP["Stop: ask for valid answers"]
-    R -->|Yes| S["AGENT: INTERVIEW AGENT PHASE B"]
-    S --> T["AGENT: REPORT AGENT"]
-    T --> U{"Screening score"}
-    U -->|80+| V["Recommendation: advance"]
-    U -->|62-79| W["Recommendation: hold"]
-    U -->|Below 62| X["Recommendation: reject"]
-
-    classDef agent fill:#e8f2ee,stroke:#2d6a55,stroke-width:2px,color:#12382d;
-    class E,I1,I2,L,P,S,T agent;
-```
-
-### Application Gate Logic
-
-| Decision | Condition | Result |
-| --- | --- | --- |
-| Email verification | Pending email code must match before signup | Candidate can create an account. |
-| Resume upload | File must be PDF, 10MB or smaller, and contain readable resume-like text | Resume Agent can process the profile. |
-| Position availability | Position must exist and be open for applications | Candidate can apply. |
-| Duplicate application | Candidate cannot apply twice to the same position | Backend returns a conflict response. |
-| Screening submission | Answers must be submitted once and each answer must be at least 10 characters | Interview Agent Phase B evaluates answers. |
-
-### Matching Score Logic
-
-The Matching Agent builds a score from role-specific evidence:
-
-```text
-overall_position_fit =
-  must_have_role_evidence * 45%
-+ domain_and_position_context * 25%
-+ success_and_working_style * 15%
-+ trajectory_and_growth * 15%
-```
-
-The score is explainable. Each candidate includes:
-
-- `scores.technical`
-- `scores.domain`
-- `scores.culture`
-- `scores.trajectory_slope`
-- `scores.overall_position_fit`
-- `score_contributors`
-- `fit_breakdown`
-- `position_fit_summary`
-- `score_explanation`
-- `debate.talent_advocate_pros`
-- `debate.critical_recruiter_cons`
-
-### Bias And Reputation Logic
-
-404Hire separates merit scoring from reputation scoring.
-
-| Mode | What happens |
-| --- | --- |
-| `blind_merit` | School and employer reputation are classified for transparency but do not affect the final score. |
-| `prestige_aware` | The final score includes a configurable reputation component from 0% to 50%. |
-| `neutralize_prestige` | Candidate names and profile text can be shown with pedigree indicators replaced by neutral categories. |
-| `anonymized_blind_hiring` | Candidate identity can be hidden in hiring-manager views. |
-
-Prestige-aware formula:
-
-```text
-final_score = round(
-  fair_score * (100 - prestige_weight) / 100
-+ reputation_score * prestige_weight / 100
-)
-```
-
-When prestige-aware scoring is active, candidate match results include `bias_control.calculation` with the fair score, reputation score, merit weight, reputation weight, final score, score delta, and display formula. This is shown in the hiring-manager dashboard so unchanged rounded scores are still explainable.
-
-The Bias Agent detects indicators such as universities, employers, certifications, and elite programs. It also includes a small QS ranking map for demo comparison, including APU as a recognized university signal.
-
-### Fairness Audit Logic
-
-The fairness audit uses available recruitment outcomes and prestige signals. It does not infer protected classes.
-
-The audit checks:
-
-- Total candidate applications in scope.
-- Selection and rejection rates.
-- High-prestige versus lower-prestige selection rates.
-- Prestige selection gap.
-- Whether prestige-aware scoring is active.
-- Risk level: `low`, `medium`, `high`, or `insufficient_data`.
-
-### Screening Evaluation Logic
-
-Interview Agent Phase A generates exactly three targeted questions for the current position. Interview Agent Phase B evaluates answers against the actual position, not generic interview quality.
-
-Screening score breakdown:
-
-| Dimension | Max |
-| --- | ---: |
-| Role requirement alignment | 35 |
-| Technical correctness and depth | 25 |
-| Evidence specificity | 20 |
-| Position impact | 10 |
-| Communication clarity | 10 |
-
-Recommendation logic:
-
-| Screening score | Verdict | Recommendation |
-| --- | --- | --- |
-| 80 or above | Strong fit | Advance |
-| 62 to 79 | Moderate fit | Hold |
-| Below 62 | Weak fit | Reject |
-
-### Candidate Status Logic
-
-Candidate applications do not follow one single linear path. Inbound applicants usually move from a profile account into an applied application and then screening after answers are submitted. Sourced candidates are staged first and can be invited before later candidate-side activity. The hiring manager can then mark screening as completed, schedule an interview, hire, reject, or revert the latest status change.
-
-```text
-Inbound: profile -> applied -> screening -> completed -> interview_scheduled -> hired
-Sourced: staged -> invited -> applied -> screening -> completed -> interview_scheduled -> hired
-
-Any active application can be rejected.
-```
-
-Supported backend statuses:
-
-```text
-profile, staged, invited, applied, screening, completed, hired, inactive, rejected, interview_scheduled
-```
-
-Status changes keep a short history so the hiring manager can revert the latest change.
-
-## System Architecture
-
-```text
-React/Vite frontend
-  |
-  | VITE_API_URL
-  v
-FastAPI backend
-  |
-  | /api/v1 routes
-  v
-Route layer
-  |
-  | orchestrates
-  v
-Agent services, LinkedIn helpers, mailer, job-window validation, bias controls
-  |
-  v
-Local JSON database and upload folders
-```
-
-### Backend Runtime
-
-- `backend/main.py` creates the FastAPI app.
-- Routes are registered under `/api/v1`.
-- Uploads are served from `/uploads`.
-- CORS is currently open for prototype deployment.
-- Local database initialization runs at startup.
+---
+
+## Highlights
+
+* **Agentic Execution Graph**: Operates a state machine supervisor model with dynamic step-by-step planning and deterministic fallback routes.
+* **Bounded Autonomy & Safety Policy**: Uses real-time guardrail screening (prompt injection, class-action checks) and SMTP action verification before executing candidate updates.
+* **Supabase Runtime Persistence**: Relies on a Supabase Postgres instance to store job configurations, candidate profiles, application statuses, email receipts, and agent events.
+* **Explainable Fair Hiring**: Includes blind merit scoring, prestige neutralization (neutralizing Ivy League/FAANG pedigree signals), name anonymization, and institutional fairness audits.
+* **Streaming Progress Console**: Uses Server-Sent Events (SSE) to stream live agent steps and logs directly to candidate sandbox views and recruitment dashboards.
+* **Intelligent LinkedIn Sourcing**: Sourced talent profiles can be parsed via an automated Apify search scraper or populated using simulated sandbox talent comparisons.
+* **Targeted Screening & Evaluation**: The Interview Agent dynamically creates three job-aligned questions and scores candidate answers against strict correctness and evidence-based rubrics.
+
+---
 
 ## Tech Stack
 
-### Frontend
+| Layer | Technology |
+| --- | --- |
+| **Frontend** | React 18, Vite 6, TypeScript, React Router, Tailwind CSS, Radix UI, Lucide icons, Recharts, Sonner |
+| **Backend** | FastAPI, Pydantic, Uvicorn |
+| **Agent Engine** | OpenAI-compatible chat completions, LangGraph dependency, custom evented supervisor graph |
+| **Persistence** | Supabase Postgres with RLS service-role security policies |
+| **Integrations** | OpenAI API / custom LLM endpoints, Apify Client, SMTP Mailer, 2026 QS Rankings Database |
+| **File Extraction** | pypdf, PyMuPDF, pdfminer, Pillow, Tesseract/RapidOCR fallback |
 
-- React 18
-- TypeScript
-- Vite 6
-- Tailwind CSS 4 utility styling
-- Radix UI primitives
-- Lucide React icons
-- Recharts
-- Motion
-- React Big Calendar
-- Sonner toasts
+---
 
-### Backend
-
-- Python
-- FastAPI
-- Uvicorn
-- Pydantic and pydantic-settings
-- OpenAI-compatible chat completions client
-- pypdf
-- pdfminer.six
-- PyMuPDF
-- Pillow
-- pytesseract
-- RapidOCR
-- Playwright
-- Apify Client
-- SMTP email support
-
-### Storage
-
-- Supabase database using `backend/supabase_schema.sql`
-- Uploaded resumes: `backend/uploads/resumes/`
-- Extracted profile pictures: `backend/uploads/profile_pictures/`
-
-## Project Structure
+## Repository Structure
 
 ```text
 .
 |-- backend/
 |   |-- app/
-|   |   |-- config.py
-|   |   |-- database.py
-|   |   |-- routes/
-|   |   |   |-- candidates.py
-|   |   |   |-- jobs.py
-|   |   |   `-- settings.py
-|   |   `-- services/
-|   |       |-- agents/
-|   |       |-- bias_settings.py
-|   |       |-- job_windows.py
-|   |       |-- linkedin_profiles.py
-|   |       `-- mailer.py
-|   |-- data/
-|   |-- uploads/
-|   |-- main.py
-|   `-- requirements.txt
-|-- public/
+|   |   |-- routes/                 # FastAPI HTTP endpoint routers
+|   |   |-- services/
+|   |   |   |-- agents/             # Recruiting Agent tools, Supervisor graph, Guardrails
+|   |   |   |-- mailer.py           # SMTP mail client and verification
+|   |   |   |-- linkedin_profiles.py# Live LinkedIn scraper utility
+|   |   |   |-- bias_settings.py    # Fair hiring settings managers
+|   |   |   `-- job_windows.py      # Position window validators
+|   |   |-- config.py               # Pydantic environment configurations
+|   |   `-- database.py             # Supabase repository connector
+|   |-- tests/                      # Pytest backend test suites
+|   |-- supabase_schema.sql         # Supabase database initialization tables
+|   |-- requirements.txt            # Python dependencies
+|   `-- main.py                     # Uvicorn FastAPI startup script
 |-- src/
 |   |-- app/
 |   |   |-- components/
-|   |   |   |-- candidate/
-|   |   |   `-- hiring-manager/
+|   |   |   |-- candidate/          # Candidate views, sandbox, and verification
+|   |   |   |-- hiring-manager/     # HR dashboard, sourcing, and bias control
+|   |   |   `-- ui/                 # Reusable layout and custom widgets
+|   |   |-- api.ts                  # Axios API configuration
+|   |   `-- App.tsx                 # Route declarations
 |   |-- assets/
-|   |-- styles/
-|   `-- main.tsx
-|-- index.html
-|-- package.json
-|-- vite.config.ts
-`-- README.md
+|   `-- styles/
+|-- package.json                    # Node dependencies & project scripts
+|-- vite.config.ts                  # Vite build configs
+`-- README.md                       # Repository documentation
 ```
 
-## Local Setup
+---
 
-You can run everything locally with one backend terminal and one frontend terminal. Nothing fancy, just the usual two-window ritual.
+## System Architecture
+
+```mermaid
+flowchart LR
+    subgraph UI["React / Vite Frontend"]
+        Portal["Portal Selector"]
+        HR["Hiring Manager Portal"]
+        Candidate["Candidate Portal"]
+        Feed["Agent Activity Feeds and Progress Bars"]
+    end
+
+    subgraph API["FastAPI Backend /api/v1"]
+        Jobs["Jobs Routes"]
+        Candidates["Candidates Routes"]
+        Settings["Settings Routes"]
+        Events["Agent Events Route"]
+    end
+
+    subgraph Graph["Agentic Supervisor Graph"]
+        Guardrail["Guardrail Node"]
+        Supervisor["Supervisor Node"]
+        ToolNode["Tool Node"]
+        Policy["Action Policy Node"]
+        EmailNode["Email Planner and Sender"]
+        Persist["Persistence Tools"]
+    end
+
+    subgraph Agents["Recruiting Agent Tools"]
+        Requirement["Requirement Agent"]
+        Resume["Resume Agent"]
+        Bias["Bias Agent"]
+        Matching["Matching Agent"]
+        InterviewA["Interview Agent Phase A"]
+        InterviewB["Interview Agent Phase B"]
+        Report["Report Agent"]
+    end
+
+    subgraph Integrations["External Services"]
+        LLM["OpenAI-Compatible LLM"]
+        Supabase["Supabase Postgres"]
+        Apify["Apify / LinkedIn"]
+        SMTP["SMTP Provider"]
+        Ranking["QS CSV + Ranking Cache"]
+    end
+
+    Portal --> HR
+    Portal --> Candidate
+    HR --> Jobs
+    HR --> Candidates
+    HR --> Settings
+    Candidate --> Candidates
+    Feed --> Candidates
+    Candidates --> Graph
+    Jobs --> Requirement
+    Settings --> Supabase
+    Graph --> Guardrail --> Supervisor --> ToolNode
+    ToolNode --> Requirement
+    ToolNode --> Resume
+    ToolNode --> Bias
+    ToolNode --> Matching
+    ToolNode --> InterviewA
+    ToolNode --> InterviewB
+    ToolNode --> Report
+    ToolNode --> Policy --> EmailNode
+    ToolNode --> Persist
+    Requirement --> LLM
+    Resume --> LLM
+    Bias --> LLM
+    Matching --> LLM
+    InterviewA --> LLM
+    InterviewB --> LLM
+    Report --> LLM
+    EmailNode --> LLM
+    EmailNode --> SMTP
+    Persist --> Supabase
+    Candidates --> Apify
+    Bias --> Ranking
+    Events --> Supabase
+```
+
+---
+
+## Agentic Flow & Supervisor Graph
+
+Rather than executing tools sequentially, 404Hire utilizes an event-driven `RecruitingAgentGraph` state machine to coordinate tasks. The execution pipeline evaluates input safety, generates structured plans, coordinates LLM agents, and enforces action policies.
+
+### Session Lifecycle Flow
+```mermaid
+flowchart TD
+    Start(["Start session"]) --> FirstEvent["Emit immediate progress event"]
+    FirstEvent --> Guardrail["Guardrail Node"]
+    Guardrail --> Safe{"Input safe?"}
+    Safe -->|No| Block["Log blocked agent_event"]
+    Block --> StopBlocked(["Return blocked result"])
+
+    Safe -->|Yes| Plan["Supervisor Node"]
+    Plan --> Mode{"AGENT_SUPERVISOR_MODE"}
+    Mode -->|single_plan| OnePlan["One LLM plan for ordered_tools and reasons"]
+    Mode -->|step_by_step| StepPlan["Decide next tool each loop"]
+    OnePlan --> Fallback{"LLM available?"}
+    Fallback -->|No| Deterministic["Use deterministic plan with reasons"]
+    Fallback -->|Yes| Execute
+    Deterministic --> Execute
+    StepPlan --> Execute
+
+    Execute["Tool Node executes next required tool"] --> EmitTool["Stream agent_event with message and reason"]
+    EmitTool --> PolicyCheck{"Action tool?"}
+    PolicyCheck -->|No| More{"More tools?"}
+    PolicyCheck -->|Yes| Policy["Action Policy Node"]
+    Policy --> Approved{"Approved?"}
+    Approved -->|No| RecordSkip["Record action skip"]
+    Approved -->|Yes| DoAction["Persist state or send SMTP email"]
+    DoAction --> Receipt["Record receipt in Supabase"]
+    RecordSkip --> More
+    Receipt --> More
+    More -->|Yes| Execute
+    More -->|No| Final["Emit final result"]
+    Final --> End(["Session complete"])
+```
+
+### Supervisor State Machine
+```mermaid
+flowchart TD
+    %% Define styles
+    classDef startEnd fill:#f9f9f9,stroke:#333,stroke-width:2px;
+    classDef decision fill:#fff9e6,stroke:#d4af37,stroke-width:2px,color:#5c4308;
+    classDef process fill:#eaf2ff,stroke:#4a90e2,stroke-width:2px,color:#1b3a60;
+    classDef alert fill:#ffe6e6,stroke:#d9534f,stroke-width:2px,color:#7a1d1b;
+    classDef agent fill:#e8f2ee,stroke:#2d6a55,stroke-width:2px,color:#12382d;
+
+    %% Nodes
+    START([Start Graph Execution]) --> GR[Guardrail Node]
+    GR --> GR_DEC{Passed Guardrails?}
+    
+    %% Guardrails branch
+    GR_DEC -->|No| BLOCKED[Block Input & Log Event]
+    BLOCKED --> END_BLOCKED([Exit: Blocked])
+    
+    %% Main flow
+    GR_DEC -->|Yes| MODE_DEC{Supervisor Mode?}
+    
+    MODE_DEC -->|single_plan| PLAN[Prepare Full Execution Plan]
+    PLAN --> LOOP_START[Supervisor Loop]
+    
+    MODE_DEC -->|step_by_step| LOOP_START
+    
+    LOOP_START --> COMP_DEC{Complete or Max Steps?}
+    COMP_DEC -->|Yes| END_NORMAL([Exit: Complete])
+    
+    COMP_DEC -->|No| TOOL_SEL[Supervisor Node: Choose Next Tool]
+    TOOL_SEL --> TOOL_DEC{Next Tool Available?}
+    
+    TOOL_DEC -->|No| MARK_COMP[Mark Complete]
+    MARK_COMP --> END_NORMAL
+    
+    TOOL_DEC -->|Yes| EXEC_TOOL[Tool Node: Execute Agent/Action with Timeout]
+    EXEC_TOOL --> STORE_RES[Store Tool Result & Log Event]
+    STORE_RES --> LOOP_START
+
+    %% Class styles
+    class START,END_NORMAL startEnd;
+    class END_BLOCKED,BLOCKED alert;
+    class GR_DEC,MODE_DEC,COMP_DEC,TOOL_DEC decision;
+    class PLAN,LOOP_START,EXEC_TOOL,STORE_RES,MARK_COMP process;
+    class TOOL_SEL agent;
+```
+
+---
+
+## Recruiting Agent Toolbelt
+
+| Agent Tool | File Location | Purpose & Orchestrated Output |
+| --- | --- | --- |
+| **Requirement Agent** | `requirement_agent.py` | Receives loose job titles and hiring manager chat to build full role requirements, behavior signals, search queries, and evaluation criteria. |
+| **Resume Agent** | `resume_agent.py` | Extracts unstructured PDF/OCR resume strings into standardized JSON schema fields, providing data integrity verification. |
+| **Bias Agent** | `bias_agent.py` | Audits candidate data for prestige brand indicators (e.g. elite universities, FAANG employers), neutralizes profile text, and runs prestige rankings lookup. |
+| **Matching Agent** | `matching_agent.py` | Scores position alignment using dynamic weights (must-have skills, context matching, growth potential), providing debate logs and score calculators. |
+| **Interview Agent (Phase A)** | `interview_agent.py` | Reviews candidate matching gaps and role requirements to generate exactly 3 targeted screening questions. |
+| **Interview Agent (Phase B)** | `interview_agent.py` | Critiques screening submissions and rates answers on a role-alignment rubric, producing upskilling roadmap suggestions. |
+| **Report Agent** | `report_agent.py` | Synthesizes staged evaluation metrics to draft personalized sourcing pitches, outreach emails, and feedback reports. |
+
+---
+
+## Guardrails & Bounded Autonomy
+
+The architecture enforces a strict distinction between **agent intelligence** and **system authorization**:
+
+* **Safety Guardrails (`guardrails.py`)**: Before tool execution, text payloads are inspected via regular expression filters for:
+  * *Prompt Injections*: Attempts to bypass system prompts or force immediate hiring statuses.
+  * *Unauthorized System Actions*: Requests to purge tables, leak candidate records, or access other applicants' profiles.
+  * *Protected Class Discrimination*: Prompts filtering by race, religion, gender, age, disability, or country of origin.
+* **Bounded Autonomy Policies**: Updates to database states and SMTP email dispatches are verified at runtime:
+  * *Candidate Outreach*: Email invitations require an overall fit score at or above `AGENT_INVITE_MIN_FIT_SCORE` (default `75`). Rejections require a score below `AGENT_REJECT_MAX_SCREENING_SCORE` (default `45`) and an explicit "reject" recommendation.
+  * *Operational Limits*: Actions such as interview scheduling are locked against autonomous execution, requiring recruiter confirmation.
+  * *Auditing*: Every blocked event, decision reason, or message receipt is archived to Supabase `agent_events`.
+
+---
+
+## Database Schema (Supabase)
+
+Runtime storage relies entirely on a Supabase PostgreSQL instance. Ensure tables are populated via [backend/supabase_schema.sql](file:///c:/Users/Acer/Desktop/APU/404-Brain-Not-Found-Recruiter/backend/supabase_schema.sql):
+
+* `positions`: Job title, department, requirements, date range limits, active state.
+* `candidates`: Standardized parsed profile schemas, credentials, and settings.
+* `applications`: Linkages between candidates and positions containing fit scores, screening evaluations, and roadmaps.
+* `agent_events`: Detailed logs of supervisor steps, tool outputs, and guardrail alerts.
+* `agent_actions` & `email_events`: Receipts of autonomous emails, verification attempts, and state updates.
+* `institution_ranking_cache`: Local cache for university QS ranks.
+
+---
+
+## Local Setup & Run Instructions
 
 ### Prerequisites
+* Node.js 20 or newer
+* npm 10 or newer
+* Python 3.10 or newer with pip
+* A Supabase Postgres Database
 
-- Node.js 20 or newer
-- npm 10 or newer
-- Python 3.10 or newer
-- pip
-
-Optional for scanned or image-only resumes:
-
-- Tesseract OCR executable in `PATH`
-- Python OCR dependencies from `backend/requirements.txt`
-
-### Install Dependencies
-
-Install frontend dependencies:
-
-```powershell
+### 1. Repository Installation
+Clone the repository and install the Node dependency packages:
+```bash
 npm install
 ```
 
-For a clean clone or CI install, use the lockfile:
-
-```powershell
-npm ci
+Install the backend Python virtual environment and dependencies:
+```bash
+cd backend
+python -m venv .venv
+# On Windows:
+.venv\Scripts\activate
+# On Linux/macOS:
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-Install backend dependencies:
-
-```powershell
-python -m pip install -r backend\requirements.txt
+### 2. Configure Environment Configurations
+Copy the environment template file:
+```bash
+cp backend/.env.example backend/.env
 ```
-
-If Playwright browser dependencies are needed for authenticated LinkedIn scraping:
-
-```powershell
-python -m playwright install
-```
-
-### Run Locally
-
-Start the backend:
-
-```powershell
-python -m uvicorn main:app --app-dir backend --host 0.0.0.0 --port 8000 --reload
-```
-
-Start the frontend:
-
-```powershell
-npm run dev
-```
-
-Open the Vite URL shown in the terminal, usually:
-
-```text
-http://localhost:5173/
-```
-
-Check backend health:
-
-```powershell
-Invoke-WebRequest http://localhost:8000/ -UseBasicParsing
-```
-
-Expected response:
-
-```json
-{
-  "status": "online",
-  "service": "Intelligent Recruiter Workspace API",
-  "version": "1.0.0"
-}
-```
-
-## Environment Variables
-
-### Backend
-
-Create `backend/.env` from the example file:
-
-```powershell
-Copy-Item backend\.env.example backend\.env
-```
-
-Example backend configuration:
-
+Open `backend/.env` and supply your database keys and provider values:
 ```env
+# Required Server & Database Configurations
 HOST=0.0.0.0
 PORT=8000
-DEBUG=True
+SECRET_KEY=use_a_long_random_string_in_production
 SUPABASE_URL=https://your-project.supabase.co
-# Backend only. Use the Supabase service_role secret key, not anon/public/publishable.
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_BASE_URL=https://api.mor.org/api/v1
-OPENAI_MODEL=deepseek-v4-pro
-AGENT_SUPERVISOR_MODEL=deepseek-v4-pro
-AGENT_WORKER_MODEL=deepseek-v4-pro
-AGENT_MAX_STEPS=10
-AGENT_AUTONOMY_MODE=bounded
-AGENT_INVITE_MIN_FIT_SCORE=75
-AGENT_REJECT_MAX_SCREENING_SCORE=45
+# OpenAI-Compatible LLM Integrations
+OPENAI_API_KEY=your_llm_api_key
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
 
-LLM_TIMEOUT=35
-RESUME_AGENT_TEMP=0.1
-REQUIREMENT_AGENT_TEMP=0.2
-MATCHING_AGENT_TEMP=0.4
-INTERVIEW_AGENT_TEMP=0.3
-REPORT_AGENT_TEMP=0.3
-
+# Optional Automations (Apify & SMTP)
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
-SMTP_USER=your_email@gmail.com
-SMTP_PASSWORD=your_app_specific_password
-
-LINKEDIN_LI_AT_COOKIE=
-LINKEDIN_HEADLESS=True
-
-APIFY_API_TOKEN=
-APIFY_PROFILE_ACTOR_ID=
-APIFY_SEARCH_ACTOR_ID=
-APIFY_TIMEOUT_SECONDS=90
+SMTP_USER=your_sending_email@gmail.com
+SMTP_PASSWORD=your_sending_app_password
+APIFY_API_TOKEN=your_apify_api_token
 ```
 
-Tiny but important reminder: do not commit real API keys, SMTP passwords, cookies, or personal secrets. Future-you will be grateful.
+### 3. Database Initialization
+Open the SQL Editor in your Supabase Project Console. Paste and run the contents of `backend/supabase_schema.sql` to initialize your database structure.
 
-When using live Apify LinkedIn scraping, some actors may require manual approval in the Apify account on first use. If the sourcing console shows a permission error with an approval URL, open the URL in Apify Console and approve the actor permissions.
-
-### Frontend
-
-Create `.env.local` in the project root for local development:
-
-```env
-VITE_API_URL=http://localhost:8000/api/v1
-```
-
-For production on Vercel:
-
-```env
-VITE_API_URL=https://<your-railway-service>.up.railway.app/api/v1
-```
-
-The root `vercel.json` rewrites all frontend paths back to `index.html`, so clean React routes such as `/candidate/home` and `/hiring-manager/dashboard` remain refresh-safe after deployment.
-
-### Railway Backend Hosting
-
-The backend is configured for Railway with `backend/railway.json`. No Dockerfile is needed.
-
-1. Create a new Railway project from this GitHub repo.
-2. Set the Railway service root directory to `/backend`.
-3. Set the Railway config file path to `/backend/railway.json`.
-4. Leave Railway's custom Build Command empty. Do not paste local setup commands such as `python -m pip install -r backend\requirements.txt`.
-5. Leave Railway's custom Install Command empty unless you have a specific reason to override Railpack.
-6. Add the backend environment variables from `backend/.env.example` in Railway Variables.
-7. Set `DEBUG=False` for production.
-8. Deploy the service.
-9. Copy the Railway public domain and set the Vercel frontend variable to:
-
-```env
-VITE_API_URL=https://<your-railway-service>.up.railway.app/api/v1
-```
-
-Railway uses this start command:
-
+### 4. Execute Locally
+Run the FastAPI backend server:
 ```bash
-uvicorn main:app --host 0.0.0.0 --port $PORT
+# From the backend/ folder with virtual environment activated:
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
-
-### Docker Backend Hosting
-
-The backend also includes a Dockerfile at `backend/Dockerfile`.
-
-Build the backend image locally:
-
-```powershell
-docker build -t 404hire-backend ./backend
-```
-
-Run it locally:
-
-```powershell
-docker run --rm -p 8000:8000 --env-file backend\.env 404hire-backend
-```
-
-If you need the Playwright browser installed for live scraping, build with:
-
-```powershell
-docker build --build-arg INSTALL_PLAYWRIGHT=true -t 404hire-backend ./backend
-```
-
-For Railway Docker deployment:
-
-1. Set the Railway service root directory to `/backend`.
-2. Clear the Railway config file path if it is set to `/backend/railway.json`.
-3. Set the Dockerfile path to `/backend/Dockerfile`, or let Railway detect `backend/Dockerfile` from the `/backend` service root.
-4. Leave custom Build Command, Install Command, and Start Command empty.
-5. Add the backend environment variables from `backend/.env.example` in Railway Variables.
-6. Set `DEBUG=False` for production.
-7. Deploy the service.
-
-The Docker container starts with:
-
+Run the React Vite dev server:
 ```bash
-uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+# In a separate terminal at the project root:
+npm run dev
+```
+Open your browser to `http://localhost:5173/` to explore the workspace.
+
+---
+
+## Demo Credentials
+
+You can sign in to the Hiring Manager Portal directly using these pre-seeded demo accounts:
+* **Email**: `admin@company.com` | **Password**: `password`
+* **Email**: `hiring@company.com` | **Password**: `password`
+
+---
+
+## Verification & Testing
+
+Verify code compilation and run unit tests to confirm system integrity:
+```bash
+# Compile check Python files
+python -m compileall backend/app backend/tests
+# Execute the Pytest suite
+pytest backend/tests
+# Run Vite production build check
+npm run build
 ```
 
-## Demo Accounts
-
-Hiring manager demo accounts:
-
-```text
-admin@company.com
-password
-```
-
-```text
-hiring@company.com
-password
-```
-
-Candidate accounts are created through the Candidate Portal, because the candidate flow includes email verification, resume upload, and profile completion.
-
-## API Reference
-
-Local API base URL:
-
-```text
-http://localhost:8000/api/v1
-```
-
-Production API base URL:
-
-```text
-https://<your-railway-service>.up.railway.app/api/v1
-```
-
-### Jobs
-
-```text
-GET    /jobs
-GET    /jobs?active_only=true
-POST   /jobs/intake
-POST   /jobs
-PATCH  /jobs/{job_id}
-DELETE /jobs/{job_id}
-```
-
-### Settings
-
-```text
-POST  /settings/smtp/verify
-GET   /settings/bias-controls
-PATCH /settings/bias-controls
-```
-
-### Candidates And Applications
-
-```text
-GET    /candidates
-GET    /candidates?neutralize=true
-GET    /candidates/fairness-audit
-GET    /candidates/fairness-audit?position_id={position_id}
-GET    /candidates/lookup?email={email}
-POST   /candidates/start-email-verification
-POST   /candidates/verify-pending-email
-POST   /candidates/signup
-POST   /candidates/login
-POST   /candidates/{email}/password
-POST   /candidates/{email}/reset-password
-PATCH  /candidates/{email}/account
-POST   /candidates/{email}/verify-email
-POST   /candidates/{email}/resend-verification
-PATCH  /candidates/{email}/profile
-POST   /candidates/{email}/profile-assistant
-POST   /candidates/{email}/profile-picture
-POST   /candidates/{email}/resume
-POST   /candidates/{email}/apply-position
-PATCH  /candidates/{email}/draft-answers
-PATCH  /candidates/{email}/notifications/read
-PATCH  /candidates/{email}/status
-POST   /candidates/{email}/revert-status
-DELETE /candidates/{email}
-GET    /candidates/{email}/resume
-POST   /candidates/apply
-POST   /candidates/{email}/sandbox
-POST   /candidates/scrape
-POST   /candidates/auto-source
-POST   /candidates/mock-bias-comparison
-POST   /candidates/invite
-POST   /candidates/{email}/reject
-POST   /candidates/{email}/schedule-interview
-GET    /candidates/interview-calendar
-PATCH  /candidates/{email}/outreach-notes
-GET    /settings/integrations/status
-GET    /agents/events
-```
-
-### Example Job Intake Body
-
-```json
-{
-  "title": "Bakery Assistant",
-  "department": "Kitchen",
-  "chat_messages": [
-    {
-      "role": "agent",
-      "content": "What products or duties will this person handle most often?"
-    },
-    {
-      "role": "manager",
-      "content": "Bread preparation, oven timing, food hygiene, and early shift prep."
-    }
-  ]
-}
-```
-
-### Example Bias Control Update
-
-```json
-{
-  "neutralize_prestige": true,
-  "anonymized_blind_hiring": false,
-  "scoring_mode": "prestige_aware",
-  "prestige_weight": 30
-}
-```
-
-### Example Auto Source Body
-
-```json
-{
-  "position_id": 1,
-  "count": 3
-}
-```
-
-## Data And Storage
-
-Runtime storage:
-
-- Database: Supabase tables created from `backend/supabase_schema.sql`
-- Agent traces: `agent_events`
-- Autonomous action receipts: `agent_actions`
-- Email receipts: `email_events`
-- Uploaded resumes: `backend/uploads/resumes/`
-- Extracted profile pictures: `backend/uploads/profile_pictures/`
-
-Supabase is required for the agentic build. Run `backend/supabase_schema.sql` in the Supabase SQL Editor, then set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` before starting the backend.
-
-## Validation And Safety
-
-404Hire includes:
-
-- Email format validation.
-- Pending email verification before candidate signup.
-- Verification cooldowns.
-- Password hashing with SHA-256.
-- PDF-only resume upload.
-- Resume file size limit.
-- Resume readability checks before Resume Agent processing.
-- Duplicate candidate account prevention.
-- Duplicate application prevention per position.
-- Position application-window validation.
-- Required profile completion flow.
-- Agent fallback warnings when fallback logic is used.
-- Hiring-manager status history and revert support.
-- Fair-hiring views that avoid protected-class inference.
-
-## Troubleshooting
-
-If something breaks, start here. Most demo issues are either the backend not running, the frontend pointing to the wrong API URL, or a resume PDF that does not contain readable text.
-
-### Backend cannot import `main`
-
-Use the root command with `--app-dir backend`:
-
-```powershell
-python -m uvicorn main:app --app-dir backend --host 0.0.0.0 --port 8000 --reload
-```
-
-### Frontend shows API connection errors
-
-Check that the backend is running:
-
-```powershell
-Invoke-WebRequest http://localhost:8000/ -UseBasicParsing
-```
-
-Confirm `.env.local` contains:
-
-```env
-VITE_API_URL=http://localhost:8000/api/v1
-```
-
-For production, Vercel should use:
-
-```env
-VITE_API_URL=https://<your-railway-service>.up.railway.app/api/v1
-```
-
-### Refreshing a portal route shows 404 or login
-
-The frontend uses clean React routes. Vercel must keep the root `vercel.json` rewrite so deep links return `index.html` instead of a platform 404:
-
-```json
-{
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
-  ]
-}
-```
-
-Candidate sessions are restored from `candidateSessionV3`, and hiring-manager demo sessions are restored from `hiringManagerSessionV1`. If a user intentionally signs out, those local sessions are cleared and protected pages return to login.
-
-### `npm install` fails
-
-Use Node.js 20 or newer and npm 10 or newer:
-
-```powershell
-node -v
-npm -v
-```
-
-Then reinstall from the npm lockfile:
-
-```powershell
-npm install
-```
-
-The project is npm-only. Avoid generating `pnpm-lock.yaml` or `yarn.lock`.
-
-### Resume upload fails validation
-
-The uploaded PDF may not contain readable resume text.
-
-Recommended fixes:
-
-- Export the resume as a text-based PDF.
-- Avoid screenshots or scanned-only PDFs.
-- Install Tesseract OCR if scanned resumes must be supported.
-- Confirm the file is below the upload limit.
-
-### LinkedIn sourcing is unavailable
-
-Manual LinkedIn scraping requires live profile data through Apify or an authenticated LinkedIn scraper session. Configure:
-
-```env
-APIFY_API_TOKEN=your_apify_token
-```
-
-or:
-
-```env
-LINKEDIN_LI_AT_COOKIE=your_linkedin_cookie
-```
-
-Without live credentials, Automatic Agent Search falls back to prototype candidate generation, so the demo can still keep moving.
-
-### Large Vite chunk warning
-
-`npm run build` may warn that a JavaScript chunk is larger than 500 kB. This is a build optimization warning, not a build failure.
-
-## Production Notes
-
-This is a hackathon-friendly prototype, not a hardened production hiring system yet. Before a real production release, improve the following:
-
-- Replace demo hiring-manager login with real authentication.
-- Add row-level user policies and tenant boundaries on top of the current Supabase service-role backend.
-- Store resumes in managed object storage.
-- Add signed URLs or authorization checks for resume downloads.
-- Restrict CORS origins in `backend/main.py`.
-- Remove prototype verification-code display.
-- Configure reliable SMTP or transactional email.
-- Replace SHA-256 password hashing with a dedicated password hashing algorithm such as bcrypt or Argon2.
-- Add audit logs for candidate status changes.
-- Add route-level automated tests.
-- Add rate limits for signup, login, and email verification.
-- Add monitoring and structured logging.
-
-## Verification Checklist
-
-After setup, give the full flow a quick test drive:
-
-- Backend health check returns online status.
-- Frontend opens at the Vite dev URL.
-- Hiring manager can sign in.
-- Hiring-manager and candidate routes stay on the same portal page after browser refresh.
-- Requirement Agent asks adaptive intake questions.
-- Requirement Agent and profile assistant chats scroll inside their chat panels when new messages arrive.
-- A position can be created and published.
-- Automatic sourcing returns candidate profiles.
-- Candidate can verify email before signup.
-- Candidate can upload a valid PDF resume.
-- Candidate can complete missing profile details.
-- Candidate can apply to an open position.
-- Candidate can submit screening answers.
-- Hiring manager can review match score, debate, screening feedback, and roadmap.
-- Bias controls can switch between blind merit and prestige-aware scoring, with the formula and delta visible.
-- Fairness audit returns a score and risk level after candidate data exists.
-- Interview scheduling and rejection flows update candidate notifications.
-<div align="center">
-  <i>Engineered by ❤️ from UTM's FAI Studens</i>
-  <br />
-  <blockquote><strong>404 Brain Not Found. Talent Found. 👾<br>Because Great Talent Shouldn’t Be "Not Found."</strong></blockquote>
-</div>
+---
+
+## Troubleshooting Guide
+
+| Symptom / Error | Common Cause | Recommended Fix |
+| --- | --- | --- |
+| **Supabase RLS/Permission Errors** | Backend using `anon/public` key. | Use the service role secret (`SUPABASE_SERVICE_ROLE_KEY`) to bypass row limits. |
+| **LLM / Resume Parsing Timeouts** | LLM provider or base URL is slow/unreachable. | Set `AGENT_SUPERVISOR_MODE=single_plan`, lower `AGENT_WORKER_TIMEOUT_SECONDS`, or switch to a faster model. |
+| **Verification / Invite Emails Not Sent** | SMTP credentials missing or invalid. | Confirm integration statuses at `GET /api/v1/settings/integrations/status` and test using the SMTP test endpoint. |
+| **LinkedIn Search Returns Simulated Profiles** | `APIFY_API_TOKEN` is blank or actor IDs are incorrect. | Verify token and actor values in `.env`. The system defaults to simulated matching for demos. |
+| **No QS Badges / Rankings Displayed** | Institution mismatch or cache missing. | Verify school spelling matches the QS rankings file. Modify cache rows directly in `institution_ranking_cache`. |
