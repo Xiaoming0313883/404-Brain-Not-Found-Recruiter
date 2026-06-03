@@ -72,6 +72,12 @@ const getPhaseLabel = (status: string, hasAnswers: boolean): string => {
   return 'Waiting for Screening';
 };
 
+const hasSubmittedInterviewAnswers = (answers?: string[]): boolean =>
+  Array.isArray(answers) && answers.some(answer => answer.trim().length > 0);
+
+const isPendingInterview = (status: string, answers?: string[]): boolean =>
+  ['staged', 'invited', 'applied', 'screening'].includes(status) && !hasSubmittedInterviewAnswers(answers);
+
 const getActiveStepIndex = (status: string, hasAnswers: boolean): number => {
   if (status === 'rejected') return 4;
   if (status === 'hired') return 4;
@@ -695,15 +701,25 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
         <div className="border border-[#e4e1da] rounded-xl p-4">
           <PlayCircle className="w-4 h-4 text-[#2d6a55] mb-2" />
           <p className="text-xs text-[#a8a49d]">Interview</p>
-          <p className="text-sm text-[#1c1c1a] font-medium">
-            {!selectedApplication
-              ? 'Waiting for Interview'
-              : selectedStatus === 'interview_scheduled'
-                ? 'Interview Scheduled'
-                : (selectedStatus === 'completed' || selectedStatus === 'screening' || selectedStatus === 'hired' || selectedStatus === 'rejected')
-                  ? 'Interview Completed'
-                  : 'Waiting for Interview'}
-          </p>
+          <div className="text-sm text-[#1c1c1a] font-medium mt-1">
+            {(() => {
+              const pending = isPendingInterview(selectedApplication?.status || candidateData.status, selectedApplication?.answers);
+              if (pending) {
+                return (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#fff8ed] text-[#8a5a14] border border-[#f2d3a4] uppercase tracking-wide">
+                    Pending Interview
+                  </span>
+                );
+              }
+              return !selectedApplication
+                ? 'Waiting for Interview'
+                : selectedStatus === 'interview_scheduled'
+                  ? 'Interview Scheduled'
+                  : (selectedStatus === 'completed' || selectedStatus === 'screening' || selectedStatus === 'hired' || selectedStatus === 'rejected')
+                    ? 'Interview Completed'
+                    : 'Waiting for Interview';
+            })()}
+          </div>
         </div>
         <div className="border border-[#e4e1da] rounded-xl p-4">
           <BarChart3 className="w-4 h-4 text-[#2d6a55] mb-2" />
@@ -1143,12 +1159,33 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
                 </p>
                 {candidateData.education?.length ? (
                   <div className="mt-3 space-y-2">
-                    {candidateData.education.map((education, index) => (
-                      <div key={`${education.degree}-${index}`} className="rounded-lg bg-[#f7f6f3] border border-[#e4e1da] p-3">
-                        <p className="text-xs text-[#1c1c1a] font-semibold">{education.degree || 'Education'}</p>
-                        <p className="text-xs text-[#6b7063] mt-0.5">{[education.school, education.duration].filter(Boolean).join(' - ')}</p>
-                      </div>
-                    ))}
+                    {candidateData.education.map((education, index) => {
+                      const qsRankEntry = candidateData.qsRanking?.find(
+                        (r: any) => r.school && education.school && (
+                          r.school.toLowerCase() === education.school.toLowerCase() ||
+                          education.school.toLowerCase().includes(r.school.toLowerCase()) ||
+                          r.school.toLowerCase().includes(education.school.toLowerCase())
+                        )
+                      );
+                      const qsRank = qsRankEntry?.rank;
+                      return (
+                        <div key={`${education.degree}-${index}`} className="rounded-lg bg-[#f7f6f3] border border-[#e4e1da] p-3">
+                          <p className="text-xs text-[#1c1c1a] font-semibold flex items-center justify-between flex-wrap gap-1">
+                            <span>{education.degree || 'Education'}</span>
+                            {qsRank ? (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#e8f2ee] text-[#2d6a55] border border-[#c8e6d8]">
+                                QS Rank: #{qsRank}
+                              </span>
+                            ) : (
+                              <span className="text-[#a8a49d] text-[9px] font-normal">
+                                (Ranking Not Available)
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-xs text-[#6b7063] mt-0.5">{[education.school, education.duration].filter(Boolean).join(' - ')}</p>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : null}
               </div>
@@ -1291,9 +1328,15 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
                         <p className="text-xs text-[#6b7063] mt-0.5">{position?.department || 'Hiring team'}</p>
                         <p className="text-xs text-[#a8a49d] mt-2">Applied: {formatDateTime(application.applied_at)}</p>
                       </div>
-                      <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-[#e8f2ee] text-[#2d6a55] whitespace-nowrap">
-                        {getPhaseLabel(applicationStatus, Boolean(application.answers?.length))}
-                      </span>
+                      {isPendingInterview(application.status, application.answers) ? (
+                        <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-[#fff8ed] text-[#8a5a14] border border-[#f2d3a4] whitespace-nowrap">
+                          Pending Interview
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-[#e8f2ee] text-[#2d6a55] whitespace-nowrap">
+                          {getPhaseLabel(applicationStatus, Boolean(application.answers?.length))}
+                        </span>
+                      )}
                     </div>
                   </button>
                   </div>

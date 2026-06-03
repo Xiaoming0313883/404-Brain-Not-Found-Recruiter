@@ -6,6 +6,7 @@ import { CandidateHome } from './candidate/CandidateHome';
 import { CandidateSandbox } from './candidate/CandidateSandbox';
 import { CandidateInformation } from './candidate/CandidateInformation';
 import { CandidateApplyLoading } from './candidate/CandidateApplyLoading';
+import { CandidateFeedback } from './candidate/CandidateFeedback';
 import { API_BASE_URL } from '../api';
 
 export interface CandidateData {
@@ -85,6 +86,7 @@ export interface CandidateData {
   sourceMethod?: string;
   draftAnswers?: Record<string, string[]>;
   lastAgentError?: string;
+  qsRanking?: Array<{ school: string; rank: number | null }>;
 }
 
 const CANDIDATE_SESSION_KEY = 'candidateSessionV3';
@@ -362,7 +364,16 @@ export function CandidatePortal() {
         />
         <Route
           path="feedback"
-          element={<Navigate to={candidateData ? "/candidate/applications" : "/candidate"} replace />}
+          element={
+            candidateData ? (
+              <CandidateFeedback
+                candidateData={candidateData}
+                onSignOut={handleSignOut}
+              />
+            ) : (
+              <Navigate to="/candidate" replace />
+            )
+          }
         />
       </Routes>
     </div>

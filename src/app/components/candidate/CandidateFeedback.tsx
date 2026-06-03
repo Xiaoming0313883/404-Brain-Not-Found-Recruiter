@@ -214,37 +214,50 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="text-[#1c1c1a] font-semibold text-base">Question-by-Question AI Critique</h3>
+                  <h3 className="text-[#1c1c1a] font-semibold text-base">Interview Session</h3>
                   <KnowledgeTooltip label="How feedback is generated">
                     The Interview Agent compares each answer with the exact question and role requirements, then gives evidence-based strengths, weaknesses, suggested improvement, and a hiring-manager note.
                   </KnowledgeTooltip>
                 </div>
-                <p className="text-xs text-[#6b7063]">Detailed analysis by our Candidate Interview Agent</p>
+                <p className="text-xs text-[#6b7063]">Detailed transcript and critique from your interview session</p>
               </div>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-6">
               {critiques.map((item: any, idx: number) => (
-                <div key={idx} className="border-l-2 border-[#2d6a55] bg-[#f8faf8] rounded-r-xl p-5 space-y-3">
-                  <p className="text-xs font-semibold tracking-wide uppercase text-[#2d6a55] mb-1.5">Question {idx + 1}</p>
-                  {item.per_answer_score !== undefined && (
-                    <p className="text-xs text-[#2d6a55] font-semibold">Answer score: {item.per_answer_score}/100</p>
-                  )}
-                  {item.requirement_focus && (
-                    <p className="text-xs text-[#6b7063]">Role focus: {item.requirement_focus}</p>
-                  )}
-                  <p className="text-xs text-[#1c1c1a] italic leading-relaxed font-medium">"{item.question}"</p>
-                  {(item.candidate_answer || item.candidate_answer_excerpt) && (
-                    <p className="text-xs text-[#52574e] leading-relaxed">
-                      <span className="font-semibold text-[#1c1c1a]">Your answer:</span> {item.candidate_answer || item.candidate_answer_excerpt}
+                <div key={idx} className="bg-white border border-[#e4e1da] rounded-xl p-5 shadow-sm space-y-4 text-left">
+                  <div className="flex items-center justify-between border-b border-[#e4e1da] pb-3">
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#2d6a55]">
+                      Question {idx + 1}
+                    </span>
+                    {item.per_answer_score !== undefined && (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#e8f2ee] text-[#2d6a55] border border-[#c8e6d8]">
+                        Score: {item.per_answer_score}/100
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold uppercase text-[#a8a49d]">Question</p>
+                    <p className="text-sm text-[#1c1c1a] font-medium italic">"{item.question}"</p>
+                    {item.requirement_focus && (
+                      <p className="text-[10px] text-[#6b7063]">Requirement focus: {item.requirement_focus}</p>
+                    )}
+                  </div>
+
+                  <div className="bg-[#f7f6f3] rounded-lg p-3.5 border border-[#e4e1da]/60">
+                    <p className="text-xs font-semibold uppercase text-[#a8a49d] mb-1.5">Your Answer</p>
+                    <p className="text-xs text-[#52574e] leading-relaxed whitespace-pre-wrap">
+                      {item.candidate_answer || item.candidate_answer_excerpt || 'No answer submitted'}
                     </p>
-                  )}
-                  <p className="text-xs text-[#52574e] leading-relaxed">{item.critique}</p>
-                  {item.decision_reason && (
-                    <p className="rounded-lg bg-white px-3 py-2 text-xs leading-relaxed text-[#52574e]">
-                      <span className="font-semibold text-[#1c1c1a]">Decision reason:</span> {item.decision_reason}
+                  </div>
+
+                  <div className="bg-[#f0f7f4] rounded-lg p-3.5 border border-[#c8e6d8]">
+                    <p className="text-xs font-semibold uppercase text-[#2d6a55] mb-1.5">AI Feedback</p>
+                    <p className="text-xs text-[#245747] leading-relaxed">
+                      {item.critique}
                     </p>
-                  )}
+                  </div>
 
                   {(item.strengths || item.weaknesses || item.suggested_improvement) && (
                     <div className="grid sm:grid-cols-2 gap-4 mt-3 pt-3 border-t border-[#e4e1da]/50 text-xs">

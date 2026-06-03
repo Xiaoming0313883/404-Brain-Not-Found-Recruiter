@@ -1173,6 +1173,17 @@ export function CandidateDashboard({
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-0.5">
                                 <h4 className="text-sm text-[#1c1c1a] font-semibold">{displayName}</h4>
+                                 
+                                 {/* QS University Ranking Badge */}
+                                 {(() => {
+                                   const rankedSchools = candidate.qsRanking?.filter((r: any) => r.rank !== null && r.rank !== undefined) || [];
+                                   const topQS = rankedSchools.length > 0 ? Math.min(...rankedSchools.map((r: any) => r.rank)) : null;
+                                   return topQS ? (
+                                     <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#e8f2ee] text-[#2d6a55] whitespace-nowrap flex items-center gap-1 border border-[#c8e6d8]">
+                                       🎓 QS #{topQS} {topQS <= 100 ? '🏅 Top 100' : ''}
+                                     </span>
+                                   ) : null;
+                                 })()}
                                 
                                 {/* High position fit badge */}
                                 {candidate.matchScore >= 80 && (
@@ -1819,6 +1830,21 @@ export function CandidateDashboard({
                               <span className="text-xs text-[#a8a49d]">Resume File</span>
                               <p className="text-[#1c1c1a] mt-0.5 font-medium">{candidate.resumeFilename || 'No PDF stored'}</p>
                             </div>
+                             <div>
+                               <span className="text-xs text-[#a8a49d]">University Ranking</span>
+                               {(() => {
+                                 const rankedSchools = candidate.qsRanking?.filter((r: any) => r.rank !== null && r.rank !== undefined) || [];
+                                 if (rankedSchools.length === 0) {
+                                   return <p className="text-[#a8a49d] mt-0.5 font-medium">Ranking Not Available</p>;
+                                 }
+                                 const bestSchool = rankedSchools.reduce((prev: any, current: any) => (prev.rank < current.rank) ? prev : current);
+                                 return (
+                                   <p className="text-[#2d6a55] mt-0.5 font-semibold">
+                                     QS #{bestSchool.rank} ({bestSchool.school})
+                                   </p>
+                                 );
+                               })()}
+                             </div>
                           </div>
                           {candidate.awards?.length ? (
                             <div className="mt-3 pt-3 border-t border-[#e4e1da]">
@@ -1917,19 +1943,41 @@ export function CandidateDashboard({
                                    edu.school.toLowerCase().includes(ind.original.toLowerCase()) || 
                                    ind.original.toLowerCase().includes(edu.school.toLowerCase()))
                                 );
-                                const qsRank = matchedIndicator?.qs_rank;
+                                const qsRankingEntry = candidate.qsRanking?.find(
+                                  (r: any) => r.school.toLowerCase() === edu.school.toLowerCase() ||
+                                              edu.school.toLowerCase().includes(r.school.toLowerCase()) ||
+                                              r.school.toLowerCase().includes(edu.school.toLowerCase())
+                                );
+                                const qsRank = matchedIndicator?.qs_rank || qsRankingEntry?.rank;
+
+                                let badgeText = "";
+                                if (qsRank) {
+                                  if (qsRank <= 100) {
+                                    badgeText = "Top 100 institution";
+                                  } else if (qsRank <= 500) {
+                                    badgeText = "Ranked institution";
+                                  } else {
+                                    badgeText = "Ranking found";
+                                  }
+                                }
+                                const badgeLabel = matchedIndicator?.qs_badge || badgeText;
+
                                 return (
                                   <div key={idx}>
                                     <p className="text-sm text-[#1c1c1a] font-semibold flex items-center flex-wrap gap-2">
                                       <span>{neutralizeText(edu.school)}</span>
-                                      {qsRank && (
+                                      {qsRank ? (
                                         <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#e8f2ee] text-[#2d6a55] flex-wrap">
                                           <span>QS Rank: #{qsRank}</span>
-                                          {matchedIndicator?.qs_badge && (
+                                          {badgeLabel && (
                                             <span className="bg-[#2d6a55] text-white px-1 py-0.2 rounded-[3px] text-[8px] font-extrabold uppercase tracking-wide">
-                                              {matchedIndicator.qs_badge}
+                                              {badgeLabel}
                                             </span>
                                           )}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[#a8a49d] text-[10px] font-normal">
+                                          (Ranking Not Available)
                                         </span>
                                       )}
                                     </p>
@@ -1981,112 +2029,149 @@ export function CandidateDashboard({
                           </div>
                         </div>
 
-                        {/* Screening Results */}
-                        {(candidate.status === 'completed' || candidate.status === 'screening' || candidate.status === 'hired') && candidate.screeningScore !== undefined && (
-                          <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-4 shadow-sm">
-                            <div className="flex items-center justify-between gap-4">
-                              <div className="flex items-center gap-3">
-                                <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
-                                  <CheckCircle2 className="w-4.5 h-4.5 text-[#2d6a55]" style={{ width: '18px', height: '18px' }} />
-                                </div>
-                                <div>
-                                  <p className="text-sm text-[#1c1c1a] font-semibold">Position-Focused Screening {candidate.status === 'screening' ? 'In Progress' : 'Complete'}</p>
-                                  <p className="text-xs text-[#6b7063]">{candidate.evaluation?.position_fit_verdict || 'Answers evaluated against the selected position requirements'}</p>
-                                </div>
+                        {/* Screening Results / Interview Session */}
+                        {((['completed', 'screening', 'hired', 'interview_scheduled'].includes(candidate.status)) || isPendingInterview(candidate.status, candidate.answers)) && (
+                          <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-4 shadow-sm text-left">
+                            {isPendingInterview(candidate.status, candidate.answers) ? (
+                              <div className="text-center py-6 bg-white border border-[#e4e1da] rounded-xl">
+                                <Calendar className="w-8 h-8 text-[#a8a49d] mx-auto mb-2" />
+                                <p className="text-sm font-semibold text-[#1c1c1a]">Interview Pending</p>
+                                <p className="text-xs text-[#6b7063] mt-1 max-w-sm mx-auto">
+                                  This candidate has not yet completed their warm-up sandbox / interview questions.
+                                </p>
                               </div>
-                              <div className="text-right">
-                                <div className="text-2xl text-[#2d6a55] font-semibold">{candidate.screeningScore}</div>
-                                <div className="text-xs text-[#6b7063]">/ 100</div>
-                              </div>
-                            </div>
-                            {candidate.evaluation?.role_alignment_summary && (
-                              <p className="text-xs text-[#6b7063] leading-relaxed mt-3 border-t border-[#e4e1da] pt-3">
-                                {candidate.evaluation.role_alignment_summary}
-                              </p>
-                            )}
-                            {candidate.evaluation?.score_breakdown && (
-                              <div className="grid sm:grid-cols-5 gap-2 mt-3">
-                                {[
-                                  ['Role', candidate.evaluation.score_breakdown.role_requirement_alignment, 35],
-                                  ['Depth', candidate.evaluation.score_breakdown.technical_correctness_depth, 25],
-                                  ['Evidence', candidate.evaluation.score_breakdown.evidence_specificity, 20],
-                                  ['Impact', candidate.evaluation.score_breakdown.position_impact, 10],
-                                  ['Clarity', candidate.evaluation.score_breakdown.communication_clarity, 10]
-                                ].map(([label, value, max]) => (
-                                  <div key={label} className="bg-white border border-[#e4e1da] rounded-lg p-2">
-                                    <p className="text-[10px] text-[#a8a49d] uppercase tracking-wider font-semibold">{label}</p>
-                                    <p className="text-sm text-[#1c1c1a] font-semibold mt-0.5">{value || 0}/{max}</p>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {questionFeedbackItems.length ? (
-                              <div className="mt-4 pt-4 border-t border-[#e4e1da] space-y-3">
-                                <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Question-Specific AI Feedback</p>
-                                {questionFeedbackItems.map((item: any, critiqueIndex: number) => (
-                                  <div key={`${candidate.email}-critique-${critiqueIndex}`} className="bg-white border border-[#e4e1da] rounded-lg p-3">
-                                    <div className="flex items-center justify-between gap-3 mb-2">
-                                      <p className="text-xs text-[#2d6a55] font-semibold">Question {critiqueIndex + 1}</p>
-                                      {item.per_answer_score !== undefined && (
-                                        <span className="text-xs text-[#1c1c1a] font-semibold">{item.per_answer_score}/100</span>
-                                      )}
+                            ) : (
+                              <>
+                                <div className="flex items-center justify-between gap-4">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-9 h-9 bg-[#e8f2ee] rounded-xl flex items-center justify-center">
+                                      <CheckCircle2 className="w-4.5 h-4.5 text-[#2d6a55]" style={{ width: '18px', height: '18px' }} />
                                     </div>
-                                    <p className="text-xs text-[#1c1c1a] font-medium leading-relaxed">{item.question || candidate.customQuestions?.[critiqueIndex] || `Screening question ${critiqueIndex + 1}`}</p>
-                                    {(item.candidate_answer || item.candidate_answer_excerpt || candidate.answers?.[critiqueIndex]) && (
-                                      <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">
-                                        <span className="font-semibold text-[#1c1c1a]">Candidate answer:</span> {item.candidate_answer || candidate.answers?.[critiqueIndex] || item.candidate_answer_excerpt}
-                                      </p>
-                                    )}
-                                    {item.requirement_focus && (
-                                      <p className="text-xs text-[#6b7063] mt-1">
-                                        <span className="font-semibold text-[#1c1c1a]">Role focus:</span> {item.requirement_focus}
-                                      </p>
-                                    )}
-                                    <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">{alignScoreMentions(item.critique, item.per_answer_score)}</p>
-                                    {item.strengths?.length ? (
-                                      <div className="mt-3">
-                                        <p className="text-[10px] text-[#2d6a55] uppercase tracking-wider font-semibold mb-1.5">Evidence supporting the score</p>
-                                        <ul className="space-y-1">
-                                          {item.strengths.map((strength: string, strengthIndex: number) => (
-                                            <li key={strengthIndex} className="text-xs text-[#3d5a4a] leading-relaxed flex items-start gap-1.5">
-                                              <CheckCircle2 className="w-3 h-3 text-[#2d6a55] flex-shrink-0 mt-0.5" />
-                                              <span>{strength}</span>
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      </div>
-                                    ) : null}
-                                    {item.weaknesses?.length ? (
-                                      <div className="mt-3">
-                                        <p className="text-[10px] text-[#c25a2a] uppercase tracking-wider font-semibold mb-1.5">Risks or missing proof</p>
-                                        <ul className="space-y-1">
-                                          {item.weaknesses.map((weakness: string, weaknessIndex: number) => (
-                                            <li key={weaknessIndex} className="text-xs text-[#6b7063] leading-relaxed flex items-start gap-1.5">
-                                              <AlertCircle className="w-3 h-3 text-[#c25a2a] flex-shrink-0 mt-0.5" />
-                                              <span>{weakness}</span>
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      </div>
-                                    ) : null}
-                                    {(item.suggested_improvement || item.hiring_manager_note) && (
-                                      <div className="mt-3 rounded-lg border border-[#e4e1da] bg-[#f7f6f3] p-3">
-                                        {item.hiring_manager_note && (
-                                          <p className="text-xs text-[#1c1c1a] leading-relaxed">
-                                            <span className="font-semibold">Hiring manager note:</span> {item.hiring_manager_note}
-                                          </p>
-                                        )}
-                                        {item.suggested_improvement && (
-                                          <p className="text-xs text-[#6b7063] leading-relaxed mt-2">
-                                            <span className="font-semibold text-[#1c1c1a]">Suggested probe:</span> {item.suggested_improvement}
-                                          </p>
-                                        )}
-                                      </div>
-                                    )}
+                                    <div>
+                                      <p className="text-sm text-[#1c1c1a] font-semibold">Interview Session</p>
+                                      <p className="text-xs text-[#6b7063]">{candidate.evaluation?.position_fit_verdict || 'Answers evaluated against the selected position requirements'}</p>
+                                    </div>
                                   </div>
-                                ))}
-                              </div>
-                            ) : null}
+                                  {candidate.screeningScore !== undefined && (
+                                    <div className="text-right">
+                                      <div className="text-2xl text-[#2d6a55] font-semibold">{candidate.screeningScore}</div>
+                                      <div className="text-xs text-[#6b7063]">/ 100</div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {candidate.evaluation?.role_alignment_summary && (
+                                  <p className="text-xs text-[#6b7063] leading-relaxed mt-3 border-t border-[#e4e1da] pt-3">
+                                    {candidate.evaluation.role_alignment_summary}
+                                  </p>
+                                )}
+                                {candidate.evaluation?.score_breakdown && (
+                                  <div className="grid sm:grid-cols-5 gap-2 mt-3">
+                                    {[
+                                      ['Role', candidate.evaluation.score_breakdown.role_requirement_alignment, 35],
+                                      ['Depth', candidate.evaluation.score_breakdown.technical_correctness_depth, 25],
+                                      ['Evidence', candidate.evaluation.score_breakdown.evidence_specificity, 20],
+                                      ['Impact', candidate.evaluation.score_breakdown.position_impact, 10],
+                                      ['Clarity', candidate.evaluation.score_breakdown.communication_clarity, 10]
+                                    ].map(([label, value, max]) => (
+                                      <div key={label} className="bg-white border border-[#e4e1da] rounded-lg p-2">
+                                        <p className="text-[10px] text-[#a8a49d] uppercase tracking-wider font-semibold">{label}</p>
+                                        <p className="text-sm text-[#1c1c1a] font-semibold mt-0.5">{value || 0}/{max}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {questionFeedbackItems.length ? (
+                                  <div className="mt-4 pt-4 border-t border-[#e4e1da] space-y-4">
+                                    <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Interview Session Q&A</p>
+                                    <div className="space-y-4 pl-2 border-l border-[#e4e1da]">
+                                      {questionFeedbackItems.map((item: any, critiqueIndex: number) => {
+                                        const answer = item.candidate_answer || candidate.answers?.[critiqueIndex] || item.candidate_answer_excerpt || '';
+                                        return (
+                                          <div key={`${candidate.email}-critique-${critiqueIndex}`} className="space-y-2 relative pl-4 before:absolute before:left-0 before:top-3.5 before:w-3 before:h-[1px] before:bg-[#e4e1da]">
+                                            <div className="bg-white border border-[#e4e1da] rounded-xl p-4 shadow-sm space-y-3">
+                                              <div className="flex items-center justify-between border-b border-[#e4e1da] pb-2">
+                                                <span className="text-xs font-bold text-[#2d6a55]">
+                                                  Question {critiqueIndex + 1}
+                                                </span>
+                                                {item.per_answer_score !== undefined && (
+                                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#e8f2ee] text-[#2d6a55] border border-[#c8e6d8]">
+                                                    Score: {item.per_answer_score}/100
+                                                  </span>
+                                                )}
+                                              </div>
+
+                                              <div className="space-y-1">
+                                                <p className="text-[10px] font-semibold uppercase text-[#a8a49d]">Question</p>
+                                                <p className="text-xs text-[#1c1c1a] font-medium italic">"{item.question || candidate.customQuestions?.[critiqueIndex] || `Screening question ${critiqueIndex + 1}`}"</p>
+                                                {item.requirement_focus && (
+                                                  <p className="text-[9px] text-[#6b7063]">Requirement focus: {item.requirement_focus}</p>
+                                                )}
+                                              </div>
+
+                                              <div className="bg-[#f7f6f3] rounded-lg p-3 border border-[#e4e1da]/60">
+                                                <p className="text-[10px] font-semibold uppercase text-[#a8a49d] mb-1">Candidate Answer</p>
+                                                <p className="text-xs text-[#52574e] leading-relaxed whitespace-pre-wrap">
+                                                  {answer || 'No answer submitted'}
+                                                </p>
+                                              </div>
+
+                                              <div className="bg-[#f0f7f4] rounded-lg p-3 border border-[#c8e6d8]">
+                                                <p className="text-[10px] font-semibold uppercase text-[#2d6a55] mb-1">AI Feedback</p>
+                                                <p className="text-xs text-[#245747] leading-relaxed">
+                                                  {alignScoreMentions(item.critique || item.feedback || 'Agent feedback has not been generated yet.', item.per_answer_score)}
+                                                </p>
+                                              </div>
+
+                                              {item.strengths?.length ? (
+                                                <div className="mt-2 pl-1">
+                                                  <p className="text-[10px] text-[#2d6a55] uppercase tracking-wider font-semibold mb-1">Evidence supporting the score</p>
+                                                  <ul className="space-y-0.5">
+                                                    {item.strengths.map((strength: string, strengthIndex: number) => (
+                                                      <li key={strengthIndex} className="text-xs text-[#3d5a4a] leading-relaxed flex items-start gap-1.5">
+                                                        <CheckCircle2 className="w-3 h-3 text-[#2d6a55] flex-shrink-0 mt-0.5" />
+                                                        <span>{strength}</span>
+                                                      </li>
+                                                    ))}
+                                                  </ul>
+                                                </div>
+                                              ) : null}
+                                              {item.weaknesses?.length ? (
+                                                <div className="mt-2 pl-1">
+                                                  <p className="text-[10px] text-[#c25a2a] uppercase tracking-wider font-semibold mb-1">Risks or missing proof</p>
+                                                  <ul className="space-y-0.5">
+                                                    {item.weaknesses.map((weakness: string, weaknessIndex: number) => (
+                                                      <li key={weaknessIndex} className="text-xs text-[#6b7063] leading-relaxed flex items-start gap-1.5">
+                                                        <AlertCircle className="w-3 h-3 text-[#c25a2a] flex-shrink-0 mt-0.5" />
+                                                        <span>{weakness}</span>
+                                                      </li>
+                                                    ))}
+                                                  </ul>
+                                                </div>
+                                              ) : null}
+                                              {(item.suggested_improvement || item.hiring_manager_note) && (
+                                                <div className="mt-2 rounded-lg border border-[#e4e1da] bg-[#f7f6f3] p-2.5">
+                                                  {item.hiring_manager_note && (
+                                                    <p className="text-xs text-[#1c1c1a] leading-relaxed">
+                                                      <span className="font-semibold text-[10px]">Hiring manager note:</span> {item.hiring_manager_note}
+                                                    </p>
+                                                  )}
+                                                  {item.suggested_improvement && (
+                                                    <p className="text-xs text-[#6b7063] leading-relaxed mt-1">
+                                                      <span className="font-semibold text-[#1c1c1a] text-[10px]">Suggested probe:</span> {item.suggested_improvement}
+                                                    </p>
+                                                  )}
+                                                </div>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </>
+                            )}
                           </div>
                         )}
 
@@ -2399,85 +2484,101 @@ export function CandidateDashboard({
               {(() => {
                 const questionFeedbackItems = getQuestionFeedbackItems(selectedTrajectoryCandidate);
                 return questionFeedbackItems.length ? (
-                  <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-4">
+                  <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-4 text-left">
                     <div className="flex items-center justify-between gap-3 mb-3">
                       <div>
-                        <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Question-Specific AI Feedback</p>
-                        <p className="text-xs text-[#6b7063] mt-1">Screening questions, candidate answers, and the Interview Agent's feedback.</p>
+                        <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Interview Session</p>
+                        <p className="text-xs text-[#6b7063] mt-1">Detailed transcript and critique from the interview session.</p>
                       </div>
                       {selectedTrajectoryCandidate.screeningScore !== undefined && (
                         <span className="rounded-full bg-white border border-[#e4e1da] px-2.5 py-1 text-xs font-semibold text-[#1c1c1a]">
-                          {selectedTrajectoryCandidate.screeningScore}/100
+                          Score: {selectedTrajectoryCandidate.screeningScore}/100
                         </span>
                       )}
                     </div>
-                    <div className="space-y-3">
-                      {questionFeedbackItems.map((item: any, critiqueIndex: number) => (
-                        <div key={`${selectedTrajectoryCandidate.email}-overview-feedback-${critiqueIndex}`} className="rounded-lg border border-[#e4e1da] bg-white p-3">
-                          <div className="flex items-center justify-between gap-3 mb-2">
-                            <p className="text-xs text-[#2d6a55] font-semibold">Question {critiqueIndex + 1}</p>
-                            {item.per_answer_score !== undefined && (
-                              <span className="text-xs text-[#1c1c1a] font-semibold">{item.per_answer_score}/100</span>
-                            )}
+                    <div className="space-y-4 pl-2 border-l border-[#e4e1da]">
+                      {questionFeedbackItems.map((item: any, critiqueIndex: number) => {
+                        const answer = item.candidate_answer || selectedTrajectoryCandidate.answers?.[critiqueIndex] || item.candidate_answer_excerpt || '';
+                        return (
+                          <div key={`${selectedTrajectoryCandidate.email}-overview-feedback-${critiqueIndex}`} className="space-y-2 relative pl-4 before:absolute before:left-0 before:top-3.5 before:w-3 before:h-[1px] before:bg-[#e4e1da]">
+                            <div className="bg-white border border-[#e4e1da] rounded-xl p-4 shadow-sm space-y-3">
+                              <div className="flex items-center justify-between border-b border-[#e4e1da] pb-2">
+                                <span className="text-xs font-bold text-[#2d6a55]">
+                                  Question {critiqueIndex + 1}
+                                </span>
+                                {item.per_answer_score !== undefined && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#e8f2ee] text-[#2d6a55] border border-[#c8e6d8]">
+                                    Score: {item.per_answer_score}/100
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="space-y-1">
+                                <p className="text-[10px] font-semibold uppercase text-[#a8a49d]">Question</p>
+                                <p className="text-xs text-[#1c1c1a] font-medium italic">"{item.question || selectedTrajectoryCandidate.customQuestions?.[critiqueIndex] || `Screening question ${critiqueIndex + 1}`}"</p>
+                                {item.requirement_focus && (
+                                  <p className="text-[9px] text-[#6b7063]">Requirement focus: {item.requirement_focus}</p>
+                                )}
+                              </div>
+
+                              <div className="bg-[#f7f6f3] rounded-lg p-3 border border-[#e4e1da]/60">
+                                <p className="text-[10px] font-semibold uppercase text-[#a8a49d] mb-1">Candidate Answer</p>
+                                <p className="text-xs text-[#52574e] leading-relaxed whitespace-pre-wrap">
+                                  {answer || 'No answer submitted'}
+                                </p>
+                              </div>
+
+                              <div className="bg-[#f0f7f4] rounded-lg p-3 border border-[#c8e6d8]">
+                                <p className="text-[10px] font-semibold uppercase text-[#2d6a55] mb-1">AI Feedback</p>
+                                <p className="text-xs text-[#245747] leading-relaxed">
+                                  {alignScoreMentions(item.critique || item.feedback || item.hiring_manager_note || 'Agent feedback has not been generated for this question yet.', item.per_answer_score)}
+                                </p>
+                              </div>
+
+                              {item.strengths?.length ? (
+                                <div className="mt-2 pl-1">
+                                  <p className="text-[10px] text-[#2d6a55] uppercase tracking-wider font-semibold mb-1">Evidence supporting the score</p>
+                                  <ul className="space-y-0.5">
+                                    {item.strengths.map((strength: string, strengthIndex: number) => (
+                                      <li key={strengthIndex} className="text-xs text-[#3d5a4a] leading-relaxed flex items-start gap-1.5">
+                                        <CheckCircle2 className="w-3 h-3 text-[#2d6a55] flex-shrink-0 mt-0.5" />
+                                        <span>{strength}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : null}
+                              {item.weaknesses?.length ? (
+                                <div className="mt-2 pl-1">
+                                  <p className="text-[10px] text-[#c25a2a] uppercase tracking-wider font-semibold mb-1">Risks or missing proof</p>
+                                  <ul className="space-y-0.5">
+                                    {item.weaknesses.map((weakness: string, weaknessIndex: number) => (
+                                      <li key={weaknessIndex} className="text-xs text-[#6b7063] leading-relaxed flex items-start gap-1.5">
+                                        <AlertCircle className="w-3 h-3 text-[#c25a2a] flex-shrink-0 mt-0.5" />
+                                        <span>{weakness}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : null}
+                              {(item.suggested_improvement || item.hiring_manager_note) && (
+                                <div className="mt-2 rounded-lg border border-[#e4e1da] bg-[#f7f6f3] p-2.5">
+                                  {item.hiring_manager_note && (
+                                    <p className="text-xs text-[#1c1c1a] leading-relaxed">
+                                      <span className="font-semibold text-[10px]">Hiring manager note:</span> {item.hiring_manager_note}
+                                    </p>
+                                  )}
+                                  {item.suggested_improvement && (
+                                    <p className="text-xs text-[#6b7063] leading-relaxed mt-1">
+                                      <span className="font-semibold text-[#1c1c1a] text-[10px]">Suggested probe:</span> {item.suggested_improvement}
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <p className="text-xs text-[#1c1c1a] font-medium leading-relaxed">
-                            {item.question || selectedTrajectoryCandidate.customQuestions?.[critiqueIndex] || `Screening question ${critiqueIndex + 1}`}
-                          </p>
-                          {(item.candidate_answer || item.candidate_answer_excerpt || selectedTrajectoryCandidate.answers?.[critiqueIndex]) && (
-                            <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">
-                              <span className="font-semibold text-[#1c1c1a]">Candidate answer:</span> {item.candidate_answer || selectedTrajectoryCandidate.answers?.[critiqueIndex] || item.candidate_answer_excerpt}
-                            </p>
-                          )}
-                          {item.requirement_focus && (
-                            <p className="text-xs text-[#6b7063] mt-1">
-                              <span className="font-semibold text-[#1c1c1a]">Role focus:</span> {item.requirement_focus}
-                            </p>
-                          )}
-                          <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">
-                            {alignScoreMentions(item.critique || item.feedback || item.hiring_manager_note || 'Agent feedback has not been generated for this question yet.', item.per_answer_score)}
-                          </p>
-                          {item.strengths?.length ? (
-                            <div className="mt-3">
-                              <p className="text-[10px] text-[#2d6a55] uppercase tracking-wider font-semibold mb-1.5">Evidence supporting the score</p>
-                              <ul className="space-y-1">
-                                {item.strengths.map((strength: string, strengthIndex: number) => (
-                                  <li key={strengthIndex} className="text-xs text-[#3d5a4a] leading-relaxed flex items-start gap-1.5">
-                                    <CheckCircle2 className="w-3 h-3 text-[#2d6a55] flex-shrink-0 mt-0.5" />
-                                    <span>{strength}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          ) : null}
-                          {item.weaknesses?.length ? (
-                            <div className="mt-3">
-                              <p className="text-[10px] text-[#c25a2a] uppercase tracking-wider font-semibold mb-1.5">Risks or missing proof</p>
-                              <ul className="space-y-1">
-                                {item.weaknesses.map((weakness: string, weaknessIndex: number) => (
-                                  <li key={weaknessIndex} className="text-xs text-[#6b7063] leading-relaxed flex items-start gap-1.5">
-                                    <AlertCircle className="w-3 h-3 text-[#c25a2a] flex-shrink-0 mt-0.5" />
-                                    <span>{weakness}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          ) : null}
-                          {(item.suggested_improvement || item.hiring_manager_note) && (
-                            <div className="mt-3 rounded-lg border border-[#e4e1da] bg-[#f7f6f3] p-3">
-                              {item.hiring_manager_note && (
-                                <p className="text-xs text-[#1c1c1a] leading-relaxed">
-                                  <span className="font-semibold">Hiring manager note:</span> {item.hiring_manager_note}
-                                </p>
-                              )}
-                              {item.suggested_improvement && (
-                                <p className="text-xs text-[#6b7063] leading-relaxed mt-2">
-                                  <span className="font-semibold text-[#1c1c1a]">Suggested probe:</span> {item.suggested_improvement}
-                                </p>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ) : null;

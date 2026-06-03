@@ -26,6 +26,7 @@ from ..services.agents.bias_agent import (
     neutralize_candidate_profile,
     neutralize_text as agent_neutralize_text,
     apply_bias_controls_to_assessment,
+    lookup_qs_rank_from_csv,
 )
 from ..services.agents import (
     run_resume_agent,
@@ -390,6 +391,20 @@ def serialize_candidate(candidate: Dict[str, Any], management_email: Optional[st
     serialized["outreach_history"] = candidate.get("outreach_history", [])
     serialized["source_type"] = candidate.get("source_type") or profile_data.get("source_type") or ("linkedin" if candidate.get("is_sourced") else "inbound")
     serialized["source_method"] = candidate.get("source_method") or profile_data.get("source_method") or ("manual_public" if candidate.get("linkedin_url") else "resume")
+
+    # Inject QS ranking data for each education entry
+    qs_ranking = []
+    for edu in (profile_data.get("education") or []):
+        if isinstance(edu, dict):
+            school = edu.get("school") or edu.get("institution") or ""
+            if school:
+                rank = lookup_qs_rank_from_csv(school)
+                qs_ranking.append({
+                    "school": school,
+                    "rank": rank
+                })
+    serialized["qs_ranking"] = qs_ranking
+
     return serialized
 
 def neutralize_text(text: str) -> str:

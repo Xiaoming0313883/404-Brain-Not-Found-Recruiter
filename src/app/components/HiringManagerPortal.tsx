@@ -137,6 +137,7 @@ export interface ScrapedCandidate {
     undervalued_talent_alert?: boolean;
     signals?: string[];
   };
+  qsRanking?: Array<{ school: string; rank: number | null }>;
 }
 
 interface AuthUser {
@@ -316,7 +317,8 @@ export function HiringManagerPortal() {
           statusHistory: c.status_history || [],
           biasControl: c.match_results?.bias_control,
           prestigeAnalysis: c.match_results?.prestige_analysis || c.bias_analysis,
-          resumeContextIntelligence: c.match_results?.resume_context_intelligence
+          resumeContextIntelligence: c.match_results?.resume_context_intelligence,
+          qsRanking: c.qs_ranking
         }));
         setCandidates(mapped);
       }

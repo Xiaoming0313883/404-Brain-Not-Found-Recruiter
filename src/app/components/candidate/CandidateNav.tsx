@@ -1,4 +1,4 @@
-import { ArrowLeft, Briefcase, FileText, Home, LogOut, UserCircle } from "lucide-react";
+import { ArrowLeft, Award, Briefcase, FileText, Home, LogOut, UserCircle } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { BrandLogo } from "../BrandLogo";
 
@@ -6,6 +6,7 @@ const tabs = [
   { label: "Dashboard", path: "/candidate/home", icon: Home },
   { label: "Profile", path: "/candidate/profile", icon: UserCircle },
   { label: "Application", path: "/candidate/applications", icon: FileText },
+  { label: "Interview Results", path: "/candidate/feedback", icon: Award },
   { label: "Jobs", path: "/candidate/jobs", icon: Briefcase },
 ];
 

@@ -1,5 +1,7 @@
 import copy
+import csv
 import json
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -107,19 +109,83 @@ def _fetch_json_url(url: str, api_key: str = "") -> Dict[str, Any]:
     with urllib.request.urlopen(request, timeout=8) as response:
         return json.loads(response.read().decode("utf-8"))
 
-def _fetch_openalex_institution(school_name: str) -> Dict[str, Any]:
-    query = urllib.parse.urlencode({
-        "search": str(school_name).strip(),
-        "filter": "type:education",
-        "per-page": "1",
-    })
-    url = f"https://api.openalex.org/institutions?{query}"
-    if settings.OPENALEX_EMAIL.strip():
-        url = f"{url}&mailto={urllib.parse.quote(settings.OPENALEX_EMAIL.strip())}"
-    parsed = _fetch_json_url(url)
-    result = _normalize_ranking_provider_payload(parsed, school_name, "OpenAlex")
-    _cache_ranking_result(result)
-    return result
+
+_qs_rankings_cache = None
+
+def _load_qs_rankings() -> Dict[str, Dict[str, Any]]:
+    global _qs_rankings_cache
+    if _qs_rankings_cache is not None:
+        return _qs_rankings_cache
+
+    cache = {}
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    csv_path = os.path.join(base_dir, "data", "qs_rankings.csv")
+
+    if not os.path.exists(csv_path):
+        csv_path = os.path.join("backend", "data", "qs_rankings.csv")
+        if not os.path.exists(csv_path):
+            csv_path = os.path.join("data", "qs_rankings.csv")
+
+    if not os.path.exists(csv_path):
+        _qs_rankings_cache = {}
+        return _qs_rankings_cache
+
+    try:
+        with open(csv_path, mode="r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                school_name = row.get("Institution Name")
+                rank_str = row.get("2026 Rank")
+                if school_name and rank_str:
+                    try:
+                        rank_match = re.search(r"\d+", rank_str)
+                        rank_val = int(rank_match.group(0)) if rank_match else None
+                        if rank_val is not None:
+                            cache[school_name.strip()] = {
+                                "rank": rank_val,
+                                "school": school_name.strip(),
+                                "country": row.get("Country/Territory", "").strip()
+                            }
+                    except Exception:
+                        continue
+    except Exception as e:
+        print(f"Error loading QS rankings CSV: {e}")
+
+    _qs_rankings_cache = cache
+    return _qs_rankings_cache
+
+def lookup_qs_rank_details(school_name: str) -> Optional[Dict[str, Any]]:
+    if not school_name:
+        return None
+    rankings = _load_qs_rankings()
+    name_clean = school_name.strip()
+    name_lower = name_clean.lower()
+
+    if name_clean in rankings:
+        return rankings[name_clean]
+
+    for name, details in rankings.items():
+        if name.lower() == name_lower:
+            return details
+
+    if len(name_lower) >= 4:
+        for name, details in rankings.items():
+            name_csv_lower = name.lower()
+            if name_lower in name_csv_lower or name_csv_lower in name_lower:
+                return details
+
+        for name, details in rankings.items():
+            name_csv_clean = re.sub(r"\(.*?\)", "", name).strip().lower()
+            query_clean = re.sub(r"\(.*?\)", "", name_clean).strip().lower()
+            if name_csv_clean and query_clean:
+                if name_csv_clean == query_clean or query_clean in name_csv_clean or name_csv_clean in query_clean:
+                    return details
+
+    return None
+
+def lookup_qs_rank_from_csv(school_name: str) -> Optional[int]:
+    details = lookup_qs_rank_details(school_name)
+    return details["rank"] if details else None
 
 def fetch_university_ranking(school_name: str) -> Dict[str, Any]:
     if not school_name:
@@ -131,6 +197,24 @@ def fetch_university_ranking(school_name: str) -> Dict[str, Any]:
             "confidence": 0,
             "reason": "No institution name was provided.",
         }
+
+    # Try local CSV ranking first (highly reliable, clean matching)
+    csv_match = lookup_qs_rank_details(school_name)
+    if csv_match:
+        rank = csv_match["rank"]
+        return {
+            "institution_name": csv_match["school"],
+            "ranking_status": "live",
+            "ranking_source": "QS World University Rankings 2026",
+            "rank_value": rank,
+            "confidence": 1.0,
+            "payload": {
+                "country": csv_match["country"],
+                "rank": rank,
+            },
+            "reason": f"Found in QS Rankings CSV with rank {rank}.",
+        }
+
     try:
         from app.database import get_supabase_client
 
@@ -184,19 +268,6 @@ def fetch_university_ranking(school_name: str) -> Dict[str, Any]:
                 "rank_value": None,
                 "confidence": 0,
                 "reason": f"Ranking provider unavailable: {sanitize_provider_error(exc, 'Ranking provider unavailable; cache-only fallback was used.')}",
-            }
-
-    if settings.RANKING_PROVIDER.strip().lower() == "openalex":
-        try:
-            return _fetch_openalex_institution(school_name)
-        except Exception as exc:
-            return {
-                "institution_name": school_name,
-                "ranking_status": "unavailable",
-                "ranking_source": "OpenAlex",
-                "rank_value": None,
-                "confidence": 0,
-                "reason": f"OpenAlex unavailable: {sanitize_provider_error(exc, 'OpenAlex unavailable; cache-only fallback was used.')}",
             }
 
     return {
