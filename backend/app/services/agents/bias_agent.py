@@ -63,34 +63,6 @@ def _extract_rank_value(parsed: Dict[str, Any]) -> Optional[int]:
     return int(rank_value) if rank_value is not None else None
 
 def _normalize_ranking_provider_payload(parsed: Dict[str, Any], school_name: str, source: str) -> Dict[str, Any]:
-    if isinstance(parsed.get("results"), list):
-        first = parsed["results"][0] if parsed["results"] else {}
-        summary_stats = first.get("summary_stats") or {}
-        payload = {
-            "institution_name": first.get("display_name") or first.get("institution_name") or school_name,
-            "ranking_status": "live_openalex",
-            "ranking_source": "OpenAlex",
-            "rank_value": None,
-            "confidence": 0.82 if first else 0,
-            "payload": {
-                "openalex_id": first.get("id"),
-                "ror": (first.get("ids") or {}).get("ror"),
-                "country_code": (first.get("geo") or {}).get("country_code"),
-                "works_count": first.get("works_count"),
-                "cited_by_count": first.get("cited_by_count"),
-                "h_index": summary_stats.get("h_index"),
-                "i10_index": summary_stats.get("i10_index"),
-                "two_year_mean_citedness": summary_stats.get("2yr_mean_citedness"),
-            },
-            "reason": (
-                "OpenAlex returned live institution bibliometric evidence. "
-                "No official QS/THE rank value was inferred from this evidence."
-                if first else
-                "OpenAlex returned no matching institution."
-            ),
-        }
-        return payload
-
     rank = _extract_rank_value(parsed)
     return {
         "institution_name": parsed.get("institution_name") or parsed.get("display_name") or school_name,
@@ -119,12 +91,17 @@ def _load_qs_rankings() -> Dict[str, Dict[str, Any]]:
 
     cache = {}
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    csv_path = os.path.join(base_dir, "data", "qs_rankings.csv")
-
+    
+    # Try the user-supplied filename in base directory
+    csv_path = os.path.join(base_dir, "2026 QS World University Rankings.csv")
+    
     if not os.path.exists(csv_path):
-        csv_path = os.path.join("backend", "data", "qs_rankings.csv")
+        # fallback to standard qs_rankings.csv
+        csv_path = os.path.join(base_dir, "data", "qs_rankings.csv")
         if not os.path.exists(csv_path):
-            csv_path = os.path.join("data", "qs_rankings.csv")
+            csv_path = os.path.join("backend", "data", "qs_rankings.csv")
+            if not os.path.exists(csv_path):
+                csv_path = os.path.join("data", "qs_rankings.csv")
 
     if not os.path.exists(csv_path):
         _qs_rankings_cache = {}
@@ -247,29 +224,6 @@ def fetch_university_ranking(school_name: str) -> Dict[str, Any]:
     except Exception:
         pass
 
-    if settings.RANKING_API_URL.strip():
-        try:
-            encoded = urllib.parse.quote(str(school_name).strip())
-            url = settings.RANKING_API_URL.strip()
-            if "{institution}" in url:
-                url = url.replace("{institution}", encoded)
-            else:
-                separator = "&" if "?" in url else "?"
-                url = f"{url}{separator}institution={encoded}"
-            parsed = _fetch_json_url(url, settings.RANKING_API_KEY)
-            result = _normalize_ranking_provider_payload(parsed, school_name, settings.RANKING_API_URL)
-            _cache_ranking_result(result)
-            return result
-        except Exception as exc:
-            return {
-                "institution_name": school_name,
-                "ranking_status": "unavailable",
-                "ranking_source": settings.RANKING_API_URL,
-                "rank_value": None,
-                "confidence": 0,
-                "reason": f"Ranking provider unavailable: {sanitize_provider_error(exc, 'Ranking provider unavailable; cache-only fallback was used.')}",
-            }
-
     return {
         "institution_name": school_name,
         "ranking_status": "unknown",
@@ -365,13 +319,14 @@ def _rule_based_analysis(candidate_profile: Dict[str, Any], resume_text: str = "
 
 def analyze_prestige_indicators(candidate_profile: Dict[str, Any], resume_text: str = "", use_llm: bool = True) -> Dict[str, Any]:
     baseline = _rule_based_analysis(candidate_profile or {}, resume_text or "")
-    if not use_llm:
-        return baseline
-    client = get_openai_client()
-    if not client:
-        return baseline
-
-    prompt = """Analyze this candidate profile for prestige-related hiring-bias indicators.
+    
+    indicators_list = []
+    neutralization_summary = ""
+    
+    client = get_openai_client() if use_llm else None
+    parsed = None
+    if client:
+        prompt = """Analyze this candidate profile for prestige-related hiring-bias indicators.
 Classify universities, previous employers, certifications, elite internship programs, and other pedigree signals.
 Return JSON only:
 {
@@ -382,47 +337,82 @@ Return JSON only:
   "neutralization_summary": "one sentence"
 }
 Do not infer protected classes or demographic identity."""
-    try:
-        response = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
-            temperature=0,
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": json.dumps({"candidate_profile": candidate_profile, "resume_text": resume_text[:4000]})}
-            ]
-        )
-        parsed = parse_llm_json(response.choices[0].message.content)
-        if isinstance(parsed.get("prestige_indicators"), list):
-            merged = {item.get("original", "").lower(): item for item in baseline["prestige_indicators"]}
-            for item in parsed["prestige_indicators"]:
-                original = str(item.get("original") or "").strip()
-                if original:
-                    item_type = item.get("type") or "other"
-                    ranking = fetch_university_ranking(original) if item_type == "university" else {}
-                    qs_rank = ranking.get("rank_value")
-                    merged[original.lower()] = {
-                        "type": item_type,
-                        "original": original,
-                        "neutral_category": item.get("neutral_category") or "Prestige Indicator",
-                        "confidence": item.get("confidence", 0.78),
-                        "prestige_score": _ranking_score(qs_rank) if item_type == "university" else max(0, min(100, int(item.get("prestige_score", 0) or 0))),
-                        "source": item.get("source") or "profile",
-                        "reason": item.get("reason") or "Detected by Bias Agent.",
-                        "qs_rank": qs_rank,
-                        "qs_badge": _ranking_badge(qs_rank),
-                        "ranking_status": ranking.get("ranking_status") if item_type == "university" else "not_applicable",
-                        "ranking_source": ranking.get("ranking_source") if item_type == "university" else "",
+        try:
+            response = client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                temperature=0,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": json.dumps({"candidate_profile": candidate_profile, "resume_text": resume_text[:4000]})}
+                ]
+            )
+            parsed = parse_llm_json(response.choices[0].message.content)
+        except Exception as e:
+            print(f"Bias Agent API error: {sanitize_provider_error(e)}")
+            
+    if parsed and isinstance(parsed.get("prestige_indicators"), list):
+        merged = {item.get("original", "").lower(): item for item in baseline["prestige_indicators"]}
+        for item in parsed["prestige_indicators"]:
+            original = str(item.get("original") or "").strip()
+            if original:
+                item_type = item.get("type") or "other"
+                ranking = fetch_university_ranking(original) if item_type == "university" else {}
+                qs_rank = ranking.get("rank_value")
+                merged[original.lower()] = {
+                    "type": item_type,
+                    "original": original,
+                    "neutral_category": item.get("neutral_category") or "Prestige Indicator",
+                    "confidence": item.get("confidence", 0.78),
+                    "prestige_score": _ranking_score(qs_rank) if item_type == "university" else max(0, min(100, int(item.get("prestige_score", 0) or 0))),
+                    "source": item.get("source") or "profile",
+                    "reason": item.get("reason") or "Detected by Bias Agent.",
+                    "qs_rank": qs_rank,
+                    "qs_badge": _ranking_badge(qs_rank),
+                    "ranking_status": ranking.get("ranking_status") if item_type == "university" else "not_applicable",
+                    "ranking_source": ranking.get("ranking_source") if item_type == "university" else "",
+                }
+        indicators_list = list(merged.values())
+        neutralization_summary = parsed.get("neutralization_summary") or baseline["neutralization_summary"]
+    else:
+        indicators_list = baseline["prestige_indicators"]
+        neutralization_summary = baseline["neutralization_summary"]
+
+    # Force Candidate education schools from profile into prestige indicators if in QS rankings CSV
+    merged_final = {item.get("original", "").lower(): item for item in indicators_list}
+    for edu in (candidate_profile.get("education") or []):
+        if isinstance(edu, dict):
+            school = edu.get("school") or edu.get("institution") or ""
+            if school:
+                csv_match = lookup_qs_rank_details(school)
+                if csv_match:
+                    rank = csv_match["rank"]
+                    school_name = csv_match["school"]
+                    key = school_name.lower()
+                    merged_final[key] = {
+                        "type": "university",
+                        "original": school_name,
+                        "neutral_category": "Top-Tier University" if rank <= 100 else "Education Provider",
+                        "confidence": 1.0,
+                        "prestige_score": _ranking_score(rank),
+                        "source": "education",
+                        "reason": f"Found in QS Rankings CSV with rank {rank}.",
+                        "qs_rank": rank,
+                        "qs_badge": _ranking_badge(rank),
+                        "ranking_status": "live",
+                        "ranking_source": "QS World University Rankings 2026",
                     }
-            indicators = list(merged.values())[:24]
-            scored = [item.get("prestige_score", 0) for item in indicators if item.get("prestige_score")]
-            return {
-                "prestige_indicators": indicators,
-                "prestige_score": max(0, min(100, int(sum(scored) / max(1, len(scored))) if scored else 0)),
-                "neutralization_summary": parsed.get("neutralization_summary") or baseline["neutralization_summary"]
-            }
-    except Exception as e:
-        print(f"Bias Agent API error: {sanitize_provider_error(e)}")
-    return baseline
+                    if school.lower() != school_name.lower():
+                        merged_final[school.lower()] = merged_final[key]
+                        
+    indicators = list(merged_final.values())[:24]
+    scored = [item.get("prestige_score", 0) for item in indicators if item.get("prestige_score")]
+    prestige_score = max(0, min(100, int(sum(scored) / max(1, len(scored))) if scored else 0))
+    
+    return {
+        "prestige_indicators": indicators,
+        "prestige_score": prestige_score,
+        "neutralization_summary": neutralization_summary
+    }
 
 
 def neutralize_text(text: str, analysis: Dict[str, Any] | None = None) -> str:
@@ -471,28 +461,8 @@ def apply_bias_controls_to_assessment(
     culture_score = int(scores.get("culture") or 0)
     trajectory = int(scores.get("trajectory_slope") or 0)
 
-    email_clean = str(candidate_profile.get("email") or "").lower().strip()
-    is_demo_candidate = (
-        candidate_profile.get("source_method") == "mock_bias_comparison" or
-        candidate_profile.get("scrape_status") == "mock_bias_comparison" or
-        "bias.demo." in email_clean
-    )
-
-    if is_demo_candidate:
-        if "top" in email_clean or "prestige" in email_clean:
-            technical, domain_score, culture_score, trajectory, prestige_score = 85, 86, 84, 85, 99
-        elif "growth" in email_clean:
-            technical, domain_score, culture_score, trajectory, prestige_score = 70, 72, 75, 73, 70
-        elif "regional" in email_clean:
-            technical, domain_score, culture_score, trajectory, prestige_score = 78, 76, 80, 79, 60
-        elif "portfolio" in email_clean:
-            technical, domain_score, culture_score, trajectory, prestige_score = 82, 80, 83, 82, 35
-        else:
-            prestige_score = int(analysis.get("prestige_score") if analysis.get("prestige_score") is not None else 0)
-        base_score = round((technical * 0.45) + (domain_score * 0.25) + (culture_score * 0.15) + (trajectory * 0.15))
-    else:
-        prestige_score = int(analysis.get("prestige_score") if analysis.get("prestige_score") is not None else 0)
-        base_score = int(scores.get("overall_position_fit") or scores.get("technical") or 0)
+    prestige_score = int(analysis.get("prestige_score") if analysis.get("prestige_score") is not None else 0)
+    base_score = int(scores.get("overall_position_fit") or round((technical * 0.45) + (domain_score * 0.25) + (culture_score * 0.15) + (trajectory * 0.15)))
 
     result = copy.deepcopy(assessment)
     contributors = [

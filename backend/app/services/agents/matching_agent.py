@@ -3,7 +3,7 @@ import re
 from typing import Dict, Any, List, Tuple
 from app.config import settings
 from .base_agent import get_openai_client, parse_llm_json
-from .bias_agent import analyze_prestige_indicators, apply_bias_controls_to_assessment
+from .bias_agent import analyze_prestige_indicators, apply_bias_controls_to_assessment, lookup_qs_rank_from_csv
 
 # D. MATCHING AGENT
 # ==========================================
@@ -154,6 +154,22 @@ def _trajectory_score(candidate_profile: Dict[str, Any]) -> int:
         score += 6
     if len(candidate_profile.get("skills") or []) >= 8:
         score += 6
+    # Look up qs_rank inside candidate_profile education entries
+    for edu in candidate_profile.get("education") or []:
+        if isinstance(edu, dict):
+            school = edu.get("school") or edu.get("institution") or ""
+            # Use injected rank or look it up from CSV
+            rank = edu.get("qs_rank")
+            if not rank and school:
+                rank = lookup_qs_rank_from_csv(school)
+            if rank:
+                if rank <= 100:
+                    score += 12
+                elif rank <= 500:
+                    score += 8
+                else:
+                    score += 4
+                break # Only apply one school bonus
     return max(35, min(98, score))
 
 def build_position_fit_assessment(

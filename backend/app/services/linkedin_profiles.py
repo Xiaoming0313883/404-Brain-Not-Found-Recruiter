@@ -7,6 +7,7 @@ import urllib.request
 from typing import Any, Dict
 from ..config import settings
 from .agents.matching_agent import build_position_fit_assessment
+from .agents.bias_agent import lookup_qs_rank_from_csv
 
 try:
     from apify_client.errors import ApifyApiError
@@ -484,6 +485,15 @@ def scrape_live_linkedin_profile(linkedin_url: str) -> Dict[str, Any]:
 
 
 def build_fast_match_results(job: Dict[str, Any], profile_data: Dict[str, Any], bias_controls: Dict[str, Any] | None = None, prestige_analysis: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    if isinstance(profile_data, dict):
+        education = profile_data.get("education") or []
+        for edu in education:
+            if isinstance(edu, dict):
+                school = edu.get("school") or edu.get("institution") or ""
+                if school and not edu.get("qs_rank"):
+                    rank = lookup_qs_rank_from_csv(school)
+                    if rank:
+                        edu["qs_rank"] = rank
     return build_position_fit_assessment(job, profile_data, bias_controls, prestige_analysis)
 
 

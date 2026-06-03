@@ -40,10 +40,8 @@ class Settings(BaseSettings):
     APIFY_PROFILE_ACTOR_ID: str = "LpVuK3Zozwuipa5bp"
     APIFY_SEARCH_ACTOR_ID: str = "curious_coder/linkedin-people-search-scraper"
     APIFY_TIMEOUT_SECONDS: int = 90
-    RANKING_PROVIDER: str = "openalex"
     RANKING_API_URL: str = ""
     RANKING_API_KEY: str = ""
-    OPENALEX_EMAIL: str = ""
 
     @field_validator("DEBUG", mode="before")
     @classmethod

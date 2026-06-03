@@ -5,6 +5,7 @@ import * as Progress from '@radix-ui/react-progress';
 import { CheckCircle2, AlertCircle, Loader2, Mic, MicOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { API_BASE_URL } from '../../api';
+import { cleanQuestionText } from './CandidateFeedback';
 import { KnowledgeTooltip } from '../KnowledgeTooltip';
 import { AgentActivityEvent, AgentActivityFeed } from './AgentActivityFeed';
 
@@ -277,7 +278,7 @@ export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Pr
                   {index + 1}
                 </div>
                 <div className="flex-1">
-                  <p className="text-sm text-[#1c1c1a] leading-relaxed mb-2 font-medium">{question}</p>
+                  <p className="text-sm text-[#1c1c1a] leading-relaxed mb-2 font-medium">{cleanQuestionText(question, index)}</p>
                   <p className="text-xs text-[#a8a49d] italic leading-relaxed">{hints[index]}</p>
                 </div>
               </div>

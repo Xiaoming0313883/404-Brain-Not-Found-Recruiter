@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { BarChart3, Bell, Briefcase, CheckCircle2, FileText, Loader2, MessageSquare, PlayCircle, Send, Target, User, Users, X } from 'lucide-react';
+import { BarChart3, Bell, BookOpen, Briefcase, Calendar, CheckCircle2, FileText, Loader2, MessageSquare, PlayCircle, Send, Target, User, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
 import { CandidateNav } from './CandidateNav';
@@ -730,6 +730,88 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
     </div>
   );
 
+  const renderUpskillingRoadmap = () => {
+    if (!['screening', 'completed', 'hired', 'interview_scheduled'].includes(selectedStatus)) return null;
+
+    const rawRoadmap = selectedEvaluation?.upskilling_roadmap || {};
+    const roadmap = [
+      {
+        week: 1,
+        title: 'Week 1 Focus & Core Competencies',
+        tasks: rawRoadmap.week_1 ? [rawRoadmap.week_1] : [
+          'Read "Designing Data-Intensive Applications" chapters 5–7',
+          'Complete MIT 6.824 lectures on consensus algorithms',
+          'Build a simple key-value store with Raft consensus'
+        ]
+      },
+      {
+        week: 2,
+        title: 'Week 2 Migration Patterns & Integrity',
+        tasks: rawRoadmap.week_2 ? [rawRoadmap.week_2] : [
+          'Study saga patterns for distributed transactions',
+          'Implement circuit breaker patterns in a sample service',
+          'Practice API gateway design with rate limiting'
+        ]
+      },
+      {
+        week: 3,
+        title: 'Week 3 Observability & High Performance',
+        tasks: rawRoadmap.week_3 ? [rawRoadmap.week_3] : [
+          'Set up monitoring with Prometheus & Grafana',
+          'Implement distributed tracing with OpenTelemetry',
+          'Practice incident response with chaos engineering tools'
+        ]
+      }
+    ];
+
+    return (
+      <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 mb-5 shadow-sm text-left">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-8 h-8 bg-[#e8f2ee] rounded-lg flex items-center justify-center">
+            <BookOpen className="w-4 h-4 text-[#2d6a55]" />
+          </div>
+          <div>
+            <h3 className="text-[#1c1c1a] font-semibold text-base">3-Week Upskilling Roadmap</h3>
+            <p className="text-xs text-[#6b7063]">Curated by the Report Agent for your specific growth areas</p>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {roadmap.map((week) => (
+            <div
+              key={week.week}
+              className="border border-[#e4e1da] rounded-xl p-5 hover:border-[#2d6a55]/30 transition-colors shadow-sm bg-white"
+            >
+              <div className="flex items-start gap-4">
+                <div className="w-9 h-9 bg-[#f0ede8] rounded-lg flex items-center justify-center flex-shrink-0">
+                  <Calendar className="w-4 h-4 text-[#6b7063]" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs text-[#a8a49d] font-semibold">Week {week.week}</span>
+                    <span className="text-xs text-[#e4e1da]">—</span>
+                    <span className="text-sm text-[#1c1c1a] font-medium">{week.title}</span>
+                  </div>
+                  <ul className="space-y-1.5">
+                    {week.tasks.map((task, taskIndex) => (
+                      <li
+                        key={taskIndex}
+                        className="flex items-start gap-2 text-xs text-[#6b7063] leading-relaxed"
+                      >
+                        <div className="w-1.5 h-1.5 rounded-full bg-[#e4e1da] flex-shrink-0 mt-1.5" />
+                        <span>{task}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   const renderSelectedApplicationResults = () => {
     if (!selectedApplication) {
       return (
@@ -1286,6 +1368,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
         )}
 
         {view === 'overview' && renderApplicationProgress()}
+        {view === 'overview' && renderUpskillingRoadmap()}
 
         {view === 'applications' && (
           <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mb-5">
@@ -1350,6 +1433,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
         {view === 'applications' && (
           <>
             {renderApplicationProgress()}
+            {renderUpskillingRoadmap()}
             {renderSelectedApplicationResults()}
           </>
         )}

@@ -268,7 +268,7 @@ export function HiringManagerPortal() {
           education: c.profile_data?.education || [],
           applicationId: c.application_id,
           jobId: c.position_id,
-          matchScore: c.match_results?.scores?.overall_position_fit || c.match_results?.scores?.technical || 80,
+          matchScore: c.evaluation?.screening_score ?? c.match_results?.scores?.overall_position_fit ?? c.match_results?.scores?.technical ?? 80,
           trajectoryScore: c.match_results?.scores?.trajectory_slope || 80,
           positionFitSummary: c.match_results?.position_fit_summary || '',
           fitBreakdown: c.match_results?.fit_breakdown,

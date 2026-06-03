@@ -118,6 +118,56 @@ const alignScoreMentions = (text: string, score: any) => {
     .replace(/(scored\s+)(\d+(?:\.\d+)?)(\s*out\s+of\s+100)/i, `$1${score}$3`);
 };
 
+export const cleanQuestionText = (text: string, index?: number): string => {
+  if (!text) return '';
+  const trimmed = text.trim();
+  
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        if (index !== undefined && index >= 0 && index < parsed.length) {
+          return String(parsed[index]).trim();
+        }
+        return parsed.join(' ').trim();
+      }
+      if (typeof parsed === 'object') {
+        const qList = parsed.questions || parsed.custom_questions || parsed.screening_questions || parsed.items;
+        if (Array.isArray(qList)) {
+          if (index !== undefined && index >= 0 && index < qList.length) {
+            return String(qList[index]).trim();
+          }
+          return qList.join(' ').trim();
+        }
+        const stringValues = Object.values(parsed).filter(v => typeof v === 'string');
+        if (index !== undefined && index >= 0 && index < stringValues.length) {
+          return String(stringValues[index]).trim();
+        }
+        return stringValues.join(' ').trim();
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+  
+  if (trimmed.includes('"questions"') || trimmed.includes('"custom_questions"')) {
+    const match = trimmed.match(/"(?:questions|custom_questions)"\s*:\s*\[([\s\S]*?)\]/);
+    if (match && match[1]) {
+      const items = match[1].split(/",\s*"/).map(s => s.replace(/"/g, '').trim());
+      if (index !== undefined && index >= 0 && index < items.length) {
+        return items[index];
+      }
+      return items.join(' ');
+    }
+  }
+  
+  let cleaned = trimmed
+    .replace(/^"/, '')
+    .replace(/"$/, '');
+    
+  return cleaned.trim();
+};
+
 export function CandidateDashboard({
   jobs,
   candidates,
@@ -2103,7 +2153,7 @@ export function CandidateDashboard({
 
                                               <div className="space-y-1">
                                                 <p className="text-[10px] font-semibold uppercase text-[#a8a49d]">Question</p>
-                                                <p className="text-xs text-[#1c1c1a] font-medium italic">"{item.question || candidate.customQuestions?.[critiqueIndex] || `Screening question ${critiqueIndex + 1}`}"</p>
+                                                <p className="text-xs text-[#1c1c1a] font-medium italic">"{cleanQuestionText(item.question || candidate.customQuestions?.[critiqueIndex] || `Screening question ${critiqueIndex + 1}`, critiqueIndex)}"</p>
                                                 {item.requirement_focus && (
                                                   <p className="text-[9px] text-[#6b7063]">Requirement focus: {item.requirement_focus}</p>
                                                 )}
@@ -2481,6 +2531,33 @@ export function CandidateDashboard({
                 </div>
               </div>
 
+              {selectedTrajectoryCandidate.evaluation?.role_alignment_summary && (
+                <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-4 text-left">
+                  <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold mb-2">Role Alignment Summary</p>
+                  <p className="text-xs text-[#52574e] leading-relaxed">{selectedTrajectoryCandidate.evaluation.role_alignment_summary}</p>
+                </div>
+              )}
+
+              {selectedTrajectoryCandidate.evaluation?.score_breakdown && (
+                <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-4 text-left">
+                  <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold mb-3">Position-Focused Score Breakdown</p>
+                  <div className="grid grid-cols-5 gap-2">
+                    {[
+                      ['Role', selectedTrajectoryCandidate.evaluation.score_breakdown.role_requirement_alignment, 35],
+                      ['Depth', selectedTrajectoryCandidate.evaluation.score_breakdown.technical_correctness_depth, 25],
+                      ['Evidence', selectedTrajectoryCandidate.evaluation.score_breakdown.evidence_specificity, 20],
+                      ['Impact', selectedTrajectoryCandidate.evaluation.score_breakdown.position_impact, 10],
+                      ['Clarity', selectedTrajectoryCandidate.evaluation.score_breakdown.communication_clarity, 10]
+                    ].map(([label, val, max]) => (
+                      <div key={label} className="rounded-lg border border-[#e4e1da] bg-white p-2.5 text-center">
+                        <p className="text-[10px] text-[#a8a49d] uppercase tracking-wider font-bold">{label}</p>
+                        <p className="text-xs text-[#1c1c1a] font-bold mt-1">{val || 0}/{max}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {(() => {
                 const questionFeedbackItems = getQuestionFeedbackItems(selectedTrajectoryCandidate);
                 return questionFeedbackItems.length ? (
@@ -2515,7 +2592,7 @@ export function CandidateDashboard({
 
                               <div className="space-y-1">
                                 <p className="text-[10px] font-semibold uppercase text-[#a8a49d]">Question</p>
-                                <p className="text-xs text-[#1c1c1a] font-medium italic">"{item.question || selectedTrajectoryCandidate.customQuestions?.[critiqueIndex] || `Screening question ${critiqueIndex + 1}`}"</p>
+                                <p className="text-xs text-[#1c1c1a] font-medium italic">"{cleanQuestionText(item.question || selectedTrajectoryCandidate.customQuestions?.[critiqueIndex] || `Screening question ${critiqueIndex + 1}`, critiqueIndex)}"</p>
                                 {item.requirement_focus && (
                                   <p className="text-[9px] text-[#6b7063]">Requirement focus: {item.requirement_focus}</p>
                                 )}

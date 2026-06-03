@@ -18,6 +18,56 @@ const alignScoreMentions = (text: string, score: any) => {
     .replace(/(scored\s+)(\d+(?:\.\d+)?)(\s*out\s+of\s+100)/i, `$1${score}$3`);
 };
 
+export const cleanQuestionText = (text: string, index?: number): string => {
+  if (!text) return '';
+  const trimmed = text.trim();
+  
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        if (index !== undefined && index >= 0 && index < parsed.length) {
+          return String(parsed[index]).trim();
+        }
+        return parsed.join(' ').trim();
+      }
+      if (typeof parsed === 'object') {
+        const qList = parsed.questions || parsed.custom_questions || parsed.screening_questions || parsed.items;
+        if (Array.isArray(qList)) {
+          if (index !== undefined && index >= 0 && index < qList.length) {
+            return String(qList[index]).trim();
+          }
+          return qList.join(' ').trim();
+        }
+        const stringValues = Object.values(parsed).filter(v => typeof v === 'string');
+        if (index !== undefined && index >= 0 && index < stringValues.length) {
+          return String(stringValues[index]).trim();
+        }
+        return stringValues.join(' ').trim();
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+  
+  if (trimmed.includes('"questions"') || trimmed.includes('"custom_questions"')) {
+    const match = trimmed.match(/"(?:questions|custom_questions)"\s*:\s*\[([\s\S]*?)\]/);
+    if (match && match[1]) {
+      const items = match[1].split(/",\s*"/).map(s => s.replace(/"/g, '').trim());
+      if (index !== undefined && index >= 0 && index < items.length) {
+        return items[index];
+      }
+      return items.join(' ');
+    }
+  }
+  
+  let cleaned = trimmed
+    .replace(/^"/, '')
+    .replace(/"$/, '');
+    
+  return cleaned.trim();
+};
+
 export function CandidateFeedback({ candidateData, onSignOut }: Props) {
   const applications = candidateData.applications || [];
   const selectedApplication = applications.find(application => application.application_id === candidateData.selectedApplicationId)
@@ -239,7 +289,7 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
 
                   <div className="space-y-1">
                     <p className="text-xs font-semibold uppercase text-[#a8a49d]">Question</p>
-                    <p className="text-sm text-[#1c1c1a] font-medium italic">"{item.question}"</p>
+                    <p className="text-sm text-[#1c1c1a] font-medium italic">"{cleanQuestionText(item.question, idx)}"</p>
                     {item.requirement_focus && (
                       <p className="text-[10px] text-[#6b7063]">Requirement focus: {item.requirement_focus}</p>
                     )}

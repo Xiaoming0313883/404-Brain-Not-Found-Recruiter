@@ -128,10 +128,57 @@ Return ONLY valid JSON.
     ])
 
 def normalize_screening_questions(value: Any) -> List[str]:
+    # If the value is a string, try to parse it as JSON
+    if isinstance(value, str):
+        val_strip = value.strip()
+        if (val_strip.startswith("{") and val_strip.endswith("}")) or (val_strip.startswith("[") and val_strip.endswith("]")):
+            try:
+                value = json.loads(val_strip)
+            except Exception:
+                pass
+                
+    # If it is a dictionary, extract the list of questions
+    if isinstance(value, dict):
+        q_list = (
+            value.get("questions") or 
+            value.get("custom_questions") or 
+            value.get("screening_questions") or
+            value.get("items")
+        )
+        if q_list:
+            value = q_list
+        else:
+            for k, val in value.items():
+                if isinstance(val, list):
+                    value = val
+                    break
+            else:
+                value = [v for v in value.values() if isinstance(v, str)]
+
+    # If it is a list with 1 stringified JSON element, parse recursively
+    if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
+        item_strip = value[0].strip()
+        if (item_strip.startswith("{") and item_strip.endswith("}")) or (item_strip.startswith("[") and item_strip.endswith("]")):
+            try:
+                parsed_item = json.loads(item_strip)
+                return normalize_screening_questions(parsed_item)
+            except Exception:
+                pass
+
     raw_items = value if isinstance(value, list) else []
     questions: List[str] = []
     for item in raw_items:
-        question = str(item or "").strip().strip('"')
+        if isinstance(item, dict):
+            question_text = (
+                item.get("question") or 
+                item.get("text") or 
+                item.get("content") or
+                next((v for v in item.values() if isinstance(v, str)), "")
+            )
+        else:
+            question_text = str(item or "")
+            
+        question = str(question_text).strip().strip('"')
         question = re.sub(r"^(question\s*\d*|content|contents)\s*[:\-]\s*", "", question, flags=re.IGNORECASE).strip()
         if question:
             if not question.endswith("?"):

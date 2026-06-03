@@ -349,6 +349,94 @@ def sync_current_application(candidate: Dict[str, Any], application: Dict[str, A
     candidate["hired_at"] = application.get("hired_at", candidate.get("hired_at"))
     candidate["interview_slot"] = application.get("interview_slot", candidate.get("interview_slot"))
 
+def inject_qs_ranks_into_profile(profile_data: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(profile_data, dict):
+        return profile_data
+    education = profile_data.get("education") or []
+    for edu in education:
+        if isinstance(edu, dict):
+            school = edu.get("school") or edu.get("institution") or ""
+            if school:
+                rank = lookup_qs_rank_from_csv(school)
+                if rank:
+                    edu["qs_rank"] = rank
+    return profile_data
+
+def sync_evaluation_scores(payload: Dict[str, Any]) -> None:
+    evaluation = payload.get("evaluation")
+    if not isinstance(evaluation, dict):
+        return
+    screening_score = evaluation.get("screening_score")
+    if screening_score is None:
+        return
+        
+    match_results = payload.get("match_results")
+    if not isinstance(match_results, dict):
+        match_results = {}
+        payload["match_results"] = match_results
+        
+    if "scores" not in match_results or not isinstance(match_results["scores"], dict):
+        match_results["scores"] = {}
+        
+    match_results["scores"]["overall_position_fit"] = screening_score
+    
+    score_breakdown = evaluation.get("score_breakdown") or {}
+    role_alignment = score_breakdown.get("role_requirement_alignment", 0)
+    depth = score_breakdown.get("technical_correctness_depth", 0)
+    evidence = score_breakdown.get("evidence_specificity", 0)
+    impact = score_breakdown.get("position_impact", 0)
+    clarity = score_breakdown.get("communication_clarity", 0)
+    
+    role_score = round((role_alignment / 35) * 100) if role_alignment else 0
+    depth_score = round((depth / 25) * 100) if depth else 0
+    evidence_score = round((evidence / 20) * 100) if evidence else 0
+    impact_score = round((impact / 10) * 100) if impact else 0
+    clarity_score = round((clarity / 10) * 100) if clarity else 0
+    
+    match_results["score_contributors"] = [
+        {
+            "factor": "Role requirement alignment",
+            "score": role_score,
+            "weight": 35,
+            "impact": float(role_alignment),
+            "reason": f"Aligned with key job requirements (Score: {role_alignment}/35)."
+        },
+        {
+            "factor": "Role knowledge and depth",
+            "score": depth_score,
+            "weight": 25,
+            "impact": float(depth),
+            "reason": f"Showed domain expertise and response depth (Score: {depth}/25)."
+        },
+        {
+            "factor": "Evidence specificity",
+            "score": evidence_score,
+            "weight": 20,
+            "impact": float(evidence),
+            "reason": f"Provided concrete, quantifiable evidence and outcomes (Score: {evidence}/20)."
+        },
+        {
+            "factor": "Position impact",
+            "score": impact_score,
+            "weight": 10,
+            "impact": float(impact),
+            "reason": f"Demonstrated high potential business/technical impact (Score: {impact}/10)."
+        },
+        {
+            "factor": "Communication clarity",
+            "score": clarity_score,
+            "weight": 10,
+            "impact": float(clarity),
+            "reason": f"Structured and delivered arguments concisely (Score: {clarity}/10)."
+        }
+    ]
+    
+    match_results["score_explanation"] = (
+        f"Overall position fit is overridden by interview screening score of {screening_score}/100. "
+        f"Interview assessment breakdown: Role Alignment ({role_alignment}/35), Depth ({depth}/25), "
+        f"Evidence ({evidence}/20), Impact ({impact}/10), and Clarity ({clarity}/10)."
+    )
+
 def serialize_application_candidate(candidate: Dict[str, Any], email: str, application: Dict[str, Any]) -> Dict[str, Any]:
     serialized = serialize_candidate(candidate, email)
     serialized.update({
@@ -372,6 +460,7 @@ def serialize_application_candidate(candidate: Dict[str, Any], email: str, appli
         "agent_warnings": application.get("agent_warnings", candidate.get("agent_warnings", [])),
         "status_history": application.get("status_history", [])
     })
+    sync_evaluation_scores(serialized)
     return serialized
 
 def serialize_candidate(candidate: Dict[str, Any], management_email: Optional[str] = None) -> Dict[str, Any]:
@@ -404,6 +493,12 @@ def serialize_candidate(candidate: Dict[str, Any], management_email: Optional[st
                     "rank": rank
                 })
     serialized["qs_ranking"] = qs_ranking
+
+    sync_evaluation_scores(serialized)
+    if "applications" in serialized and isinstance(serialized["applications"], list):
+        for app in serialized["applications"]:
+            if isinstance(app, dict):
+                sync_evaluation_scores(app)
 
     return serialized
 
@@ -1341,7 +1436,7 @@ def build_interview_for_position(db: Dict[str, Any], candidate: Dict[str, Any], 
     if find_application(candidate, position_id):
         raise HTTPException(status_code=409, detail="You have already applied for this position.")
 
-    profile_data = candidate.get("profile_data", {})
+    profile_data = inject_qs_ranks_into_profile(candidate.get("profile_data", {}))
     agent_warnings: List[str] = []
     controls = get_bias_controls(db)
     artifacts = attach_bias_artifacts_to_candidate(candidate)
@@ -2670,11 +2765,10 @@ def auto_source_candidates(payload: AutoSourcePayload):
                     "bias_analysis": bias_analysis,
                     "neutralized_profile_data": neutralize_candidate_profile(profile_data, bias_analysis)
                 }
-                match_results = calibrate_auto_source_match(
-                    artifacts.get("match_results") or build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"]),
-                    profile_data,
-                    job,
-                    index
+                profile_data = inject_qs_ranks_into_profile(profile_data)
+                match_results = (
+                    artifacts.get("match_results") or 
+                    build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
                 )
                 custom_questions = artifacts.get("custom_questions") or [
                     f"Describe your most relevant experience for the {job.get('title', 'selected')} role.",
