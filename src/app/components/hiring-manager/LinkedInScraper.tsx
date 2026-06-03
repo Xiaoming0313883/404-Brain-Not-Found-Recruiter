@@ -97,6 +97,9 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
               const eventData = JSON.parse(dataStr);
               if (eventData.log) {
                 setProcessingLogs(prev => [...prev, eventData.log]);
+              } else if (eventData.agent_event) {
+                const agentEvent = eventData.agent_event;
+                setProcessingLogs(prev => [...prev, `[${agentEvent.node || 'agent'}] ${agentEvent.message || agentEvent.event_type || 'event'}`]);
               } else if (eventData.result) {
                 const results = eventData.result;
                 const mapped = results.map(mapCandidate);
@@ -130,6 +133,9 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
             const eventData = JSON.parse(dataStr);
             if (eventData.log) {
               setProcessingLogs(prev => [...prev, eventData.log]);
+            } else if (eventData.agent_event) {
+              const agentEvent = eventData.agent_event;
+              setProcessingLogs(prev => [...prev, `[${agentEvent.node || 'agent'}] ${agentEvent.message || agentEvent.event_type || 'event'}`]);
             } else if (eventData.result) {
               const results = eventData.result;
               const mapped = results.map(mapCandidate);
@@ -423,17 +429,17 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
               <div className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
               <div className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
               <div className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
-              <span className="text-[#4a5568] text-xs ml-2">playwright — profile extraction</span>
+              <span className="text-[#4a5568] text-xs ml-2">agent graph - live sourcing</span>
             </div>
             {processingLogs.map((log, idx) => (
               <div key={idx} className="text-[#8fb4b4] mb-1 text-xs leading-relaxed">
-                <span className="text-[#4a9e7a] mr-2">›</span>
+                <span className="text-[#4a9e7a] mr-2">&gt;</span>
                 {log}
               </div>
             ))}
             {isProcessing && (
               <div className="text-[#8fb4b4] text-xs">
-                <span className="text-[#4a9e7a] mr-2">›</span>
+                <span className="text-[#4a9e7a] mr-2">&gt;</span>
                 <span className="animate-pulse">_</span>
               </div>
             )}

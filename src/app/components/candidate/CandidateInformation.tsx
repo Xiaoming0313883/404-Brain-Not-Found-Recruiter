@@ -188,7 +188,7 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
       setUploadProgress(null);
       setIsSaving(false);
     });
-    xhr.timeout = 180000; // 3 minute timeout
+    xhr.timeout = 240000; // 4 minute timeout for resume agent graph processing
     xhr.open('POST', `${API_BASE_URL}/candidates/${encodeURIComponent(candidateData.email)}/${kind === 'resume' ? 'resume' : 'profile-picture'}`);
     xhr.send(formData);
   };

@@ -19,55 +19,26 @@ PRESTIGE_RULES = [
     ("certification", r"\b(AWS Certified|Google Cloud Certified|Azure Certified|CISSP|PMP)\b", "Industry Certification", 62),
 ]
 
-UNIVERSITY_QS_RANKS = {
-    "mit": 1,
-    "massachusetts institute of technology": 1,
-    "cambridge": 2,
-    "oxford": 3,
-    "harvard": 4,
-    "stanford": 5,
-    "imperial college": 6,
-    "nus": 8,
-    "national university of singapore": 8,
-    "berkeley": 10,
-    "cornell": 13,
-    "columbia": 23,
-    "ucla": 29,
-    "monash": 42,
-    "university of malaya": 60,
-    "um": 60,
-    "universiti malaya": 60,
-    "apu": 597,
-    "asia pacific university": 597,
-    "unikl": 801,
-    "universiti kuala lumpur": 801,
-    "selangor vocational college": 1000,
-    "svc": 1000,
-    "professional training institute": 1201,
-    "pti": 1201,
-}
-
-
 def get_university_qs_rank(school_name: str) -> Optional[int]:
     if not school_name:
         return None
-    name_lower = str(school_name).lower().strip()
-    
-    # 1. Exact matches first
-    for key, rank in UNIVERSITY_QS_RANKS.items():
-        if key == name_lower:
-            return rank
-            
-    # 2. Standalone acronym matches using word boundaries
-    for acronym in ["mit", "nus", "um", "apu", "svc", "pti", "unikl"]:
-        if re.search(r"\b" + re.escape(acronym) + r"\b", name_lower):
-            return UNIVERSITY_QS_RANKS[acronym]
-            
-    # 3. Longer substring matches (length > 3 to avoid acronym false positives)
-    for key, rank in sorted(UNIVERSITY_QS_RANKS.items(), key=lambda x: len(x[0]), reverse=True):
-        if len(key) > 3 and key in name_lower:
-            return rank
-            
+    try:
+        from app.database import get_supabase_client
+
+        name_lower = str(school_name).lower().strip()
+        response = (
+            get_supabase_client()
+            .table("institution_ranking_cache")
+            .select("rank_value,institution_name")
+            .ilike("institution_name", f"%{name_lower}%")
+            .limit(1)
+            .execute()
+        )
+        rows = getattr(response, "data", None) or []
+        if rows and rows[0].get("rank_value") is not None:
+            return int(rows[0]["rank_value"])
+    except Exception:
+        return None
     return None
 
 

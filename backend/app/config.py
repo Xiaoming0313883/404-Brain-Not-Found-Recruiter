@@ -7,11 +7,18 @@ class Settings(BaseSettings):
     PORT: int = 8000
     DEBUG: bool = True
     SECRET_KEY: str = "94bc9ee9542a17088b902166a988d5e167e4368a5d3f8263158c56fa8de8ee12"
-    DATABASE_PATH: str = "data/recruiting_db.json"
+    SUPABASE_URL: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
     OPENAI_API_KEY: str = "your_openai_key_here"
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     OPENAI_MODEL: str = "gpt-4o-mini"
-    LLM_TIMEOUT: float = 120.0
+    AGENT_SUPERVISOR_MODEL: str = "gpt-4o-mini"
+    AGENT_WORKER_MODEL: str = "gpt-4o-mini"
+    AGENT_MAX_STEPS: int = 10
+    AGENT_AUTONOMY_MODE: str = "bounded"
+    AGENT_INVITE_MIN_FIT_SCORE: int = 75
+    AGENT_REJECT_MAX_SCREENING_SCORE: int = 45
+    LLM_TIMEOUT: float = 35.0
     RESUME_AGENT_TEMP: float = 0.1
     REQUIREMENT_AGENT_TEMP: float = 0.2
     MATCHING_AGENT_TEMP: float = 0.4
@@ -39,13 +46,6 @@ class Settings(BaseSettings):
                 return True
             if normalized in {"0", "false", "no", "off", "release", "prod", "production"}:
                 return False
-        return value
-
-    @field_validator("DATABASE_PATH", mode="before")
-    @classmethod
-    def normalize_database_path(cls, value):
-        if isinstance(value, str) and value.strip().replace("\\", "/") in {"../recruiting_db.json", "recruiting_db.json"}:
-            return "data/recruiting_db.json"
         return value
 
     class Config:

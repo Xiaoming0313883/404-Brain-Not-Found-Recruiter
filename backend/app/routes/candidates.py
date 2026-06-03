@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import io
+import json
 import os
 import re
 import shutil
@@ -14,7 +15,7 @@ from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
 from pypdf import PdfReader
 
-from ..database import load_db, save_db
+from ..database import load_db, record_agent_event, save_db
 from ..config import settings
 from ..services.agents.base_agent import get_openai_client
 from ..services.job_windows import is_open_for_applications
@@ -34,6 +35,8 @@ from ..services.agents import (
     build_position_specific_evaluation,
     run_report_agent
 )
+from ..services.agents.graph import recruiting_agent_graph, run_agent_graph
+from ..services.agents.resume_agent import parse_resume_text_fallback
 from ..services.mailer import is_smtp_configured, send_candidate_verification_email, send_recruitment_email
 
 router = APIRouter(prefix="/candidates", tags=["Candidates"])
@@ -413,6 +416,118 @@ def attach_bias_artifacts_to_candidate(candidate: Dict[str, Any], resume_text: s
     candidate["bias_analysis"] = artifacts["bias_analysis"]
     candidate["neutralized_profile_data"] = artifacts["neutralized_profile_data"]
     return artifacts
+
+def run_resume_profile_upload_graph(
+    resume_text: str,
+    candidate_email: str,
+    submitted_name: str = ""
+) -> tuple[Dict[str, Any], Dict[str, Any], List[str]]:
+    """Run the lightweight agent graph used by account/resume uploads.
+
+    Signup needs a verified candidate profile quickly. The graph still routes
+    through guardrails, supervisor, Resume Agent, and Bias Agent, but the worker
+    tools use deterministic in-agent modes so the browser is not held hostage by
+    long model calls before the candidate can enter the portal.
+    """
+    agent_warnings: List[str] = []
+    try:
+        graph_result = run_agent_graph("resume_profile", {
+            "candidate_email": candidate_email,
+            "input": {
+                "candidate_email": candidate_email,
+                "resume_text": resume_text,
+                "resume_use_llm": False,
+                "bias_use_llm": False,
+                "status": "profile",
+                "source_type": "inbound",
+                "source_method": "resume_agent_graph",
+            }
+        })
+        if graph_result.get("blocked"):
+            raise HTTPException(
+                status_code=400,
+                detail=graph_result.get("guardrail", {}).get("reason", "Resume upload was blocked by agent guardrails.")
+            )
+        artifacts = graph_result.get("artifacts", {}) or {}
+        profile_data = artifacts.get("candidate_profile")
+        if not isinstance(profile_data, dict) or not profile_data:
+            agent_warnings.append("Resume Agent returned no profile, so its deterministic parser fallback was used.")
+            profile_data = parse_resume_text_fallback(resume_text)
+        agent_warnings.extend(graph_result.get("agent_warnings", []))
+        bias_analysis = artifacts.get("prestige_analysis")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error running resume profile agent graph: {e}")
+        agent_warnings.append("Resume profile agent graph failed, so deterministic agent fallbacks were used.")
+        profile_data = parse_resume_text_fallback(resume_text)
+        bias_analysis = None
+
+    validate_resume_agent_profile(profile_data, submitted_name)
+    profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
+    bias_artifacts = build_candidate_bias_artifacts(
+        profile_data,
+        resume_text,
+        bias_analysis if isinstance(bias_analysis, dict) else None,
+        use_llm=False
+    )
+    return profile_data, bias_artifacts, agent_warnings
+
+def save_signup_candidate_record(
+    db: Dict[str, Any],
+    email_clean: str,
+    name: str,
+    password: str,
+    resume_filename: str,
+    resume_text: str,
+    contents: bytes,
+    profile_data: Dict[str, Any],
+    bias_artifacts: Dict[str, Any],
+    agent_warnings: List[str]
+) -> Dict[str, Any]:
+    resume_path = save_resume_file(email_clean, resume_filename or "resume.pdf", contents)
+    resume_summary = get_resume_summary(profile_data, resume_text)
+    parsed_name = profile_data.get("name") if profile_data.get("name") and profile_data.get("name") != "Candidate Full Name" else name
+
+    candidate_record = {
+        "name": parsed_name,
+        "email": email_clean,
+        "status": "profile",
+        "position_id": None,
+        "is_sourced": False,
+        "source_type": "inbound",
+        "source_method": "resume",
+        "linkedin_url": "",
+        "profile_data": profile_data,
+        "bias_analysis": bias_artifacts["bias_analysis"],
+        "neutralized_profile_data": bias_artifacts["neutralized_profile_data"],
+        "resume_filename": resume_filename,
+        "resume_path": resume_path,
+        "resume_url": f"/api/v1/candidates/{email_clean}/resume",
+        "resume_text": resume_text,
+        "resume_summary": resume_summary,
+        "profile_picture_url": "",
+        "sourcing_pitch": "",
+        "outreach_email": "",
+        "match_results": {},
+        "custom_questions": [],
+        "answers": [],
+        "evaluation": {},
+        "agent_warnings": agent_warnings,
+        "applications": [],
+        "notifications": [],
+        "outreach_history": [],
+        "hiring_manager_feedback": "",
+        "profile_verified": not get_missing_profile_fields(profile_data),
+        "email_verified": True,
+        "email_verified_at": datetime.now().isoformat(timespec="seconds"),
+        "password_hash": hash_password(password)
+    }
+
+    db.setdefault("candidates", {})[email_clean] = candidate_record
+    db.setdefault("pending_email_verifications", {}).pop(email_clean, None)
+    save_db(db)
+    return serialize_candidate(candidate_record, email_clean)
 
 def ensure_candidate_bias_metadata(candidate: Dict[str, Any], db: Dict[str, Any]) -> None:
     controls = get_bias_controls(db)
@@ -1008,12 +1123,11 @@ async def replace_candidate_resume(email: str, resume: UploadFile = File(...)):
 
     resume_text, contents = await read_resume_text(resume)
     validate_resume_text_for_agent(resume_text)
-    try:
-        profile_data = run_resume_agent(resume_text, prestige_neutralize=False)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Resume Agent failed while validating the new resume: {e}")
-    validate_resume_agent_profile(profile_data, candidate.get("name", ""))
-    profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
+    profile_data, bias_artifacts, graph_warnings = run_resume_profile_upload_graph(
+        resume_text,
+        email_clean,
+        candidate.get("name", "")
+    )
     candidate["profile_data"] = {**candidate.get("profile_data", {}), **profile_data}
     candidate["name"] = candidate["profile_data"].get("name") or candidate.get("name")
     candidate["resume_filename"] = resume.filename
@@ -1022,7 +1136,10 @@ async def replace_candidate_resume(email: str, resume: UploadFile = File(...)):
     candidate["resume_text"] = resume_text
     candidate["resume_summary"] = get_resume_summary(candidate["profile_data"], resume_text)
     candidate["profile_verified"] = not get_missing_profile_fields(candidate["profile_data"])
-    attach_bias_artifacts_to_candidate(candidate, resume_text)
+    candidate["bias_analysis"] = bias_artifacts["bias_analysis"]
+    candidate["neutralized_profile_data"] = bias_artifacts["neutralized_profile_data"]
+    if graph_warnings:
+        candidate.setdefault("agent_warnings", []).extend(graph_warnings)
     add_notification(candidate, "Resume updated", "Your resume and profile details were updated.", "profile")
     save_db(db)
     return serialize_candidate(candidate, email_clean)
@@ -1253,70 +1370,202 @@ async def signup_candidate(
     require_pending_email_verified(db, email_clean)
     resume_text, contents = await read_resume_text(resume)
     validate_resume_text_for_agent(resume_text)
-    agent_warnings: List[str] = []
+    profile_data, bias_artifacts, agent_warnings = run_resume_profile_upload_graph(
+        resume_text,
+        email_clean,
+        name
+    )
 
-    try:
-        profile_data = run_resume_agent(resume_text, prestige_neutralize=False)
-    except Exception as e:
-        print(f"Error running resume agent: {e}")
-        agent_warnings.append("Resume Agent failed, so a rule-based resume parser was used. Please review the extracted profile before applying.")
-        profile_data = {
-            "name": name,
-            "headline": "Candidate Profile",
-            "location": "",
-            "about": "Candidate profile created from uploaded resume.",
-            "experiences": [],
-            "education": []
+    return save_signup_candidate_record(
+        db,
+        email_clean,
+        name,
+        password,
+        resume.filename or "resume.pdf",
+        resume_text,
+        contents,
+        profile_data,
+        bias_artifacts,
+        agent_warnings
+    )
+
+@router.post("/signup/stream")
+async def signup_candidate_stream(
+    name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    resume: UploadFile = File(...)
+):
+    email_clean = normalize_candidate_email(email)
+
+    def sse(payload: Dict[str, Any]) -> str:
+        return f"data: {json.dumps(payload, default=str)}\n\n"
+
+    def emit_agent_event(node: str, event_type: str, message: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        event = {
+            "event_type": event_type,
+            "node": node,
+            "message": message,
+            "candidate_email": email_clean,
+            "position_id": None,
+            "payload": payload or {},
         }
-    validate_resume_agent_profile(profile_data, name)
-    profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
-    bias_artifacts = build_candidate_bias_artifacts(profile_data, resume_text)
+        try:
+            record_agent_event(event)
+        except Exception as exc:
+            event["payload"] = {**event["payload"], "event_logging_warning": str(exc)}
+        return event
 
-    resume_path = save_resume_file(email_clean, resume.filename or "resume.pdf", contents)
-    resume_summary = get_resume_summary(profile_data, resume_text)
+    def graph_progress(event: Dict[str, Any]) -> int:
+        node = event.get("node")
+        event_type = event.get("event_type")
+        tool = (event.get("payload") or {}).get("tool")
+        if node == "guardrail":
+            return 34
+        if node == "supervisor":
+            return 42 if tool == "parse_resume" else 68
+        if tool == "parse_resume":
+            return 48 if event_type == "started" else 62
+        if tool == "analyze_bias":
+            return 72 if event_type == "started" else 84
+        if node == "graph":
+            return 90
+        return 50
 
-    parsed_name = profile_data.get("name") if profile_data.get("name") and profile_data.get("name") != "Candidate Full Name" else name
+    async def event_stream():
+        try:
+            yield sse({
+                "progress": 8,
+                "agent_event": emit_agent_event(
+                    "intake",
+                    "started",
+                    "Resume Intake Agent received the signup upload."
+                )
+            })
+            db = load_db()
+            if email_clean in db.setdefault("candidates", {}):
+                raise HTTPException(status_code=409, detail="Candidate account already exists. Please log in.")
 
-    candidate_record = {
-        "name": parsed_name,
-        "email": email_clean,
-        "status": "profile",
-        "position_id": None,
-        "is_sourced": False,
-        "source_type": "inbound",
-        "source_method": "resume",
-        "linkedin_url": "",
-        "profile_data": profile_data,
-        "bias_analysis": bias_artifacts["bias_analysis"],
-        "neutralized_profile_data": bias_artifacts["neutralized_profile_data"],
-        "resume_filename": resume.filename,
-        "resume_path": resume_path,
-        "resume_url": f"/api/v1/candidates/{email_clean}/resume",
-        "resume_text": resume_text,
-        "resume_summary": resume_summary,
-        "profile_picture_url": "",
-        "sourcing_pitch": "",
-        "outreach_email": "",
-        "match_results": {},
-        "custom_questions": [],
-        "answers": [],
-        "evaluation": {},
-        "agent_warnings": agent_warnings,
-        "applications": [],
-        "notifications": [],
-        "outreach_history": [],
-        "hiring_manager_feedback": "",
-        "profile_verified": not get_missing_profile_fields(profile_data),
-        "email_verified": True,
-        "email_verified_at": datetime.now().isoformat(timespec="seconds"),
-        "password_hash": hash_password(password)
-    }
+            yield sse({
+                "progress": 18,
+                "agent_event": emit_agent_event(
+                    "guardrail",
+                    "started",
+                    "Guardrail Agent is checking email verification and upload eligibility."
+                )
+            })
+            require_pending_email_verified(db, email_clean)
 
-    db.setdefault("candidates", {})[email_clean] = candidate_record
-    db.setdefault("pending_email_verifications", {}).pop(email_clean, None)
-    save_db(db)
-    response = serialize_candidate(candidate_record, email_clean)
-    return response
+            yield sse({
+                "progress": 26,
+                "agent_event": emit_agent_event(
+                    "tool",
+                    "started",
+                    "Resume Intake Agent is extracting readable PDF text."
+                )
+            })
+            resume_text, contents = await read_resume_text(resume)
+            validate_resume_text_for_agent(resume_text)
+            yield sse({
+                "progress": 30,
+                "agent_event": emit_agent_event(
+                    "tool",
+                    "completed",
+                    "Resume Intake Agent extracted readable resume text.",
+                    {"text_length": len(resume_text or "")}
+                )
+            })
+
+            graph_state = recruiting_agent_graph._initial_state({
+                "task_type": "resume_profile",
+                "candidate_email": email_clean,
+                "input": {
+                    "candidate_email": email_clean,
+                    "resume_text": resume_text,
+                    "resume_use_llm": False,
+                    "bias_use_llm": False,
+                    "status": "profile",
+                    "source_type": "inbound",
+                    "source_method": "resume_agent_graph",
+                }
+            })
+            for event in recruiting_agent_graph.stream(graph_state):
+                yield sse({"progress": graph_progress(event), "agent_event": event})
+
+            if graph_state.get("blocked"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=graph_state.get("guardrail", {}).get("reason", "Resume upload was blocked by agent guardrails.")
+                )
+
+            artifacts = graph_state.get("artifacts", {}) or {}
+            profile_data = artifacts.get("candidate_profile")
+            agent_warnings = list(graph_state.get("agent_warnings", []))
+            if not isinstance(profile_data, dict) or not profile_data:
+                agent_warnings.append("Resume Agent returned no profile, so its deterministic parser fallback was used.")
+                profile_data = parse_resume_text_fallback(resume_text)
+
+            validate_resume_agent_profile(profile_data, name)
+            profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
+            bias_artifacts = build_candidate_bias_artifacts(
+                profile_data,
+                resume_text,
+                artifacts.get("prestige_analysis") if isinstance(artifacts.get("prestige_analysis"), dict) else None,
+                use_llm=False
+            )
+
+            yield sse({
+                "progress": 94,
+                "agent_event": emit_agent_event(
+                    "tool",
+                    "started",
+                    "Persistence Agent is saving the candidate profile to Supabase."
+                )
+            })
+            response = save_signup_candidate_record(
+                db,
+                email_clean,
+                name,
+                password,
+                resume.filename or "resume.pdf",
+                resume_text,
+                contents,
+                profile_data,
+                bias_artifacts,
+                agent_warnings
+            )
+            yield sse({
+                "progress": 100,
+                "agent_event": emit_agent_event(
+                    "graph",
+                    "final",
+                    "Candidate signup agent graph completed."
+                ),
+                "result": response
+            })
+        except HTTPException as exc:
+            yield sse({
+                "error": exc.detail,
+                "agent_event": emit_agent_event(
+                    "guardrail",
+                    "blocked" if exc.status_code in {400, 403, 409} else "failed",
+                    str(exc.detail),
+                    {"status_code": exc.status_code}
+                )
+            })
+        except Exception as exc:
+            print(f"Signup stream failed: {exc}")
+            yield sse({
+                "error": str(exc) or "Resume upload failed while the agent graph was processing it. Please try again.",
+                "agent_event": emit_agent_event(
+                    "graph",
+                    "failed",
+                    "Signup agent graph failed during resume processing.",
+                    {"error": str(exc)}
+                )
+            })
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 @router.post("/{email}/apply-position")
 def apply_candidate_to_position(email: str, payload: CandidateApplyPositionPayload):
@@ -1497,50 +1746,50 @@ async def apply_inbound(
     resume_text, contents = await read_resume_text(resume)
     validate_resume_text_for_agent(resume_text)
     agent_warnings: List[str] = []
-        
-    # 1. Invoke Resume Agent (Ingest and profile)
-    try:
-        profile_data = run_resume_agent(resume_text, prestige_neutralize=False)
-    except Exception as e:
-        print(f"Error running resume agent: {e}")
-        agent_warnings.append("Resume Agent failed, so a rule-based resume parser was used. Please review the extracted profile before continuing.")
-        profile_data = {
-            "name": name,
-            "headline": "Full-Stack Developer",
-            "location": "Local",
-            "about": "Inbound applicant",
-            "experiences": [],
-            "education": []
-        }
-    validate_resume_agent_profile(profile_data, name)
-    profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
-    controls = get_bias_controls(db)
-    bias_artifacts = build_candidate_bias_artifacts(profile_data, resume_text)
-        
-    # Fetch job requirements
+
     job = db.get("positions", {}).get(str(position_id))
     if not job:
         raise HTTPException(status_code=404, detail="Selected position not found.")
     if not is_open_for_applications(job):
         raise HTTPException(status_code=400, detail="Selected position is not open for applications.")
-        
-    # 2. Invoke Matching Agent (Debate committee)
+
     try:
+        graph_result = run_agent_graph("inbound_application", {
+            "candidate_email": email_clean,
+            "position_id": position_id,
+            "input": {
+                "candidate_email": email_clean,
+                "position_id": position_id,
+                "resume_text": resume_text,
+                "job_requirements": job,
+                "status": "applied",
+            }
+        })
+        if graph_result.get("blocked"):
+            raise HTTPException(status_code=400, detail=graph_result.get("guardrail", {}).get("reason", "Application input blocked by guardrails."))
+        artifacts = graph_result.get("artifacts", {})
+        profile_data = artifacts.get("candidate_profile") or run_resume_agent(resume_text, prestige_neutralize=False)
+        validate_resume_agent_profile(profile_data, name)
+        profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
+        bias_analysis = artifacts.get("prestige_analysis") or analyze_prestige_indicators(profile_data, resume_text)
+        bias_artifacts = {
+            "bias_analysis": bias_analysis,
+            "neutralized_profile_data": neutralize_candidate_profile(profile_data, bias_analysis)
+        }
+        match_results = artifacts.get("match_results") or run_matching_agent(job, profile_data, get_bias_controls(db), bias_artifacts["bias_analysis"])
+        custom_questions = artifacts.get("custom_questions") or run_interview_agent_phase_a(profile_data, match_results, job)
+        agent_warnings.extend(graph_result.get("agent_warnings", []))
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        print(f"Error running inbound agent graph: {e}")
+        agent_warnings.append("Agent graph failed, so the legacy resume and screening pipeline was used.")
+        profile_data = run_resume_agent(resume_text, prestige_neutralize=False)
+        validate_resume_agent_profile(profile_data, name)
+        profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
+        controls = get_bias_controls(db)
+        bias_artifacts = build_candidate_bias_artifacts(profile_data, resume_text)
         match_results = run_matching_agent(job, profile_data, controls, bias_artifacts["bias_analysis"])
-    except Exception as e:
-        print(f"Error running matching agent: {e}")
-        agent_warnings.append("Matching Agent failed, so a basic position-fit assessment was used.")
-        match_results = apply_bias_to_match_results({
-            "debate": {"critical_recruiter_cons": ["Stack verification required."], "talent_advocate_pros": ["Strong interest in the position."]},
-            "scores": {"technical": 75, "domain": 70, "culture": 80, "trajectory_slope": 75}
-        }, job, profile_data, controls, bias_artifacts["bias_analysis"])
-        
-    # 3. Invoke Candidate Interview Agent (Phase A - Question generation)
-    try:
-        custom_questions = run_interview_agent_phase_a(profile_data, match_results, job)
-    except Exception as e:
-        print(f"Error generating screening questions: {e}")
-        agent_warnings.append("Interview Agent question generation failed, so standard role-focused screening questions were used.")
         custom_questions = [
             "What technical challenge on your resume was the most architecturally complex, and how did you approach it?",
             "How do you ensure code scalability and high performance when designing REST endpoints?",
@@ -1635,35 +1884,44 @@ def submit_sandbox(email: str, payload: SandboxAnswers):
     job_id = application.get("position_id")
     job = db.get("positions", {}).get(str(job_id), {})
     
-    # Invoke Candidate Interview Agent (Phase B Evaluation)
     agent_warnings: List[str] = []
     try:
-        evaluation = run_interview_agent_phase_b(application.get("custom_questions", []), payload.answers, job)
-    except Exception as e:
-        print(f"Error evaluating sandbox answers: {e}")
-        agent_warnings.append("Interview Agent evaluation failed, so a basic response review was used.")
-        evaluation = build_position_specific_evaluation(application.get("custom_questions", []), payload.answers, job)
-        
-    # Invoke Report Agent to generate upskilling roadmap
-    try:
-        report_data = run_report_agent(candidate.get("profile_data", {}), candidate.get("match_results", {}), job)
+        graph_result = run_agent_graph("sandbox_evaluation", {
+            "candidate_email": email_clean,
+            "position_id": job_id,
+            "input": {
+                "candidate_email": email_clean,
+                "position_id": job_id,
+                "questions": application.get("custom_questions", []),
+                "answers": payload.answers,
+                "job_requirements": job,
+                "candidate_profile": candidate.get("profile_data", {}),
+                "match_results": application.get("match_results") or candidate.get("match_results", {}),
+            }
+        })
+        if graph_result.get("blocked"):
+            raise HTTPException(status_code=400, detail=graph_result.get("guardrail", {}).get("reason", "Screening answers blocked by guardrails."))
+        artifacts = graph_result.get("artifacts", {})
+        evaluation = artifacts.get("evaluation") or run_interview_agent_phase_b(application.get("custom_questions", []), payload.answers, job)
+        report_data = artifacts.get("report") or run_report_agent(candidate.get("profile_data", {}), application.get("match_results") or candidate.get("match_results", {}), job)
         roadmap = report_data.get("upskilling_roadmap", {})
+        agent_warnings.extend(graph_result.get("agent_warnings", []))
     except Exception as e:
-        print(f"Error compiling upskilling roadmap: {e}")
-        message = "Report Agent failed after your answers were saved. Please wait for the hiring manager to review or retry after the agent is available."
-        application["status"] = "screening"
-        application["progress"] = get_application_progress("screening")
-        application["last_agent_error"] = message
-        application.setdefault("agent_warnings", []).append(message)
-        candidate["last_agent_error"] = message
-        candidate.setdefault("agent_warnings", []).append(message)
-        add_notification(candidate, "Interview answers saved", message, "warning", job_id)
-        sync_current_application(candidate, application)
-        save_db(db)
-        raise HTTPException(status_code=502, detail=message)
+        if isinstance(e, HTTPException):
+            raise
+        print(f"Error evaluating sandbox answers: {e}")
+        agent_warnings.append("Agent graph failed, so a basic response review was used.")
+        evaluation = build_position_specific_evaluation(application.get("custom_questions", []), payload.answers, job)
+        roadmap = {}
         
-    application["status"] = "screening"
-    application["progress"] = get_application_progress("screening")
+    next_status = (
+        "rejected"
+        if int(evaluation.get("screening_score", 100) or 100) <= settings.AGENT_REJECT_MAX_SCREENING_SCORE
+        and str(evaluation.get("hiring_recommendation", "")).lower() == "reject"
+        else "screening"
+    )
+    application["status"] = next_status
+    application["progress"] = get_application_progress(next_status)
     application.pop("last_agent_error", None)
     candidate.pop("last_agent_error", None)
     application["evaluation"] = {
@@ -1702,36 +1960,38 @@ def scrape_profile(payload: ScrapePayload):
     candidate_name = profile_data["name"]
     candidate_email = profile_data["email"]
     controls = get_bias_controls(db)
-    bias_artifacts = build_candidate_bias_artifacts(profile_data)
-
-    # 1. Invoke Matching Agent (Debate)
     try:
-        match_results = run_matching_agent(job, profile_data, controls, bias_artifacts["bias_analysis"])
-    except Exception as e:
-        print(f"Scraper matching debate error: {e}")
-        match_results = build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
-        
-    # 2. Invoke Candidate Interview Agent (Phase A screening questions)
-    try:
-        custom_questions = run_interview_agent_phase_a(profile_data, match_results, job)
-    except Exception as e:
-        print(f"Scraper question generation error: {e}")
-        title = job.get("title", "this position")
-        requirements = job.get("requirements", [])
-        primary_requirement = requirements[0] if requirements else "the core responsibilities"
-        custom_questions = [
-            f"Describe a specific example that shows your experience with {primary_requirement} for the {title} role.",
-            f"What part of the {title} role best matches your recent work, and what evidence can you share?",
-            f"What gap would you need to close first to succeed in this {title} position?"
-        ]
-        
-    # 3. Invoke Report Agent (Pitches & Outreach)
-    try:
-        report_data = run_report_agent(profile_data, match_results, job)
+        graph_result = run_agent_graph("sourced_candidate", {
+            "candidate_email": candidate_email,
+            "position_id": payload.position_id,
+            "input": {
+                "candidate_email": candidate_email,
+                "position_id": payload.position_id,
+                "candidate_profile": profile_data,
+                "job_requirements": job,
+                "source_method": profile_data.get("source_method", "manual_apify"),
+            }
+        })
+        if graph_result.get("blocked"):
+            raise HTTPException(status_code=400, detail=graph_result.get("guardrail", {}).get("reason", "LinkedIn profile blocked by guardrails."))
+        artifacts = graph_result.get("artifacts", {})
+        bias_analysis = artifacts.get("prestige_analysis") or analyze_prestige_indicators(profile_data)
+        bias_artifacts = {
+            "bias_analysis": bias_analysis,
+            "neutralized_profile_data": neutralize_candidate_profile(profile_data, bias_analysis)
+        }
+        match_results = artifacts.get("match_results") or build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
+        custom_questions = artifacts.get("custom_questions") or run_interview_agent_phase_a(profile_data, match_results, job)
+        report_data = artifacts.get("report") or build_fast_outreach(profile_data, job)
         sourcing_pitch = report_data.get("sourcing_pitch", "")
         outreach_email = report_data.get("outreach_email", "")
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         print(f"Scraper report synthesis error: {e}")
+        bias_artifacts = build_candidate_bias_artifacts(profile_data)
+        match_results = build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
+        custom_questions = run_interview_agent_phase_a(profile_data, match_results, job)
         report_data = build_fast_outreach(profile_data, job)
         sourcing_pitch = report_data["sourcing_pitch"]
         outreach_email = report_data["outreach_email"]
@@ -1903,39 +2163,40 @@ def auto_source_candidates(payload: AutoSourcePayload):
                         yield f"data: {json.dumps({'log': f'Candidate {candidate_name} already exists in DB. Skipping.'})}\n\n"
                         continue
                         
-                    bias_artifacts = build_candidate_bias_artifacts(profile_data)
-                    
-                    yield f"data: {json.dumps({'log': 'Invoking Matching Agent committee debate...' })}\n\n"
-                    try:
-                        match_results = run_matching_agent(job, profile_data, controls, bias_artifacts["bias_analysis"])
-                    except Exception as e:
-                        yield f"data: {json.dumps({'log': f'Matching Agent warning: {e}. Falling back to deterministic fit.'})}\n\n"
-                        match_results = build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
-                        
-                    yield f"data: {json.dumps({'log': 'Invoking Candidate Interview Agent (Phase A)...' })}\n\n"
-                    try:
-                        custom_questions = run_interview_agent_phase_a(profile_data, match_results, job)
-                    except Exception as e:
-                        yield f"data: {json.dumps({'log': f'Interview Agent warning: {e}. Falling back to deterministic questions.'})}\n\n"
-                        title = job.get("title", "this position")
-                        requirements = job.get("requirements", [])
-                        primary_requirement = requirements[0] if requirements else "the core responsibilities"
-                        custom_questions = [
-                            f"Describe a specific example that shows your experience with {primary_requirement} for the {title} role.",
-                            f"What part of the {title} role best matches your recent work, and what evidence can you share?",
-                            f"What gap would you need to close first to succeed in this {title} position?"
-                        ]
-                        
-                    yield f"data: {json.dumps({'log': 'Invoking Report Agent (Outreach Pitch)...' })}\n\n"
-                    try:
-                        report_data = run_report_agent(profile_data, match_results, job)
-                        sourcing_pitch = report_data.get("sourcing_pitch", "")
-                        outreach_email = report_data.get("outreach_email", "")
-                    except Exception as e:
-                        yield f"data: {json.dumps({'log': f'Report Agent warning: {e}. Falling back to outreach templates.'})}\n\n"
-                        report_data = build_fast_outreach(profile_data, job)
-                        sourcing_pitch = report_data["sourcing_pitch"]
-                        outreach_email = report_data["outreach_email"]
+                    graph_state = recruiting_agent_graph._initial_state({
+                        "task_type": "sourced_candidate",
+                        "candidate_email": candidate_email,
+                        "position_id": payload.position_id,
+                        "input": {
+                            "candidate_email": candidate_email,
+                            "position_id": payload.position_id,
+                            "candidate_profile": profile_data,
+                            "job_requirements": job,
+                            "source_method": "apify_auto_source",
+                        }
+                    })
+                    for event in recruiting_agent_graph.stream(graph_state):
+                        graph_log = f"[{event.get('node')}] {event.get('message')}"
+                        yield f"data: {json.dumps({'log': graph_log, 'agent_event': event})}\n\n"
+                    if graph_state.get("blocked"):
+                        blocked_reason = graph_state.get("guardrail", {}).get("reason", "blocked")
+                        yield f"data: {json.dumps({'log': f'Guardrail blocked {candidate_name}: {blocked_reason}'})}\n\n"
+                        continue
+                    artifacts = graph_state.get("artifacts", {})
+                    bias_analysis = artifacts.get("prestige_analysis") or analyze_prestige_indicators(profile_data)
+                    bias_artifacts = {
+                        "bias_analysis": bias_analysis,
+                        "neutralized_profile_data": neutralize_candidate_profile(profile_data, bias_analysis)
+                    }
+                    match_results = artifacts.get("match_results") or build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
+                    custom_questions = artifacts.get("custom_questions") or [
+                        f"Describe your most relevant experience for the {job.get('title', 'selected')} role.",
+                        f"What evidence shows you can meet the main requirements for {job.get('title', 'this position')}?",
+                        "What gap would you want to close before starting this role?"
+                    ]
+                    report_data = artifacts.get("report") or build_fast_outreach(profile_data, job)
+                    sourcing_pitch = report_data.get("sourcing_pitch", "")
+                    outreach_email = report_data.get("outreach_email", "")
                         
                     staged_candidate = {
                         "name": candidate_name,
@@ -1982,19 +2243,44 @@ def auto_source_candidates(payload: AutoSourcePayload):
                 candidate_name = profile_data["name"]
                 
                 yield f"data: {json.dumps({'log': f'Simulating evaluation for prototype candidate: {candidate_name}...'})}\n\n"
-                bias_artifacts = build_candidate_bias_artifacts(profile_data, use_llm=False)
+                graph_state = recruiting_agent_graph._initial_state({
+                    "task_type": "sourced_candidate",
+                    "candidate_email": candidate_email,
+                    "position_id": payload.position_id,
+                    "input": {
+                        "candidate_email": candidate_email,
+                        "position_id": payload.position_id,
+                        "candidate_profile": profile_data,
+                        "job_requirements": job,
+                        "source_method": "prototype_auto_source",
+                    }
+                })
+                for event in recruiting_agent_graph.stream(graph_state):
+                    graph_log = f"[{event.get('node')}] {event.get('message')}"
+                    yield f"data: {json.dumps({'log': graph_log, 'agent_event': event})}\n\n"
+                if graph_state.get("blocked"):
+                    blocked_reason = graph_state.get("guardrail", {}).get("reason", "blocked")
+                    yield f"data: {json.dumps({'log': f'Guardrail blocked prototype candidate {candidate_name}: {blocked_reason}'})}\n\n"
+                    continue
+                artifacts = graph_state.get("artifacts", {})
+                fallback_bias = build_candidate_bias_artifacts(profile_data, use_llm=False)
+                bias_analysis = artifacts.get("prestige_analysis") or fallback_bias["bias_analysis"]
+                bias_artifacts = {
+                    "bias_analysis": bias_analysis,
+                    "neutralized_profile_data": neutralize_candidate_profile(profile_data, bias_analysis)
+                }
                 match_results = calibrate_auto_source_match(
-                    build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"]),
+                    artifacts.get("match_results") or build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"]),
                     profile_data,
                     job,
                     index
                 )
-                custom_questions = [
+                custom_questions = artifacts.get("custom_questions") or [
                     f"Describe your most relevant experience for the {job.get('title', 'selected')} role.",
                     f"What evidence shows you can meet the main requirements for {job.get('title', 'this position')}?",
                     "What gap would you want to close before starting this role?"
                 ]
-                report_data = build_fast_outreach(profile_data, job)
+                report_data = artifacts.get("report") or build_fast_outreach(profile_data, job)
                 sourcing_pitch = report_data["sourcing_pitch"]
                 outreach_email = report_data["outreach_email"]
 

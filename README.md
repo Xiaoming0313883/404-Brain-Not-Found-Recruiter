@@ -120,7 +120,7 @@ Candidates can:
 - Candidate account administration.
 - Interview calendar.
 - SMTP verification and optional email notifications.
-- Local JSON data store for fast hackathon iteration.
+- Supabase-backed persistence for candidates, applications, agent traces, action receipts, integration settings, and email events.
 - Refresh-safe clean routes for both portals through Vercel SPA rewrites.
 - Scoped chat scrolling so agent chats scroll inside their own message panes.
 
@@ -173,6 +173,18 @@ Each agent has a focused responsibility and a fallback path so the demo remains 
 | Interview Agent Phase A | `backend/app/services/agents/interview_agent.py` | Candidate profile, match results, job requirements | Exactly 3 targeted screening questions | Creates position-specific screening questions from the current job and matching concerns. |
 | Interview Agent Phase B | `backend/app/services/agents/interview_agent.py` | Screening questions, candidate answers, job requirements | Answer critiques, score breakdown, screening score, verdict, recommendation | Evaluates submitted answers against the selected position using the role-alignment rubric. |
 | Report Agent | `backend/app/services/agents/report_agent.py` | Candidate profile, match results, job requirements | Sourcing pitch, outreach email, upskilling roadmap | Produces human-readable recruiter and candidate artifacts. |
+
+### Agentic Criteria Proof
+
+404Hire now exposes a guarded supervisor graph in `backend/app/services/agents/graph.py`.
+
+| Criterion | Implementation Evidence |
+| --- | --- |
+| Dynamic decision making | The supervisor node selects the next tool from the available recruiting tools for requirement intake, inbound applications, sourced candidates, and screening evaluation. It uses the OpenAI-compatible client when configured and falls back to deterministic routing for reliability. |
+| Guardrails | `backend/app/services/agents/guardrails.py` blocks prompt injection, protected-class hiring instructions, unauthorized data access, and unauthorized email/data actions before tools run. Blocked events are written to Supabase `agent_events`. |
+| Access to tools | `backend/app/services/agents/tools.py` exposes the six existing agents plus Supabase writes, status updates, agent event logging, and autonomous email tools. |
+| Real-world agency | Supabase rows are updated for candidates/applications/actions/events, Apify/LinkedIn sourcing is used when configured, and SMTP sends labeled autonomous emails when bounded policy thresholds approve. |
+| Scalability | Runtime persistence uses Supabase tables from `backend/supabase_schema.sql`; `/api/v1/settings/integrations/status` reports OpenAI, Supabase, Apify, SMTP, and graph readiness. |
 
 ### Two-Sided Agent Orchestration
 
@@ -572,7 +584,7 @@ Local JSON database and upload folders
 
 ### Storage
 
-- Local JSON database: `backend/data/recruiting_db.json`
+- Supabase database using `backend/supabase_schema.sql`
 - Uploaded resumes: `backend/uploads/resumes/`
 - Extracted profile pictures: `backend/uploads/profile_pictures/`
 
@@ -707,12 +719,21 @@ Example backend configuration:
 HOST=0.0.0.0
 PORT=8000
 DEBUG=True
-DATABASE_PATH=data/recruiting_db.json
+SUPABASE_URL=https://your-project.supabase.co
+# Backend only. Use the Supabase service_role secret key, not anon/public/publishable.
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_BASE_URL=https://api.mor.org/api/v1
 OPENAI_MODEL=deepseek-v4-pro
+AGENT_SUPERVISOR_MODEL=deepseek-v4-pro
+AGENT_WORKER_MODEL=deepseek-v4-pro
+AGENT_MAX_STEPS=10
+AGENT_AUTONOMY_MODE=bounded
+AGENT_INVITE_MIN_FIT_SCORE=75
+AGENT_REJECT_MAX_SCREENING_SCORE=45
 
+LLM_TIMEOUT=35
 RESUME_AGENT_TEMP=0.1
 REQUIREMENT_AGENT_TEMP=0.2
 MATCHING_AGENT_TEMP=0.4
@@ -902,6 +923,8 @@ POST   /candidates/{email}/reject
 POST   /candidates/{email}/schedule-interview
 GET    /candidates/interview-calendar
 PATCH  /candidates/{email}/outreach-notes
+GET    /settings/integrations/status
+GET    /agents/events
 ```
 
 ### Example Job Intake Body
@@ -945,13 +968,16 @@ PATCH  /candidates/{email}/outreach-notes
 
 ## Data And Storage
 
-Local development storage:
+Runtime storage:
 
-- Database: `backend/data/recruiting_db.json`
+- Database: Supabase tables created from `backend/supabase_schema.sql`
+- Agent traces: `agent_events`
+- Autonomous action receipts: `agent_actions`
+- Email receipts: `email_events`
 - Uploaded resumes: `backend/uploads/resumes/`
 - Extracted profile pictures: `backend/uploads/profile_pictures/`
 
-This storage model is easy to inspect during development, but it is not intended for production-scale use.
+Supabase is required for the agentic build. Run `backend/supabase_schema.sql` in the Supabase SQL Editor, then set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` before starting the backend.
 
 ## Validation And Safety
 
@@ -1074,7 +1100,7 @@ Without live credentials, Automatic Agent Search falls back to prototype candida
 This is a hackathon-friendly prototype, not a hardened production hiring system yet. Before a real production release, improve the following:
 
 - Replace demo hiring-manager login with real authentication.
-- Move JSON storage to PostgreSQL, MySQL, or another production database.
+- Add row-level user policies and tenant boundaries on top of the current Supabase service-role backend.
 - Store resumes in managed object storage.
 - Add signed URLs or authorization checks for resume downloads.
 - Restrict CORS origins in `backend/main.py`.

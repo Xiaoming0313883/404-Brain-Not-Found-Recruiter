@@ -2,10 +2,13 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
 from ..database import load_db, save_db
+from ..database import get_supabase_client
+from ..config import settings
 from ..services.bias_settings import get_bias_controls, update_bias_controls
+from ..services.agents.base_agent import get_openai_client
 from ..services.agents.bias_agent import analyze_prestige_indicators
 from ..services.agents.matching_agent import build_position_fit_assessment
-from ..services.mailer import verify_smtp_connection
+from ..services.mailer import is_smtp_configured, verify_smtp_connection
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
@@ -57,6 +60,50 @@ def verify_smtp(payload: SMTPVerifyPayload):
     return {
         "status": "success" if success else "failed",
         "message": "SMTP credentials authenticated successfully!" if success else "Failed to establish a secure SMTP connection."
+    }
+
+@router.get("/integrations/status")
+def read_integration_status():
+    openai_ready = bool(get_openai_client())
+    supabase_ready = False
+    supabase_detail = "not checked"
+    try:
+        get_supabase_client().table("positions").select("id").limit(1).execute()
+        supabase_ready = True
+        supabase_detail = "connected"
+    except Exception as e:
+        supabase_detail = str(e)
+
+    apify_ready = bool(settings.APIFY_API_TOKEN.strip())
+    smtp_ready = is_smtp_configured()
+    return {
+        "openai": {
+            "configured": openai_ready,
+            "model": settings.OPENAI_MODEL,
+            "supervisor_model": settings.AGENT_SUPERVISOR_MODEL,
+            "base_url": settings.OPENAI_BASE_URL,
+        },
+        "supabase": {
+            "configured": bool(settings.SUPABASE_URL.strip() and settings.SUPABASE_SERVICE_ROLE_KEY.strip()),
+            "connected": supabase_ready,
+            "detail": supabase_detail if not supabase_ready else "connected",
+        },
+        "apify_linkedin": {
+            "configured": apify_ready,
+            "profile_actor_id": settings.APIFY_PROFILE_ACTOR_ID,
+            "search_actor_id": settings.APIFY_SEARCH_ACTOR_ID,
+        },
+        "smtp": {
+            "configured": smtp_ready,
+            "host": settings.SMTP_HOST,
+            "user": settings.SMTP_USER if smtp_ready else "",
+        },
+        "agent_graph": {
+            "autonomy_mode": settings.AGENT_AUTONOMY_MODE,
+            "max_steps": settings.AGENT_MAX_STEPS,
+            "invite_min_fit_score": settings.AGENT_INVITE_MIN_FIT_SCORE,
+            "reject_max_screening_score": settings.AGENT_REJECT_MAX_SCREENING_SCORE,
+        }
     }
 
 @router.get("/bias-controls")

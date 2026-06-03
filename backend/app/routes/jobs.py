@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
 from ..database import load_db, save_db
 from ..services.agents import run_requirement_agent, run_requirement_intake_agent
+from ..services.agents.graph import run_agent_graph
 from ..services.job_windows import is_open_for_applications, serialize_position, validate_position_window
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
@@ -62,7 +63,16 @@ def get_next_intake_turn(payload: JobIntakePayload):
     if not payload.title.strip() or not payload.department.strip():
         raise HTTPException(status_code=400, detail="Title and department are required before starting intake.")
     try:
-        return run_requirement_intake_agent(payload.title.strip(), payload.department.strip(), payload.chat_messages)
+        graph_result = run_agent_graph("requirement_intake", {
+            "input": {
+                "job_title": payload.title.strip(),
+                "department": payload.department.strip(),
+                "chat_messages": payload.chat_messages,
+            }
+        })
+        if graph_result.get("blocked"):
+            raise HTTPException(status_code=400, detail=graph_result.get("guardrail", {}).get("reason", "Input blocked by guardrails."))
+        return graph_result.get("artifacts", {}).get("requirements") or run_requirement_intake_agent(payload.title.strip(), payload.department.strip(), payload.chat_messages)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -84,7 +94,16 @@ def create_job(payload: JobCreate):
     # The agent only enriches search metadata. The hiring manager's edited
     # description and requirements remain the final source of truth.
     try:
-        req_analysis = run_requirement_agent(
+        graph_result = run_agent_graph("requirement_profile", {
+            "input": {
+                "job_title": payload.title,
+                "department": payload.department,
+                "job_description": f"{provided_description}\n\nHiring Manager Intake: {intake_context}",
+            }
+        })
+        if graph_result.get("blocked"):
+            raise RuntimeError(graph_result.get("guardrail", {}).get("reason", "Requirement profile blocked by guardrails."))
+        req_analysis = graph_result.get("artifacts", {}).get("requirements") or run_requirement_agent(
             payload.title,
             f"{provided_description}\n\nHiring Manager Intake: {intake_context}"
         )
@@ -144,7 +163,16 @@ def update_job(job_id: int, payload: JobUpdate):
         provided_description = job.get("description") or intake_context.get("generated_description") or ""
         provided_requirements = job.get("requirements") or intake_context.get("generated_requirements") or []
         try:
-            req_analysis = run_requirement_agent(
+            graph_result = run_agent_graph("requirement_profile", {
+                "input": {
+                    "job_title": job["title"],
+                    "department": job.get("department", ""),
+                    "job_description": f"{provided_description}\n\nHiring Manager Intake: {intake_context}",
+                }
+            })
+            if graph_result.get("blocked"):
+                raise RuntimeError(graph_result.get("guardrail", {}).get("reason", "Requirement profile blocked by guardrails."))
+            req_analysis = graph_result.get("artifacts", {}).get("requirements") or run_requirement_agent(
                 job["title"],
                 f"{provided_description}\n\nHiring Manager Intake: {intake_context}"
             )

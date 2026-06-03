@@ -236,58 +236,84 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
     return response.json();
   };
 
-  const uploadResume = (formData: FormData) => {
-    return new Promise<any>((resolve, reject) => {
-      const request = new XMLHttpRequest();
-      request.open('POST', `${API_BASE_URL}/candidates/signup`);
+  const uploadResume = async (formData: FormData) => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 240000);
+    setUploadProgress(5);
+    setProcessingMessage('Connecting to signup agent graph...');
 
-      request.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          const uploadPercent = Math.round((event.loaded / event.total) * 55);
-          setUploadProgress(Math.max(5, uploadPercent));
-          setProcessingMessage('Uploading resume...');
-        }
-      };
+    try {
+      const response = await fetch(`${API_BASE_URL}/candidates/signup/stream`, {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal
+      });
 
-      request.onload = () => {
+      if (!response.ok) {
         let payload: any = null;
         try {
-          payload = request.responseText ? JSON.parse(request.responseText) : null;
+          payload = await response.json();
         } catch {
           payload = null;
         }
+        throw new Error(payload?.detail || `Failed to save your profile. API returned ${response.status}.`);
+      }
 
-        if (request.status >= 200 && request.status < 300) {
-          setUploadProgress(100);
-          setProcessingMessage('Interview session ready.');
-          resolve(payload);
-          return;
+      if (!response.body) {
+        throw new Error('Signup agent graph did not return a progress stream.');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let finalPayload: any = null;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split('\n\n');
+        buffer = frames.pop() || '';
+
+        for (const frame of frames) {
+          const data = frame
+            .split('\n')
+            .filter(line => line.startsWith('data:'))
+            .map(line => line.replace(/^data:\s?/, ''))
+            .join('\n');
+          if (!data) continue;
+
+          const payload = JSON.parse(data);
+          if (payload.progress) {
+            setUploadProgress(Math.max(5, Math.min(100, payload.progress)));
+          }
+          if (payload.agent_event?.message) {
+            setProcessingMessage(payload.agent_event.message);
+          }
+          if (payload.error) {
+            throw new Error(payload.error);
+          }
+          if (payload.result) {
+            finalPayload = payload.result;
+          }
         }
+      }
 
-        reject(new Error(payload?.detail || `Failed to save your profile. API returned ${request.status}.`));
-      };
+      if (!finalPayload) {
+        throw new Error('Signup agent graph finished without returning a candidate profile.');
+      }
 
-      request.onerror = () => reject(new TypeError(API_UNREACHABLE_MESSAGE));
-      request.ontimeout = () => reject(new Error('Resume upload timed out. Please try again.'));
-      request.timeout = 90000;
-
-      setUploadProgress(5);
-      setProcessingMessage('Starting upload...');
-      request.send(formData);
-
-      window.setTimeout(() => {
-        setUploadProgress(current => Math.max(current, 65));
-        setProcessingMessage('Reading PDF and standardizing your profile...');
-      }, 900);
-      window.setTimeout(() => {
-        setUploadProgress(current => Math.max(current, 78));
-        setProcessingMessage('Matching your profile to the selected role...');
-      }, 2500);
-      window.setTimeout(() => {
-        setUploadProgress(current => Math.max(current, 90));
-        setProcessingMessage('Generating your interview questions...');
-      }, 5000);
-    });
+      setUploadProgress(100);
+      setProcessingMessage('Candidate profile ready.');
+      return finalPayload;
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        throw new Error('Resume upload timed out while the agent graph was processing it. Please try again.');
+      }
+      throw err;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
   };
 
   const startEmailVerification = async (targetEmail: string) => {
