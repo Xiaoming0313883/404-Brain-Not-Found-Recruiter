@@ -5,6 +5,8 @@ import * as Progress from '@radix-ui/react-progress';
 import { CheckCircle2, AlertCircle, Loader2, Mic, MicOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { API_BASE_URL } from '../../api';
+import { KnowledgeTooltip } from '../KnowledgeTooltip';
+import { AgentActivityEvent, AgentActivityFeed } from './AgentActivityFeed';
 
 interface Props {
   candidateData: CandidateData;
@@ -30,6 +32,9 @@ export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Pr
   const [validationErrors, setValidationErrors] = useState<boolean[]>([false, false, false]);
   const [errorMessage, setErrorMessage] = useState('');
   const [listeningIndex, setListeningIndex] = useState<number | null>(null);
+  const [agentProgress, setAgentProgress] = useState(0);
+  const [agentMessage, setAgentMessage] = useState('');
+  const [agentEvents, setAgentEvents] = useState<AgentActivityEvent[]>([]);
 
   // Extract custom questions from loaded candidate or fallback
   const rawQuestions = candidateData.customQuestions && candidateData.customQuestions.length === 3
@@ -76,6 +81,9 @@ export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Pr
     }
 
     setIsSubmitting(true);
+    setAgentProgress(5);
+    setAgentMessage('Screening Evaluation Agent is preparing your answers for review.');
+    setAgentEvents([]);
 
     try {
       await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(candidateData.email)}/draft-answers`, {
@@ -83,7 +91,7 @@ export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Pr
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ answers, position_id: candidateData.jobId })
       }).catch(() => undefined);
-      const response = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(candidateData.email)}/sandbox`, {
+      const response = await fetch(`${API_BASE_URL}/candidates/${encodeURIComponent(candidateData.email)}/sandbox/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: json_payload()
@@ -94,7 +102,50 @@ export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Pr
         throw new Error(errorData.detail || 'Failed to submit responses.');
       }
 
-      const data = await response.json();
+      if (!response.body) {
+        throw new Error('Screening agent did not return a progress stream.');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let data: any = null;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split('\n\n');
+        buffer = frames.pop() || '';
+
+        for (const frame of frames) {
+          const raw = frame
+            .split('\n')
+            .filter(line => line.startsWith('data:'))
+            .map(line => line.replace(/^data:\s?/, ''))
+            .join('\n');
+          if (!raw) continue;
+
+          const payload = JSON.parse(raw);
+          if (payload.progress) {
+            setAgentProgress(Math.max(5, Math.min(100, payload.progress)));
+          }
+          if (payload.agent_event) {
+            setAgentEvents(events => [...events, payload.agent_event]);
+            if (payload.agent_event.message) setAgentMessage(payload.agent_event.message);
+          }
+          if (payload.error) {
+            throw new Error(payload.error);
+          }
+          if (payload.result) {
+            data = payload.result;
+          }
+        }
+      }
+
+      if (!data) {
+        throw new Error('Screening agent completed without returning evaluation feedback.');
+      }
       
       const score = data.evaluation?.screening_score || 80;
       onComplete(answers, score, data.evaluation, data.agent_warnings || []);
@@ -195,7 +246,12 @@ export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Pr
             <span className="text-[#2d6a55] text-sm font-semibold">i</span>
           </div>
           <div>
-            <p className="text-sm text-[#1c1c1a] mb-1 font-semibold">Personalized Assessment</p>
+            <div className="mb-1 flex items-center gap-2">
+              <p className="text-sm text-[#1c1c1a] font-semibold">Personalized Assessment</p>
+              <KnowledgeTooltip label="How screening feedback is scored">
+                The Interview Agent scores each answer against the exact question and selected job requirements, then gives HR-style strengths, gaps, improvements, and a hiring-manager note.
+              </KnowledgeTooltip>
+            </div>
             <p className="text-xs text-[#6b7063] leading-relaxed">
               These questions were tailored to your profile by our AI Interview Agent. They're designed as a
               collaborative warm-up — share your thought process, not just the answer. Minimum 10 characters per response.
@@ -289,13 +345,19 @@ export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Pr
           </button>
 
           {isSubmitting && (
-            <div className="mt-4 bg-[#f0ede8] border border-[#e4e1da] rounded-xl p-4 shadow-sm">
-              <p className="text-xs text-[#a8a49d] font-semibold uppercase tracking-wider mb-2">AI Evaluation Pipeline</p>
-              <ul className="text-xs text-[#6b7063] space-y-1.5 list-disc list-inside">
-                <li>Interview Agent (Phase B): Analyzing responses...</li>
-                <li>Report Agent: Generating upskilling roadmap...</li>
-                <li>Updating status to completed...</li>
-              </ul>
+            <div className="mt-4">
+              <Progress.Root className="relative mb-3 h-2 w-full overflow-hidden rounded-full bg-[#e4e1da]">
+                <Progress.Indicator
+                  className="h-full bg-[#2d6a55] transition-transform duration-500 ease-out"
+                  style={{ transform: `translateX(-${100 - agentProgress}%)`, width: '100%' }}
+                />
+              </Progress.Root>
+              <AgentActivityFeed
+                events={agentEvents}
+                currentMessage={agentMessage}
+                progress={agentProgress}
+                title="Screening Agent Trace"
+              />
             </div>
           )}
         </div>

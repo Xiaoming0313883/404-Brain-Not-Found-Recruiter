@@ -3,6 +3,7 @@ import { Job, ScrapedCandidate } from '../HiringManagerPortal';
 import { Link2, Play, Send, CheckCircle2, AlertCircle, Loader2, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { API_BASE_URL } from '../../api';
+import { KnowledgeTooltip } from '../KnowledgeTooltip';
 
 interface Props {
   jobs: Job[];
@@ -99,7 +100,8 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
                 setProcessingLogs(prev => [...prev, eventData.log]);
               } else if (eventData.agent_event) {
                 const agentEvent = eventData.agent_event;
-                setProcessingLogs(prev => [...prev, `[${agentEvent.node || 'agent'}] ${agentEvent.message || agentEvent.event_type || 'event'}`]);
+                const reason = agentEvent.reason || agentEvent.decision_reason || agentEvent.payload?.reason || agentEvent.payload?.decision_reason;
+                setProcessingLogs(prev => [...prev, `[${agentEvent.node || 'agent'}] ${agentEvent.message || agentEvent.event_type || 'event'}${reason ? ` Reason: ${reason}` : ''}`]);
               } else if (eventData.result) {
                 const results = eventData.result;
                 const mapped = results.map(mapCandidate);
@@ -135,7 +137,8 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
               setProcessingLogs(prev => [...prev, eventData.log]);
             } else if (eventData.agent_event) {
               const agentEvent = eventData.agent_event;
-              setProcessingLogs(prev => [...prev, `[${agentEvent.node || 'agent'}] ${agentEvent.message || agentEvent.event_type || 'event'}`]);
+              const reason = agentEvent.reason || agentEvent.decision_reason || agentEvent.payload?.reason || agentEvent.payload?.decision_reason;
+              setProcessingLogs(prev => [...prev, `[${agentEvent.node || 'agent'}] ${agentEvent.message || agentEvent.event_type || 'event'}${reason ? ` Reason: ${reason}` : ''}`]);
             } else if (eventData.result) {
               const results = eventData.result;
               const mapped = results.map(mapCandidate);
@@ -178,22 +181,8 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
     setEmailDrafts({});
     setErrorMessage('');
 
-    const initialLogs = [
-      'Initializing live LinkedIn scraper...',
-      'Checking Apify or authenticated LinkedIn scraper configuration...',
-      'Requesting verified profile data...',
-      'Converting DOM structures to Pydantic records...',
-      'Invoking Matching Agent Debate Panel...',
-      'Invoking Candidate Interview Agent (Phase A)...',
-      'Invoking Report Agent Outreach & Pitch Synthesizer...'
-    ];
-
     try {
-      // Simulate live progress logs on the terminal console
-      for (let i = 0; i < initialLogs.length; i++) {
-        setProcessingLogs(prev => [...prev, initialLogs[i]]);
-        await new Promise(resolve => setTimeout(resolve, 300));
-      }
+      setProcessingLogs(['Manual sourcing request sent to backend agent graph.']);
 
       const response = await fetch(`${API_BASE_URL}/candidates/scrape`, {
         method: 'POST',
@@ -553,7 +542,12 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
 
                       {/* Recruitment Email Preview */}
                       <div>
-                        <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Generated Outreach Email</p>
+                        <div className="mb-2 flex items-center gap-2">
+                          <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Generated Outreach Email</p>
+                          <KnowledgeTooltip label="How agent email works">
+                            The agent plans candidate-facing outreach from the role, match evidence, and policy thresholds. Real SMTP sending only happens when configured and action policy approves it.
+                          </KnowledgeTooltip>
+                        </div>
                         <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-4">
                           <textarea
                             value={draft}

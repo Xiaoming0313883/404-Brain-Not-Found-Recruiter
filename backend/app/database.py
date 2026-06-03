@@ -175,6 +175,7 @@ def save_db(data: Dict[str, Any]) -> None:
                 "payload": row_payload,
                 "updated_at": now,
             })
+        position_rows = _dedupe_rows(position_rows, "id")
         if position_rows:
             client.table("positions").upsert(position_rows, on_conflict="id").execute()
 
@@ -211,6 +212,8 @@ def save_db(data: Dict[str, Any]) -> None:
                     "payload": application,
                     "updated_at": now,
                 })
+        candidate_rows = _dedupe_rows(candidate_rows, "email")
+        application_rows = _dedupe_rows(application_rows, "id")
         if candidate_rows:
             client.table("candidates").upsert(candidate_rows, on_conflict="email").execute()
         if application_rows:
@@ -220,6 +223,7 @@ def save_db(data: Dict[str, Any]) -> None:
             {"key": str(key), "value": value, "updated_at": now}
             for key, value in settings_data.items()
         ]
+        settings_rows = _dedupe_rows(settings_rows, "key")
         if settings_rows:
             client.table("settings").upsert(settings_rows, on_conflict="key").execute()
 
@@ -232,6 +236,7 @@ def save_db(data: Dict[str, Any]) -> None:
                     "payload": payload or {},
                     "updated_at": now,
                 })
+        pending_rows = _dedupe_rows(pending_rows, "email")
         if pending_rows:
             client.table("pending_email_verifications").upsert(pending_rows, on_conflict="email").execute()
 
@@ -246,6 +251,19 @@ def save_db(data: Dict[str, Any]) -> None:
         existing_pending = _table_key_set("pending_email_verifications", "email")
         for removed_email in existing_pending - {row["email"] for row in pending_rows}:
             client.table("pending_email_verifications").delete().eq("email", removed_email).execute()
+
+
+def _dedupe_rows(rows: List[Dict[str, Any]], key: str) -> List[Dict[str, Any]]:
+    """Return one row per Supabase conflict key, preserving latest-row-wins semantics."""
+    deduped: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        normalized_key = str(value).strip().lower() if key in {"email", "candidate_email"} else str(value).strip()
+        if normalized_key:
+            deduped[normalized_key] = row
+    return list(deduped.values())
 
 
 def record_agent_event(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -287,6 +305,39 @@ def record_email_event(email_event: Dict[str, Any]) -> Dict[str, Any]:
         "payload": payload,
     }
     rows = _execute(get_supabase_client().table("email_events").insert(row).select("*"))
+    return rows[0] if rows else row
+
+
+def record_email_draft(email_draft: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(email_draft or {})
+    row = {
+        "candidate_email": payload.get("candidate_email"),
+        "position_id": payload.get("position_id"),
+        "action_type": payload.get("action_type", ""),
+        "subject": payload.get("subject", ""),
+        "body": payload.get("body", ""),
+        "html_body": payload.get("html_body", ""),
+        "status": payload.get("status", "draft"),
+        "payload": payload,
+        "updated_at": datetime.utcnow().isoformat(timespec="seconds"),
+    }
+    rows = _execute(get_supabase_client().table("email_drafts").insert(row).select("*"))
+    return rows[0] if rows else row
+
+
+def record_agent_checkpoint(checkpoint: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(checkpoint or {})
+    row = {
+        "thread_id": payload.get("thread_id", ""),
+        "candidate_email": payload.get("candidate_email"),
+        "position_id": payload.get("position_id"),
+        "task_type": payload.get("task_type", ""),
+        "status": payload.get("status", "paused"),
+        "state": payload.get("state") or {},
+        "payload": payload,
+        "updated_at": datetime.utcnow().isoformat(timespec="seconds"),
+    }
+    rows = _execute(get_supabase_client().table("agent_checkpoints").insert(row).select("*"))
     return rows[0] if rows else row
 
 

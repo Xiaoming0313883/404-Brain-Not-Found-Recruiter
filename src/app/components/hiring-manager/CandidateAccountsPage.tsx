@@ -25,6 +25,12 @@ const getCandidatePhase = (status: string, answers?: string[]): string => {
   return 'Waiting for Screening';
 };
 
+const hasSubmittedInterviewAnswers = (answers?: string[]): boolean =>
+  Array.isArray(answers) && answers.some(answer => answer.trim().length > 0);
+
+const isPendingInterview = (status: string, answers?: string[]): boolean =>
+  ['staged', 'invited', 'applied', 'screening'].includes(status) && !hasSubmittedInterviewAnswers(answers);
+
 const getVisiblePages = (currentPage: number, totalPages: number) => {
   const pages = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
   return Array.from(pages)
@@ -244,6 +250,11 @@ export function CandidateAccountsPage({
                           );
                         })()}
                         {/* Interview Date — only shown when scheduled */}
+                        {isPendingInterview(candidate.status, candidate.answers) && (
+                          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[#fff8ed] text-[#8a5a14] border border-[#f2d3a4]">
+                            pending interview
+                          </span>
+                        )}
                         {candidate.status === 'interview_scheduled' && candidate.interviewSlot && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-[#eef2ff] text-[#3730a3] border border-[#c7d2fe]">
                             <Calendar className="w-3 h-3" />

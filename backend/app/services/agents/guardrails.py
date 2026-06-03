@@ -163,6 +163,7 @@ def validate_action_policy(
         "record_agent_event",
         "stage_sourced_candidate",
         "save_screening_evaluation",
+        "plan_candidate_email",
     }
     if tool_name in approved_tools:
         return {"approved": True, "reason": f"{tool_name} is an approved low-risk agent action."}

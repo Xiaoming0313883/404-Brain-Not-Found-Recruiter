@@ -8,7 +8,7 @@ from ..services.bias_settings import get_bias_controls, update_bias_controls
 from ..services.agents.base_agent import get_openai_client
 from ..services.agents.bias_agent import analyze_prestige_indicators
 from ..services.agents.matching_agent import build_position_fit_assessment
-from ..services.mailer import is_smtp_configured, verify_smtp_connection
+from ..services.mailer import is_smtp_configured, smtp_status, verify_smtp_connection
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
@@ -56,10 +56,12 @@ def reapply_bias_scoring(db: dict, controls: dict) -> None:
 
 @router.post("/smtp/verify")
 def verify_smtp(payload: SMTPVerifyPayload):
-    success = verify_smtp_connection(payload.model_dump())
+    result = verify_smtp_connection(payload.model_dump())
+    success = bool(result.get("authenticated"))
     return {
         "status": "success" if success else "failed",
-        "message": "SMTP credentials authenticated successfully!" if success else "Failed to establish a secure SMTP connection."
+        "message": result.get("reason") or ("SMTP credentials authenticated successfully!" if success else "Failed to establish a secure SMTP connection."),
+        "smtp": result,
     }
 
 @router.get("/integrations/status")
@@ -75,7 +77,9 @@ def read_integration_status():
         supabase_detail = str(e)
 
     apify_ready = bool(settings.APIFY_API_TOKEN.strip())
-    smtp_ready = is_smtp_configured()
+    smtp_detail = smtp_status()
+    smtp_ready = bool(smtp_detail.get("configured"))
+    ranking_ready = bool(settings.RANKING_API_URL.strip())
     return {
         "openai": {
             "configured": openai_ready,
@@ -95,15 +99,28 @@ def read_integration_status():
         },
         "smtp": {
             "configured": smtp_ready,
-            "host": settings.SMTP_HOST,
-            "user": settings.SMTP_USER if smtp_ready else "",
+            "host": smtp_detail.get("host"),
+            "port": smtp_detail.get("port"),
+            "user": smtp_detail.get("user") if smtp_ready else "",
+            "detail": smtp_detail.get("reason"),
         },
         "agent_graph": {
             "autonomy_mode": settings.AGENT_AUTONOMY_MODE,
+            "supervisor_mode": settings.AGENT_SUPERVISOR_MODE,
+            "async_graph": settings.AGENT_ASYNC_GRAPH,
+            "decision_reasons": settings.AGENT_DECISION_REASONS,
+            "email_review_mode": settings.AGENT_EMAIL_REVIEW_MODE,
+            "worker_timeout_seconds": settings.AGENT_WORKER_TIMEOUT_SECONDS,
             "max_steps": settings.AGENT_MAX_STEPS,
             "invite_min_fit_score": settings.AGENT_INVITE_MIN_FIT_SCORE,
             "reject_max_screening_score": settings.AGENT_REJECT_MAX_SCREENING_SCORE,
-        }
+            "structured_outputs": settings.OPENAI_STRUCTURED_OUTPUTS,
+        },
+        "ranking_provider": {
+            "configured": ranking_ready,
+            "cache_table": "institution_ranking_cache",
+            "detail": "live provider configured" if ranking_ready else "cache-only; rankings unknown until cached or provider is configured",
+        },
     }
 
 @router.get("/bias-controls")

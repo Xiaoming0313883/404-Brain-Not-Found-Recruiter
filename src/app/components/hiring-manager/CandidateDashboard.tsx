@@ -31,6 +31,7 @@ import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import { PdfResumeViewer } from '../PdfResumeViewer';
 import { API_BASE_URL, API_ORIGIN } from '../../api';
+import { KnowledgeTooltip } from '../KnowledgeTooltip';
 
 const getCandidatePhase = (status: string, answers?: string[]): string => {
   if (status === 'hired') return 'Hired';
@@ -39,6 +40,26 @@ const getCandidatePhase = (status: string, answers?: string[]): string => {
   if (status === 'completed') return 'Waiting for Interview';
   if (status === 'screening' || (answers && answers.length > 0)) return 'Screening Completed';
   return 'Waiting for Screening';
+};
+
+const hasSubmittedInterviewAnswers = (answers?: string[]): boolean =>
+  Array.isArray(answers) && answers.some(answer => answer.trim().length > 0);
+
+const isPendingInterview = (status: string, answers?: string[]): boolean =>
+  ['staged', 'invited', 'applied', 'screening'].includes(status) && !hasSubmittedInterviewAnswers(answers);
+
+const getQuestionFeedbackItems = (candidate: ScrapedCandidate): any[] => {
+  if (candidate.evaluation?.question_feedback?.length) {
+    return candidate.evaluation.question_feedback;
+  }
+  if (candidate.evaluation?.critiques?.length) {
+    return candidate.evaluation.critiques;
+  }
+  return (candidate.customQuestions || []).map((question: string, questionIndex: number) => ({
+    question,
+    candidate_answer: candidate.answers?.[questionIndex] || '',
+    critique: 'Feedback has not been generated for this question yet.',
+  }));
 };
 
 interface Props {
@@ -469,7 +490,12 @@ export function CandidateDashboard({
           <ShieldCheck className="w-5 h-5 text-[#2d6a55]" />
         </div>
         <div>
-          <h3 className="text-[#1c1c1a] font-semibold text-base">Fair Hiring Controls</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-[#1c1c1a] font-semibold text-base">Fair Hiring Controls</h3>
+            <KnowledgeTooltip label="What fairness controls do">
+              These controls decide whether candidate identity and pedigree signals are hidden, and whether scores use blind merit only or include reputation weight.
+            </KnowledgeTooltip>
+          </div>
           <p className="text-sm text-[#6b7063]">Choose what hiring managers see and how much reputation affects scores.</p>
         </div>
       </div>
@@ -481,6 +507,9 @@ export function CandidateDashboard({
               <label htmlFor="prestige-toggle" className="text-sm sm:text-base text-[#1c1c1a] cursor-pointer font-medium">
                 Hide school and company names
               </label>
+              <KnowledgeTooltip label="Why hide school and company names">
+                This neutralizes pedigree signals so reviewers focus first on skills, experience, and role evidence rather than institutional reputation.
+              </KnowledgeTooltip>
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold transition-colors ${
                 neutralize ? 'bg-[#e8f2ee] text-[#2d6a55]' : 'bg-[#f0ede8] text-[#a8a49d]'
               }`}>
@@ -507,6 +536,9 @@ export function CandidateDashboard({
               <label htmlFor="anonymous-toggle" className="text-sm sm:text-base text-[#1c1c1a] cursor-pointer font-medium">
                 Hide candidate identity
               </label>
+              <KnowledgeTooltip label="Why hide candidate identity">
+                Blind review reduces early-stage bias by replacing personally identifying labels with candidate IDs while preserving application evidence.
+              </KnowledgeTooltip>
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold transition-colors ${
                 anonymizedMode ? 'bg-[#e8f2ee] text-[#2d6a55]' : 'bg-[#f0ede8] text-[#a8a49d]'
               }`}>
@@ -532,6 +564,9 @@ export function CandidateDashboard({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2 mb-1">
                 <p className="text-sm sm:text-base text-[#1c1c1a] font-medium">How should scores be calculated?</p>
+                <KnowledgeTooltip label="How scoring mode works">
+                  Blind merit scores ignore pedigree signals. Prestige-aware mode adds a controlled reputation weight so HR can compare how ranking changes.
+                </KnowledgeTooltip>
                 <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#e8f2ee] text-[#2d6a55]">
                   {biasControls.scoring_mode === 'prestige_aware' ? 'Reputation included' : 'Skills only'}
                 </span>
@@ -616,17 +651,32 @@ export function CandidateDashboard({
 
         <div className="grid md:grid-cols-3 gap-3 pt-2">
           <div className="bg-[#f0f9f4] border border-[#c8e6d8] rounded-xl p-4">
-            <p className="text-xs tracking-wider uppercase text-[#2d6a55] font-semibold mb-1">Fairness Check</p>
+            <div className="mb-1 flex items-center gap-2">
+              <p className="text-xs tracking-wider uppercase text-[#2d6a55] font-semibold">Fairness Check</p>
+              <KnowledgeTooltip label="Fairness check score">
+                Higher values indicate less observed imbalance between reputation groups in the current candidate pool.
+              </KnowledgeTooltip>
+            </div>
             <p className="text-2xl text-[#1c1c1a] font-semibold">{fairnessLoading ? '--' : fairnessAudit?.fairness_score ?? '--'}</p>
             <p className="text-xs text-[#6b7063] mt-1 leading-relaxed">Higher means the current pipeline looks more balanced.</p>
           </div>
           <div className="bg-[#f7f6f3] border border-[#e4e1da] rounded-xl p-4">
-            <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold mb-1">Risk Level</p>
+            <div className="mb-1 flex items-center gap-2">
+              <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Risk Level</p>
+              <KnowledgeTooltip label="Fairness risk level">
+                This summarizes whether the selection pattern needs closer HR review before using rankings for decisions.
+              </KnowledgeTooltip>
+            </div>
             <p className="text-lg text-[#1c1c1a] font-semibold capitalize">{fairnessAudit?.risk_level?.replace('_', ' ') || 'Checking'}</p>
             <p className="text-xs text-[#6b7063] mt-1 leading-relaxed">Shows whether results may need a closer review.</p>
           </div>
           <div className="bg-[#fdf8ee] border border-[#e8d8a0] rounded-xl p-4">
-            <p className="text-xs tracking-wider uppercase text-[#8a5a14] font-semibold mb-1">Reputation Difference</p>
+            <div className="mb-1 flex items-center gap-2">
+              <p className="text-xs tracking-wider uppercase text-[#8a5a14] font-semibold">Reputation Difference</p>
+              <KnowledgeTooltip label="Reputation difference">
+                This compares outcome differences between candidates from higher- and lower-reputation backgrounds.
+              </KnowledgeTooltip>
+            </div>
             <p className="text-lg text-[#1c1c1a] font-semibold">
               {fairnessAudit?.selection_patterns?.prestige_selection_gap ?? 0} pts
             </p>
@@ -1053,6 +1103,7 @@ export function CandidateDashboard({
               const displayName = getDisplayName(candidate);
               const displayEmail = getDisplayEmail(candidate);
               const actionEmail = getActionEmail(candidate);
+              const questionFeedbackItems = getQuestionFeedbackItems(candidate);
 
               // Form bindings
               const draftOutreach = editedOutreach[candidate.email] ?? candidate.recruitmentEmail ?? '';
@@ -1153,7 +1204,13 @@ export function CandidateDashboard({
                                       {phase}
                                     </span>
                                   );
-                                })()}                                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-white border border-[#e4e1da] text-[#6b7063] whitespace-nowrap">
+                                })()}
+                                {isPendingInterview(candidate.status, candidate.answers) && (
+                                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[#fff8ed] text-[#8a5a14] border border-[#f2d3a4] whitespace-nowrap">
+                                    pending interview
+                                  </span>
+                                )}
+                                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-white border border-[#e4e1da] text-[#6b7063] whitespace-nowrap">
                                   {candidate.sourceMethod === 'prototype_auto_source' ? 'LinkedIn auto search' : candidate.sourceMethod === 'manual_authenticated' ? 'LinkedIn authenticated' : candidate.sourceType === 'linkedin' ? 'LinkedIn manual add' : 'Inbound resume'}
                                 </span>
                               </div>
@@ -1221,7 +1278,12 @@ export function CandidateDashboard({
                                 
                                 {/* Side-by-side Fair vs Biased Scoring Comparison Grid */}
                                 <div className="bg-[#fcfbf9] border border-[#e4e1da] rounded-2xl p-4 mb-4 shadow-sm text-left">
-                                  <p className="text-xs tracking-wider uppercase text-[#1c1c1a] mb-3.5 font-bold">Transparent Score Comparison</p>
+                                  <div className="mb-3.5 flex items-center gap-2">
+                                    <p className="text-xs tracking-wider uppercase text-[#1c1c1a] font-bold">Transparent Score Comparison</p>
+                                    <KnowledgeTooltip label="How transparent scoring works">
+                                      This compares blind merit scoring with prestige-aware scoring so HR can see exactly how institutional reputation changes a candidate's score.
+                                    </KnowledgeTooltip>
+                                  </div>
                                   <div className="grid md:grid-cols-2 gap-4">
                                     {/* Fair Scoring Card */}
                                     <div className="bg-[#f0f9f4] border border-[#c8e6d8] rounded-xl p-4 flex flex-col justify-between shadow-sm">
@@ -1958,10 +2020,10 @@ export function CandidateDashboard({
                                 ))}
                               </div>
                             )}
-                            {candidate.evaluation?.critiques?.length ? (
+                            {questionFeedbackItems.length ? (
                               <div className="mt-4 pt-4 border-t border-[#e4e1da] space-y-3">
                                 <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Question-Specific AI Feedback</p>
-                                {candidate.evaluation.critiques.map((item: any, critiqueIndex: number) => (
+                                {questionFeedbackItems.map((item: any, critiqueIndex: number) => (
                                   <div key={`${candidate.email}-critique-${critiqueIndex}`} className="bg-white border border-[#e4e1da] rounded-lg p-3">
                                     <div className="flex items-center justify-between gap-3 mb-2">
                                       <p className="text-xs text-[#2d6a55] font-semibold">Question {critiqueIndex + 1}</p>
@@ -1969,7 +2031,7 @@ export function CandidateDashboard({
                                         <span className="text-xs text-[#1c1c1a] font-semibold">{item.per_answer_score}/100</span>
                                       )}
                                     </div>
-                                    <p className="text-xs text-[#1c1c1a] font-medium leading-relaxed">{item.question}</p>
+                                    <p className="text-xs text-[#1c1c1a] font-medium leading-relaxed">{item.question || candidate.customQuestions?.[critiqueIndex] || `Screening question ${critiqueIndex + 1}`}</p>
                                     {(item.candidate_answer || item.candidate_answer_excerpt || candidate.answers?.[critiqueIndex]) && (
                                       <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">
                                         <span className="font-semibold text-[#1c1c1a]">Candidate answer:</span> {item.candidate_answer || candidate.answers?.[critiqueIndex] || item.candidate_answer_excerpt}
@@ -2333,6 +2395,93 @@ export function CandidateDashboard({
                   <p className="text-2xl text-[#1c1c1a] font-semibold mt-1">{selectedTrajectoryCandidate.screeningScore ?? '--'}</p>
                 </div>
               </div>
+
+              {(() => {
+                const questionFeedbackItems = getQuestionFeedbackItems(selectedTrajectoryCandidate);
+                return questionFeedbackItems.length ? (
+                  <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] p-4">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div>
+                        <p className="text-xs tracking-wider uppercase text-[#a8a49d] font-semibold">Question-Specific AI Feedback</p>
+                        <p className="text-xs text-[#6b7063] mt-1">Screening questions, candidate answers, and the Interview Agent's feedback.</p>
+                      </div>
+                      {selectedTrajectoryCandidate.screeningScore !== undefined && (
+                        <span className="rounded-full bg-white border border-[#e4e1da] px-2.5 py-1 text-xs font-semibold text-[#1c1c1a]">
+                          {selectedTrajectoryCandidate.screeningScore}/100
+                        </span>
+                      )}
+                    </div>
+                    <div className="space-y-3">
+                      {questionFeedbackItems.map((item: any, critiqueIndex: number) => (
+                        <div key={`${selectedTrajectoryCandidate.email}-overview-feedback-${critiqueIndex}`} className="rounded-lg border border-[#e4e1da] bg-white p-3">
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <p className="text-xs text-[#2d6a55] font-semibold">Question {critiqueIndex + 1}</p>
+                            {item.per_answer_score !== undefined && (
+                              <span className="text-xs text-[#1c1c1a] font-semibold">{item.per_answer_score}/100</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-[#1c1c1a] font-medium leading-relaxed">
+                            {item.question || selectedTrajectoryCandidate.customQuestions?.[critiqueIndex] || `Screening question ${critiqueIndex + 1}`}
+                          </p>
+                          {(item.candidate_answer || item.candidate_answer_excerpt || selectedTrajectoryCandidate.answers?.[critiqueIndex]) && (
+                            <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">
+                              <span className="font-semibold text-[#1c1c1a]">Candidate answer:</span> {item.candidate_answer || selectedTrajectoryCandidate.answers?.[critiqueIndex] || item.candidate_answer_excerpt}
+                            </p>
+                          )}
+                          {item.requirement_focus && (
+                            <p className="text-xs text-[#6b7063] mt-1">
+                              <span className="font-semibold text-[#1c1c1a]">Role focus:</span> {item.requirement_focus}
+                            </p>
+                          )}
+                          <p className="text-xs text-[#6b7063] mt-2 leading-relaxed">
+                            {alignScoreMentions(item.critique || item.feedback || item.hiring_manager_note || 'Agent feedback has not been generated for this question yet.', item.per_answer_score)}
+                          </p>
+                          {item.strengths?.length ? (
+                            <div className="mt-3">
+                              <p className="text-[10px] text-[#2d6a55] uppercase tracking-wider font-semibold mb-1.5">Evidence supporting the score</p>
+                              <ul className="space-y-1">
+                                {item.strengths.map((strength: string, strengthIndex: number) => (
+                                  <li key={strengthIndex} className="text-xs text-[#3d5a4a] leading-relaxed flex items-start gap-1.5">
+                                    <CheckCircle2 className="w-3 h-3 text-[#2d6a55] flex-shrink-0 mt-0.5" />
+                                    <span>{strength}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+                          {item.weaknesses?.length ? (
+                            <div className="mt-3">
+                              <p className="text-[10px] text-[#c25a2a] uppercase tracking-wider font-semibold mb-1.5">Risks or missing proof</p>
+                              <ul className="space-y-1">
+                                {item.weaknesses.map((weakness: string, weaknessIndex: number) => (
+                                  <li key={weaknessIndex} className="text-xs text-[#6b7063] leading-relaxed flex items-start gap-1.5">
+                                    <AlertCircle className="w-3 h-3 text-[#c25a2a] flex-shrink-0 mt-0.5" />
+                                    <span>{weakness}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+                          {(item.suggested_improvement || item.hiring_manager_note) && (
+                            <div className="mt-3 rounded-lg border border-[#e4e1da] bg-[#f7f6f3] p-3">
+                              {item.hiring_manager_note && (
+                                <p className="text-xs text-[#1c1c1a] leading-relaxed">
+                                  <span className="font-semibold">Hiring manager note:</span> {item.hiring_manager_note}
+                                </p>
+                              )}
+                              {item.suggested_improvement && (
+                                <p className="text-xs text-[#6b7063] leading-relaxed mt-2">
+                                  <span className="font-semibold text-[#1c1c1a]">Suggested probe:</span> {item.suggested_improvement}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null;
+              })()}
 
               <div className="rounded-xl border border-[#e4e1da] p-4">
                 <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Profile Summary</p>

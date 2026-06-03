@@ -15,9 +15,15 @@ class Settings(BaseSettings):
     AGENT_SUPERVISOR_MODEL: str = "gpt-4o-mini"
     AGENT_WORKER_MODEL: str = "gpt-4o-mini"
     AGENT_MAX_STEPS: int = 10
+    AGENT_SUPERVISOR_MODE: str = "single_plan"
+    AGENT_DECISION_REASONS: bool = True
+    AGENT_ASYNC_GRAPH: bool = True
+    AGENT_EMAIL_REVIEW_MODE: str = "policy"
+    AGENT_WORKER_TIMEOUT_SECONDS: float = 20.0
     AGENT_AUTONOMY_MODE: str = "bounded"
     AGENT_INVITE_MIN_FIT_SCORE: int = 75
     AGENT_REJECT_MAX_SCREENING_SCORE: int = 45
+    OPENAI_STRUCTURED_OUTPUTS: bool = True
     LLM_TIMEOUT: float = 35.0
     RESUME_AGENT_TEMP: float = 0.1
     REQUIREMENT_AGENT_TEMP: float = 0.2
@@ -34,6 +40,10 @@ class Settings(BaseSettings):
     APIFY_PROFILE_ACTOR_ID: str = "LpVuK3Zozwuipa5bp"
     APIFY_SEARCH_ACTOR_ID: str = "curious_coder/linkedin-people-search-scraper"
     APIFY_TIMEOUT_SECONDS: int = 90
+    RANKING_PROVIDER: str = "openalex"
+    RANKING_API_URL: str = ""
+    RANKING_API_KEY: str = ""
+    OPENALEX_EMAIL: str = ""
 
     @field_validator("DEBUG", mode="before")
     @classmethod

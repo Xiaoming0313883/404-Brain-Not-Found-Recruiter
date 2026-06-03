@@ -68,6 +68,33 @@ create table if not exists public.email_events (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.email_drafts (
+  id uuid primary key default gen_random_uuid(),
+  candidate_email text,
+  position_id bigint,
+  action_type text not null default '',
+  subject text not null default '',
+  body text not null default '',
+  html_body text not null default '',
+  status text not null default 'draft',
+  payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.agent_checkpoints (
+  id uuid primary key default gen_random_uuid(),
+  thread_id text not null default '',
+  candidate_email text,
+  position_id bigint,
+  task_type text not null default '',
+  status text not null default 'paused',
+  state jsonb not null default '{}'::jsonb,
+  payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.settings (
   key text primary key,
   value jsonb not null default '{}'::jsonb,
@@ -96,6 +123,8 @@ create index if not exists idx_applications_position_id on public.applications(p
 create index if not exists idx_agent_events_candidate_email on public.agent_events(candidate_email);
 create index if not exists idx_agent_events_position_id on public.agent_events(position_id);
 create index if not exists idx_email_events_candidate_email on public.email_events(candidate_email);
+create index if not exists idx_email_drafts_candidate_email on public.email_drafts(candidate_email);
+create index if not exists idx_agent_checkpoints_thread_id on public.agent_checkpoints(thread_id);
 
 alter table public.positions enable row level security;
 alter table public.candidates enable row level security;
@@ -103,6 +132,8 @@ alter table public.applications enable row level security;
 alter table public.agent_events enable row level security;
 alter table public.agent_actions enable row level security;
 alter table public.email_events enable row level security;
+alter table public.email_drafts enable row level security;
+alter table public.agent_checkpoints enable row level security;
 alter table public.settings enable row level security;
 alter table public.pending_email_verifications enable row level security;
 alter table public.institution_ranking_cache enable row level security;
@@ -138,6 +169,16 @@ begin
     select 1 from pg_policies where schemaname = 'public' and policyname = 'service_role_all_email_events'
   ) then
     create policy service_role_all_email_events on public.email_events for all to service_role using (true) with check (true);
+  end if;
+  if not exists (
+    select 1 from pg_policies where schemaname = 'public' and policyname = 'service_role_all_email_drafts'
+  ) then
+    create policy service_role_all_email_drafts on public.email_drafts for all to service_role using (true) with check (true);
+  end if;
+  if not exists (
+    select 1 from pg_policies where schemaname = 'public' and policyname = 'service_role_all_agent_checkpoints'
+  ) then
+    create policy service_role_all_agent_checkpoints on public.agent_checkpoints for all to service_role using (true) with check (true);
   end if;
   if not exists (
     select 1 from pg_policies where schemaname = 'public' and policyname = 'service_role_all_settings'

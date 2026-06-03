@@ -2,11 +2,77 @@ import json
 import re
 from typing import Dict, Any, List
 from app.config import settings
-from .base_agent import get_openai_client, parse_llm_json
+from .base_agent import get_openai_client, is_structured_output_error, json_schema_response_format, parse_llm_json, sanitize_provider_error
 from .matching_agent import _build_role_signal_groups, _tokenize
 
 # E. CANDIDATE INTERVIEW AGENT
 # ==========================================
+INTERVIEW_EVALUATION_JSON_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "screening_score",
+        "position_fit_verdict",
+        "hiring_recommendation",
+        "decision_reason",
+        "role_alignment_summary",
+        "score_breakdown",
+        "critiques",
+    ],
+    "properties": {
+        "screening_score": {"type": "integer", "minimum": 0, "maximum": 100},
+        "position_fit_verdict": {"type": "string"},
+        "hiring_recommendation": {"type": "string"},
+        "decision_reason": {"type": "string"},
+        "role_alignment_summary": {"type": "string"},
+        "score_breakdown": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["role_requirement_alignment", "technical_correctness_depth", "evidence_specificity", "position_impact", "communication_clarity"],
+            "properties": {
+                "role_requirement_alignment": {"type": "integer"},
+                "technical_correctness_depth": {"type": "integer"},
+                "evidence_specificity": {"type": "integer"},
+                "position_impact": {"type": "integer"},
+                "communication_clarity": {"type": "integer"},
+            },
+        },
+        "critiques": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "question",
+                    "candidate_answer",
+                    "candidate_answer_excerpt",
+                    "per_answer_score",
+                    "requirement_focus",
+                    "critique",
+                    "strengths",
+                    "weaknesses",
+                    "suggested_improvement",
+                    "hiring_manager_note",
+                    "decision_reason",
+                ],
+                "properties": {
+                    "question": {"type": "string"},
+                    "candidate_answer": {"type": "string"},
+                    "candidate_answer_excerpt": {"type": "string"},
+                    "per_answer_score": {"type": "integer", "minimum": 0, "maximum": 100},
+                    "requirement_focus": {"type": "string"},
+                    "critique": {"type": "string"},
+                    "strengths": {"type": "array", "items": {"type": "string"}},
+                    "weaknesses": {"type": "array", "items": {"type": "string"}},
+                    "suggested_improvement": {"type": "string"},
+                    "hiring_manager_note": {"type": "string"},
+                    "decision_reason": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
 def run_interview_agent_phase_a(candidate_profile: Dict[str, Any], matching_debate: Dict[str, Any], job_requirements: Dict[str, Any] | None = None) -> List[str]:
     """Phase A: Generate 3 targeted custom screening questions."""
     client = get_openai_client()
@@ -79,7 +145,7 @@ def run_interview_agent_phase_b(questions: List[str], answers: List[str], job_re
     """Phase B: Evaluate answers against job requirements with detailed structured critique."""
     client = get_openai_client()
     
-    system_prompt = """You are a strict hiring evaluator.
+    system_prompt = """You are a professional HR interviewer and evidence-based screening evaluator.
 Evaluate the candidate's responses against the CURRENT POSITION only. Do not reward generic confidence, long answers, or unrelated experience.
 Use the candidate's actual answer text. Every critique must reference details the candidate actually said, and every question must get its own specific feedback.
 
@@ -99,6 +165,7 @@ Output JSON Format:
   "screening_score": 82,
   "position_fit_verdict": "Strong / Moderate / Weak fit for the current position",
   "hiring_recommendation": "advance / hold / reject",
+  "decision_reason": "Concise evidence-based reason for the recommendation and score.",
   "role_alignment_summary": "4-6 sentences explaining the score for this exact position, written for a hiring manager who needs to decide what to do next.",
   "score_breakdown": {
     "role_requirement_alignment": 28,
@@ -118,7 +185,8 @@ Output JSON Format:
       "strengths": ["Specific strength 1", "Specific strength 2"],
       "weaknesses": ["Specific gap or weakness 1", "Area needing improvement 2"],
       "suggested_improvement": "A concrete, actionable suggestion the candidate can act on to improve their answer or skill.",
-      "hiring_manager_note": "A practical recommendation for the hiring manager, including follow-up evidence to request or interview probes to use."
+      "hiring_manager_note": "A practical recommendation for the hiring manager, including follow-up evidence to request or interview probes to use.",
+      "decision_reason": "The specific evidence and missing evidence that justify this answer score."
     }
   ]
 }
@@ -135,18 +203,28 @@ Return ONLY valid JSON. No markdown code fences.
 
     if client:
         try:
-            response = client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
-                temperature=settings.INTERVIEW_AGENT_TEMP,
-                messages=[
+            request = {
+                "model": settings.OPENAI_MODEL,
+                "temperature": settings.INTERVIEW_AGENT_TEMP,
+                "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Job Requirements: {json.dumps(job_requirements)}\nQ&A: {json.dumps(q_and_a_payload)}"}
-                ]
-            )
+                ],
+            }
+            response_format = json_schema_response_format("interview_evaluation", INTERVIEW_EVALUATION_JSON_SCHEMA)
+            if response_format:
+                request["response_format"] = response_format
+            try:
+                response = client.chat.completions.create(**request)
+            except Exception as structured_exc:
+                if not response_format or not is_structured_output_error(structured_exc):
+                    raise
+                request.pop("response_format", None)
+                response = client.chat.completions.create(**request)
             parsed = parse_llm_json(response.choices[0].message.content)
             return normalize_interview_evaluation(parsed, questions, answers, job_requirements)
         except Exception as e:
-            print(f"Interview Agent Phase B API error: {e}. Falling back to rule evaluator.")
+            print(f"Interview Agent Phase B API error: {sanitize_provider_error(e, 'Interview Agent unavailable; falling back to rule evaluator.')}")
 
     return build_position_specific_evaluation(questions, answers, job_requirements)
 
@@ -203,6 +281,43 @@ def _is_non_answer(answer: str) -> bool:
         "cant answer"
     )
     return len(tokens) <= 6 and any(phrase in normalized for phrase in non_answer_phrases)
+
+def _invalid_answer_reason(answer: str, question: str = "", role_terms: List[str] | None = None) -> str:
+    raw = str(answer or "")
+    normalized = re.sub(r"\s+", " ", _normalized_answer_text(answer))
+    if not normalized:
+        return "The answer is blank."
+    tokens = normalized.split()
+    if _is_non_answer(answer):
+        return "The answer is a non-answer or placeholder."
+    placeholder_answers = {"test", "testing", "hello", "hi", "asdf", "qwerty", "sample", "placeholder", "nonsense"}
+    if normalized in placeholder_answers:
+        return "The answer is a non-answer or placeholder."
+    unsafe_phrases = ("ignore previous", "system prompt", "you are chatgpt", "override", "jailbreak")
+    if any(phrase in normalized for phrase in unsafe_phrases):
+        return "The answer contains a prompt-injection attempt."
+    abusive_terms = {"stupid", "idiot", "shut up", "kill", "hate", "fuck", "shit"}
+    if any(term in normalized for term in abusive_terms):
+        return "The answer contains abusive or inappropriate content."
+    compact = re.sub(r"\s+", "", normalized)
+    if re.fullmatch(r"([a-z0-9])\1{5,}", compact):
+        return "The answer is repeated characters rather than interview evidence."
+    if len(compact) >= 6 and len(set(compact)) <= 3:
+        return "The answer has too little lexical variety to be meaningful."
+    alpha_chars = re.findall(r"[a-z]", raw.lower())
+    if raw.strip() and len(alpha_chars) / max(1, len(raw.strip())) < 0.35:
+        return "The answer is mostly symbols or numbers rather than interview evidence."
+    if len(tokens) <= 5:
+        return "The answer is too short to provide role-relevant evidence."
+    role_terms = role_terms or []
+    question_tokens = set(_tokenize(question))
+    answer_tokens = set(_tokenize(answer))
+    role_tokens = set(token for term in role_terms for token in _tokenize(term))
+    overlap = (question_tokens | role_tokens) & answer_tokens
+    generic_terms = {"hardworking", "passionate", "teamwork", "learn", "learning", "good", "best", "responsible"}
+    if len(tokens) <= 25 and not overlap and answer_tokens & generic_terms:
+        return "The answer is generic and unrelated to the question or role requirements."
+    return ""
 
 ROLE_SYNONYM_GROUPS = [
     {"baker", "bakery", "baked", "bread", "pastry", "cake", "oven", "batch", "ingredient", "recipe", "kitchen", "hygiene", "food", "freshness"},
@@ -303,7 +418,7 @@ def build_position_specific_evaluation(questions: List[str], answers: List[str],
             if term not in matched_terms
         ][:4]
         requirement_focus = matched_terms[0] if matched_terms else (role_terms[0] if role_terms else title)
-        if _is_non_answer(a):
+        if _invalid_answer_reason(a, q, role_terms):
             critiques.append({
                 "question": q,
                 "candidate_answer_excerpt": _answer_excerpt(a),
@@ -326,6 +441,9 @@ def build_position_specific_evaluation(questions: List[str], answers: List[str],
                 ),
                 "hiring_manager_note": (
                     "Treat this answer as zero evidence for the prompt. If the candidate continues, ask a direct follow-up for a specific project and do not infer capability from this response."
+                ),
+                "decision_reason": (
+                    f"The answer is a non-answer for {title}; it supplies no evidence for {requirement_focus}, role depth, impact, or communication of a solution."
                 )
             })
             continue
@@ -338,7 +456,7 @@ def build_position_specific_evaluation(questions: List[str], answers: List[str],
             "requirement_focus": requirement_focus,
             "critique": (
                 f"The answer scored {per_answer_score}/100 for {title}. "
-                f"My opinion is that it {'provides useful role evidence around ' + ', '.join(matched_terms[:2]) if matched_terms else 'does not yet provide enough direct evidence for the current position requirements'}. "
+                    f"As an HR interviewer, my opinion is that it {'provides useful role evidence around ' + ', '.join(matched_terms[:2]) if matched_terms else 'does not yet provide enough direct evidence for the current position requirements'}. "
                 f"The candidate's full answer was reviewed against the actual prompt: \"{_answer_excerpt(a)}\". "
                 f"The strongest part of the response is its connection to {', '.join(matched_terms[:2]) if matched_terms else 'the question at a basic level'}, while the main concern is {', '.join(missing_terms[:2]) if missing_terms else 'whether the example transfers cleanly to the role context'}. "
                 f"For a hiring manager, this should be treated as {'supporting evidence' if per_answer_score >= 70 else 'a verification risk'} rather than a final decision by itself."
@@ -357,6 +475,11 @@ def build_position_specific_evaluation(questions: List[str], answers: List[str],
             "hiring_manager_note": (
                 f"Use this answer to probe for concrete evidence of {requirement_focus}. "
                 f"Ask the candidate to walk through one implementation choice, one constraint, and one measurable result so you can separate confidence from demonstrated fit."
+            ),
+            "decision_reason": (
+                f"The answer scored {per_answer_score}/100 because it matched {len(matched_terms)} role signals, "
+                f"left gaps around {', '.join(missing_terms[:2]) if missing_terms else 'role transfer evidence'}, "
+                f"and earned breakdown scores {dimension_scores}."
             )
         })
 
@@ -372,11 +495,17 @@ def build_position_specific_evaluation(questions: List[str], answers: List[str],
     else:
         verdict = "Weak fit for the current position"
         recommendation = "reject"
+    decision_reason = (
+        f"Recommendation is {recommendation} because the screening score is {score}/100. "
+        f"The largest rubric signals were role alignment {score_breakdown['role_requirement_alignment']}/35, "
+        f"depth {score_breakdown['technical_correctness_depth']}/25, and evidence {score_breakdown['evidence_specificity']}/20."
+    )
 
     return {
         "screening_score": score,
         "position_fit_verdict": verdict,
         "hiring_recommendation": recommendation,
+        "decision_reason": decision_reason,
         "role_alignment_summary": (
             f"The score is based on how directly the answers prove readiness for {title}. "
             f"Role alignment contributed {score_breakdown['role_requirement_alignment']}/35 and evidence specificity contributed {score_breakdown['evidence_specificity']}/20. "
@@ -385,7 +514,8 @@ def build_position_specific_evaluation(questions: List[str], answers: List[str],
             f"Where the answers stay broad, the next interview should request implementation detail, constraints, trade-offs, and measurable impact before making a final decision."
         ),
         "score_breakdown": score_breakdown,
-        "critiques": critiques
+        "critiques": critiques,
+        "question_feedback": critiques,
     }
 
 def _coerce_score(value: Any, fallback: int = 0) -> int:
@@ -413,7 +543,8 @@ def normalize_interview_evaluation(parsed: Dict[str, Any], questions: List[str],
         return fallback
 
     fallback_critiques = fallback.get("critiques", [])
-    parsed_critiques = parsed.get("critiques") if isinstance(parsed.get("critiques"), list) else []
+    parsed_items = parsed.get("question_feedback") if isinstance(parsed.get("question_feedback"), list) else parsed.get("critiques")
+    parsed_critiques = parsed_items if isinstance(parsed_items, list) else []
     normalized_critiques = []
     seen_critique_texts: set[str] = set()
 
@@ -440,7 +571,7 @@ def normalize_interview_evaluation(parsed: Dict[str, Any], questions: List[str],
             score_source.get("per_answer_score"),
             _coerce_score(fallback_item.get("per_answer_score"), 0)
         )
-        if _is_non_answer(answer):
+        if _invalid_answer_reason(answer, question, _collect_role_terms(job_requirements)):
             per_answer_score = 0
             critique_text = fallback_item.get("critique", critique_text)
         critique_text = _align_score_mentions(critique_text, per_answer_score)
@@ -459,7 +590,8 @@ def normalize_interview_evaluation(parsed: Dict[str, Any], questions: List[str],
             "strengths": item.get("strengths") if isinstance(item.get("strengths"), list) and item.get("strengths") else fallback_item.get("strengths", []),
             "weaknesses": item.get("weaknesses") if isinstance(item.get("weaknesses"), list) and item.get("weaknesses") else fallback_item.get("weaknesses", []),
             "suggested_improvement": item.get("suggested_improvement") or fallback_item.get("suggested_improvement", ""),
-            "hiring_manager_note": item.get("hiring_manager_note") or fallback_item.get("hiring_manager_note", "")
+            "hiring_manager_note": item.get("hiring_manager_note") or fallback_item.get("hiring_manager_note", ""),
+            "decision_reason": item.get("decision_reason") or fallback_item.get("decision_reason", "")
         })
 
     score_breakdown = fallback.get("score_breakdown", {})
@@ -472,7 +604,9 @@ def normalize_interview_evaluation(parsed: Dict[str, Any], questions: List[str],
         "screening_score": score,
         "position_fit_verdict": parsed.get("position_fit_verdict") or fallback.get("position_fit_verdict", ""),
         "hiring_recommendation": parsed.get("hiring_recommendation") or fallback.get("hiring_recommendation", ""),
+        "decision_reason": parsed.get("decision_reason") or fallback.get("decision_reason", ""),
         "role_alignment_summary": parsed.get("role_alignment_summary") or fallback.get("role_alignment_summary", ""),
         "score_breakdown": score_breakdown,
-        "critiques": normalized_critiques
+        "critiques": normalized_critiques,
+        "question_feedback": normalized_critiques,
     }

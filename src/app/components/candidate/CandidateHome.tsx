@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
 import { CandidateNav } from './CandidateNav';
 import { API_BASE_URL, API_ORIGIN } from '../../api';
+import { KnowledgeTooltip } from '../KnowledgeTooltip';
 
 interface Props {
   candidateData: CandidateData;
@@ -183,7 +184,8 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
   const selectedHrFeedback = selectedApplication?.hr_feedback || candidateData.hrFeedback || '';
   const selectedRejectionMessage = selectedApplication?.rejection_message || candidateData.rejectionMessage || '';
   const selectedInterviewSlot = selectedApplication?.interview_slot || candidateData.interviewSlot;
-  const critiqueCounts = (selectedEvaluation?.critiques || []).reduce((counts: Record<string, number>, item: any) => {
+  const selectedQuestionFeedback = selectedEvaluation?.question_feedback || selectedEvaluation?.critiques || [];
+  const critiqueCounts = selectedQuestionFeedback.reduce((counts: Record<string, number>, item: any) => {
     const key = String(item?.critique || '').trim().toLowerCase();
     if (key) counts[key] = (counts[key] || 0) + 1;
     return counts;
@@ -721,7 +723,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
       );
     }
 
-    const hasCritiques = Boolean(selectedEvaluation?.critiques?.length);
+    const hasCritiques = Boolean(selectedQuestionFeedback.length);
     const hasResults = canReview || Boolean(selectedScore !== undefined || selectedHrFeedback || selectedRejectionMessage || selectedInterviewSlot || hasCritiques);
 
     return (
@@ -735,6 +737,11 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
             <p className="text-xs text-[#6b7063] mt-1">
               {selectedEvaluation?.role_alignment_summary || selectedEvaluation?.position_fit_verdict || 'Result details update as the hiring team reviews this application.'}
             </p>
+            {selectedEvaluation?.decision_reason && (
+              <p className="mt-2 rounded-lg bg-[#f7f6f3] px-3 py-2 text-xs leading-relaxed text-[#52574e]">
+                <span className="font-semibold text-[#1c1c1a]">Decision reason:</span> {selectedEvaluation.decision_reason}
+              </p>
+            )}
           </div>
           <div className="rounded-xl border border-[#e4e1da] bg-[#f7f6f3] px-4 py-3 text-center min-w-24">
             <p className="text-xs text-[#a8a49d] uppercase tracking-wider font-semibold">Score</p>
@@ -784,6 +791,9 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
             <div className="flex items-center gap-2 mb-3">
               <Target className="w-4 h-4 text-[#2d6a55]" />
               <p className="text-sm text-[#1c1c1a] font-semibold">Position-Focused Score Breakdown</p>
+              <KnowledgeTooltip label="What the score breakdown means">
+                The Interview Agent scores role fit, depth, evidence, impact, and clarity from your answers to this position's custom questions.
+              </KnowledgeTooltip>
             </div>
             <div className="grid sm:grid-cols-5 gap-2">
               {[
@@ -807,9 +817,12 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
             <div className="flex items-center gap-2 mb-3">
               <MessageSquare className="w-4 h-4 text-[#2d6a55]" />
               <p className="text-sm text-[#1c1c1a] font-semibold">Question-by-Question Feedback</p>
+              <KnowledgeTooltip label="How feedback is produced">
+                Feedback is generated per question by comparing your answer with the job requirements, then summarizing strengths, gaps, improvements, and HR follow-up notes.
+              </KnowledgeTooltip>
             </div>
             <div className="space-y-3">
-              {selectedEvaluation.critiques.map((item: any, index: number) => (
+              {selectedQuestionFeedback.map((item: any, index: number) => (
                 <div key={index} className="border-l-2 border-[#2d6a55] bg-[#f8faf8] rounded-r-xl p-4 space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-xs text-[#2d6a55] uppercase tracking-wider font-semibold">Question {index + 1}</p>
@@ -827,6 +840,11 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
                     <p className="text-xs text-[#6b7063]"><span className="font-semibold text-[#1c1c1a]">Role focus:</span> {item.requirement_focus}</p>
                   )}
                   <p className="text-xs text-[#52574e] leading-relaxed">{getDisplayCritique(item, index)}</p>
+                  {item.decision_reason && (
+                    <p className="rounded-lg bg-white px-3 py-2 text-xs leading-relaxed text-[#52574e]">
+                      <span className="font-semibold text-[#1c1c1a]">Decision reason:</span> {item.decision_reason}
+                    </p>
+                  )}
                   {(item.strengths?.length || item.weaknesses?.length || item.suggested_improvement) && (
                     <div className="grid sm:grid-cols-2 gap-3 pt-2 border-t border-[#e4e1da]/60">
                       {item.strengths?.length ? (
@@ -1331,7 +1349,9 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
           ) : (
             <div className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-white border border-[#e4e1da] text-[#a8a49d] rounded-xl text-sm font-medium shadow-sm">
               <BarChart3 className="w-4 h-4" />
-              Apply to a position
+                    <a href="/candidate/jobs" className="transition hover:text-[#4f46e5]">
+                      Apply to a position
+                    </a>
             </div>
           )}
         </div>

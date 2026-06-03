@@ -3,6 +3,7 @@ import { CandidateData } from '../CandidatePortal';
 import * as Progress from '@radix-ui/react-progress';
 import { ArrowLeft, BookOpen, Calendar, CheckCircle2, TrendingUp, Target } from 'lucide-react';
 import { CandidateNav } from './CandidateNav';
+import { KnowledgeTooltip } from '../KnowledgeTooltip';
 
 interface Props {
   candidateData: CandidateData;
@@ -67,7 +68,7 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
     }
   ];
 
-  const rawCritiques = evaluation?.critiques || [];
+  const rawCritiques = evaluation?.question_feedback || evaluation?.critiques || [];
   const critiqueCounts = rawCritiques.reduce((counts: Record<string, number>, item: any) => {
     const key = String(item?.critique || '').trim().toLowerCase();
     if (key) counts[key] = (counts[key] || 0) + 1;
@@ -164,6 +165,11 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
                 : "Your responses show some relevant thinking for this position. We've prepared a personalized development roadmap to support your growth."
             )}
           </p>
+          {evaluation?.decision_reason && (
+            <p className="mt-3 rounded-xl border border-[#e4e1da] bg-white px-4 py-3 text-xs leading-relaxed text-[#52574e] shadow-sm">
+              <span className="font-semibold text-[#1c1c1a]">Decision reason:</span> {evaluation.decision_reason}
+            </p>
+          )}
         </div>
 
         {scoreBreakdown && (
@@ -173,7 +179,12 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
                 <Target className="w-4 h-4 text-[#2d6a55]" />
               </div>
               <div>
-                <h3 className="text-[#1c1c1a] font-semibold text-base">Position-Focused Score Breakdown</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-[#1c1c1a] font-semibold text-base">Position-Focused Score Breakdown</h3>
+                  <KnowledgeTooltip label="What the screening score means">
+                    The score is a 100-point rubric: role alignment, technical depth, evidence, role impact, and communication clarity. It is based on your answers to the current position's questions.
+                  </KnowledgeTooltip>
+                </div>
                 <p className="text-xs text-[#6b7063]">{evaluation?.position_fit_verdict || 'Marked against the current position requirements'}</p>
               </div>
             </div>
@@ -202,7 +213,12 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
                 <Target className="w-4 h-4 text-[#2d6a55]" />
               </div>
               <div>
-                <h3 className="text-[#1c1c1a] font-semibold text-base">Question-by-Question AI Critique</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-[#1c1c1a] font-semibold text-base">Question-by-Question AI Critique</h3>
+                  <KnowledgeTooltip label="How feedback is generated">
+                    The Interview Agent compares each answer with the exact question and role requirements, then gives evidence-based strengths, weaknesses, suggested improvement, and a hiring-manager note.
+                  </KnowledgeTooltip>
+                </div>
                 <p className="text-xs text-[#6b7063]">Detailed analysis by our Candidate Interview Agent</p>
               </div>
             </div>
@@ -224,6 +240,11 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
                     </p>
                   )}
                   <p className="text-xs text-[#52574e] leading-relaxed">{item.critique}</p>
+                  {item.decision_reason && (
+                    <p className="rounded-lg bg-white px-3 py-2 text-xs leading-relaxed text-[#52574e]">
+                      <span className="font-semibold text-[#1c1c1a]">Decision reason:</span> {item.decision_reason}
+                    </p>
+                  )}
 
                   {(item.strengths || item.weaknesses || item.suggested_improvement) && (
                     <div className="grid sm:grid-cols-2 gap-4 mt-3 pt-3 border-t border-[#e4e1da]/50 text-xs">

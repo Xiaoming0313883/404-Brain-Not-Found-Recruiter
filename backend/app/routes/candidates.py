@@ -187,10 +187,15 @@ def create_email_verification(candidate: Dict[str, Any]) -> str:
     }
     return code
 
+def _email_sent(receipt: Any) -> bool:
+    if isinstance(receipt, dict):
+        return bool(receipt.get("sent"))
+    return bool(receipt)
+
 def send_or_log_verification_email(email: str, code: str) -> bool:
-    sent = send_candidate_verification_email(email, code)
+    receipt = send_candidate_verification_email(email, code)
     print(f"Prototype email verification code for {email}: {code}")
-    return sent
+    return _email_sent(receipt)
 
 def create_pending_email_verification(db: Dict[str, Any], email: str) -> str:
     code = f"{secrets.randbelow(900000) + 100000}"
@@ -247,15 +252,27 @@ def add_notification(candidate: Dict[str, Any], title: str, message: str, kind: 
     candidate["notifications"] = candidate["notifications"][:50]
     return notification
 
-def send_decision_email(email: str, subject: str, body: str) -> bool:
+def send_decision_email(email: str, subject: str, body: str) -> Dict[str, Any]:
     if not is_smtp_configured():
         print(f"SMTP not configured. Decision email kept in prototype mode for {email}.")
-        return False
+        return {
+            "sent": False,
+            "smtp_configured": False,
+            "reason": "SMTP is not configured; decision email was saved but not sent.",
+            "error_type": "smtp_not_configured",
+            "provider_message": "",
+        }
     try:
         return send_recruitment_email(to_email=email, subject=subject, body=body)
     except Exception as e:
         print(f"Decision email dispatch failure: {e}")
-        return False
+        return {
+            "sent": False,
+            "smtp_configured": True,
+            "reason": "Decision email dispatch failed.",
+            "error_type": e.__class__.__name__,
+            "provider_message": str(e),
+        }
 
 def record_outreach_history(candidate: Dict[str, Any], message: str, status: str, detail: str = "", position_id: Optional[int] = None) -> Dict[str, Any]:
     item = {
@@ -436,6 +453,7 @@ def run_resume_profile_upload_graph(
             "input": {
                 "candidate_email": candidate_email,
                 "resume_text": resume_text,
+                "supervisor_use_llm": False,
                 "resume_use_llm": False,
                 "bias_use_llm": False,
                 "status": "profile",
@@ -1402,13 +1420,19 @@ async def signup_candidate_stream(
         return f"data: {json.dumps(payload, default=str)}\n\n"
 
     def emit_agent_event(node: str, event_type: str, message: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        payload = payload or {}
+        reason = str(payload.get("reason") or payload.get("decision_reason") or message)
+        payload.setdefault("reason", reason)
+        payload.setdefault("decision_reason", reason)
         event = {
             "event_type": event_type,
             "node": node,
             "message": message,
+            "reason": reason,
+            "decision_reason": reason,
             "candidate_email": email_clean,
             "position_id": None,
-            "payload": payload or {},
+            "payload": payload,
         }
         try:
             record_agent_event(event)
@@ -1482,6 +1506,7 @@ async def signup_candidate_stream(
                 "input": {
                     "candidate_email": email_clean,
                     "resume_text": resume_text,
+                    "supervisor_use_llm": False,
                     "resume_use_llm": False,
                     "bias_use_llm": False,
                     "status": "profile",
@@ -1567,6 +1592,174 @@ async def signup_candidate_stream(
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
+@router.post("/{email}/apply-position/stream")
+def apply_candidate_to_position_stream(email: str, payload: CandidateApplyPositionPayload):
+    email_clean = normalize_candidate_email(email)
+    position_id = payload.position_id
+
+    def sse(payload_data: Dict[str, Any]) -> str:
+        return f"data: {json.dumps(payload_data, default=str)}\n\n"
+
+    def emit_agent_event(node: str, event_type: str, message: str, event_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        event_payload = event_payload or {}
+        reason = str(event_payload.get("reason") or event_payload.get("decision_reason") or message)
+        event_payload.setdefault("reason", reason)
+        event_payload.setdefault("decision_reason", reason)
+        event = {
+            "event_type": event_type,
+            "node": node,
+            "message": message,
+            "reason": reason,
+            "decision_reason": reason,
+            "candidate_email": email_clean,
+            "position_id": position_id,
+            "payload": event_payload,
+        }
+        try:
+            record_agent_event(event)
+        except Exception as exc:
+            event["payload"] = {**event["payload"], "event_logging_warning": str(exc)}
+        return event
+
+    def graph_progress(event: Dict[str, Any]) -> int:
+        node = event.get("node")
+        event_type = event.get("event_type")
+        tool = (event.get("payload") or {}).get("tool")
+        progress_by_tool = {
+            "analyze_bias": (28, 36),
+            "match_candidate": (46, 58),
+            "generate_screening_questions": (68, 78),
+            "create_or_update_application": (86, 94),
+        }
+        if node == "guardrail":
+            return 18
+        if node == "supervisor":
+            return 22
+        if tool in progress_by_tool:
+            started, completed = progress_by_tool[tool]
+            return started if event_type == "started" else completed
+        if node == "graph":
+            return 96
+        return 40
+
+    def event_stream():
+        try:
+            yield sse({
+                "progress": 8,
+                "agent_event": emit_agent_event(
+                    "intake",
+                    "started",
+                    "Application Setup Agent received the selected position."
+                )
+            })
+            db = load_db()
+            candidate = db.setdefault("candidates", {}).get(email_clean)
+            if not candidate:
+                raise HTTPException(status_code=404, detail="Candidate account not found.")
+            if candidate.get("email_verified", True) is False:
+                raise HTTPException(status_code=403, detail="Please verify your email address before applying.")
+            if find_application(candidate, position_id):
+                raise HTTPException(status_code=409, detail="You have already applied for this position.")
+
+            job = db.get("positions", {}).get(str(position_id))
+            if not job:
+                raise HTTPException(status_code=404, detail="Selected position not found.")
+            if not is_open_for_applications(job):
+                raise HTTPException(status_code=400, detail="Selected position is not open for applications.")
+
+            yield sse({
+                "progress": 14,
+                "agent_event": emit_agent_event(
+                    "guardrail",
+                    "started",
+                    "Guardrail Agent is checking application eligibility and candidate profile safety."
+                )
+            })
+            graph_state = recruiting_agent_graph._initial_state({
+                "task_type": "existing_candidate_application",
+                "candidate_email": email_clean,
+                "position_id": position_id,
+                "input": {
+                    "candidate_email": email_clean,
+                    "position_id": position_id,
+                    "candidate_profile": candidate.get("profile_data", {}),
+                    "profile_data": candidate.get("profile_data", {}),
+                    "job_requirements": job,
+                    "supervisor_use_llm": False,
+                    "bias_use_llm": False,
+                    "status": "applied",
+                }
+            })
+            for event in recruiting_agent_graph.stream(graph_state):
+                yield sse({"progress": graph_progress(event), "agent_event": event})
+
+            if graph_state.get("blocked"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=graph_state.get("guardrail", {}).get("reason", "Application setup blocked by guardrails.")
+                )
+
+            artifacts = graph_state.get("artifacts", {}) or {}
+            db = load_db()
+            candidate = db.setdefault("candidates", {}).get(email_clean)
+            if not candidate:
+                raise HTTPException(status_code=404, detail="Candidate account not found after graph processing.")
+            application = find_application(candidate, position_id)
+            if not application:
+                application = {
+                    "application_id": build_application_id(position_id),
+                    "position_id": position_id,
+                    "status": "applied",
+                    "applied_at": datetime.now().isoformat(timespec="seconds"),
+                    "progress": get_application_progress("applied"),
+                    "match_results": artifacts.get("match_results") or {},
+                    "custom_questions": artifacts.get("custom_questions") or [],
+                    "answers": [],
+                    "evaluation": {},
+                    "agent_warnings": graph_state.get("agent_warnings", []),
+                    "sourcing_pitch": "Inbound applicant with verified profile details.",
+                    "outreach_email": candidate.get("outreach_email", "")
+                }
+                normalize_candidate_applications(candidate).append(application)
+            else:
+                application["match_results"] = application.get("match_results") or artifacts.get("match_results") or {}
+                application["custom_questions"] = application.get("custom_questions") or artifacts.get("custom_questions") or []
+                application.setdefault("agent_warnings", []).extend(graph_state.get("agent_warnings", []))
+            sync_current_application(candidate, application)
+            add_notification(candidate, "Application started", "Your personalized interview questions are ready.", "application", position_id)
+            save_db(db)
+            yield sse({
+                "progress": 100,
+                "agent_event": emit_agent_event(
+                    "graph",
+                    "final",
+                    "Application Setup Agent completed the profile match and screening question setup."
+                ),
+                "result": serialize_application_candidate(candidate, email_clean, application)
+            })
+        except HTTPException as exc:
+            yield sse({
+                "error": exc.detail,
+                "agent_event": emit_agent_event(
+                    "guardrail" if exc.status_code in {400, 403, 409} else "graph",
+                    "blocked" if exc.status_code in {400, 403, 409} else "failed",
+                    str(exc.detail),
+                    {"status_code": exc.status_code}
+                )
+            })
+        except Exception as exc:
+            yield sse({
+                "error": str(exc) or "Application setup failed while the agent graph was processing it.",
+                "agent_event": emit_agent_event(
+                    "graph",
+                    "failed",
+                    "Application Setup Agent failed before completion.",
+                    {"error": str(exc)}
+                )
+            })
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
 @router.post("/{email}/apply-position")
 def apply_candidate_to_position(email: str, payload: CandidateApplyPositionPayload):
     db = load_db()
@@ -1629,7 +1822,7 @@ def update_candidate_status(email: str, payload: CandidateStatusPayload):
     if payload.position_id and not application:
         raise HTTPException(status_code=404, detail="Candidate application not found.")
     smtp_configured = is_smtp_configured()
-    email_sent = False
+    email_receipt: Dict[str, Any] = {"sent": False, "smtp_configured": smtp_configured}
     if application:
         # Track previous status in history (max 10 entries)
         previous_status = application.get("status")
@@ -1642,7 +1835,7 @@ def update_candidate_status(email: str, payload: CandidateStatusPayload):
         if payload.status == "hired":
             application["hired_at"] = datetime.now().isoformat(timespec="seconds")
             add_notification(candidate, "Application decision", "Congratulations. You have been hired for this position.", "success", payload.position_id)
-            email_sent = send_decision_email(email_clean, "Application update - hired", "Congratulations. The hiring team has marked your application as hired. Please check the candidate portal for details.")
+            email_receipt = send_decision_email(email_clean, "Application update - hired", "Congratulations. The hiring team has marked your application as hired. Please check the candidate portal for details.")
         sync_current_application(candidate, application)
     else:
         previous_status = candidate.get("status")
@@ -1654,10 +1847,11 @@ def update_candidate_status(email: str, payload: CandidateStatusPayload):
         if payload.status == "hired":
             candidate["hired_at"] = datetime.now().isoformat(timespec="seconds")
             add_notification(candidate, "Application decision", "Congratulations. You have been hired.", "success")
-            email_sent = send_decision_email(email_clean, "Application update - hired", "Congratulations. The hiring team has marked your application as hired. Please check the candidate portal for details.")
+            email_receipt = send_decision_email(email_clean, "Application update - hired", "Congratulations. The hiring team has marked your application as hired. Please check the candidate portal for details.")
     save_db(db)
     result = serialize_candidate(candidate, email_clean)
-    result["email_sent"] = email_sent
+    result["email_sent"] = _email_sent(email_receipt)
+    result["email_receipt"] = email_receipt
     result["smtp_configured"] = smtp_configured
     return result
 
@@ -1762,21 +1956,24 @@ async def apply_inbound(
                 "position_id": position_id,
                 "resume_text": resume_text,
                 "job_requirements": job,
+                "supervisor_use_llm": False,
+                "resume_use_llm": False,
+                "bias_use_llm": False,
                 "status": "applied",
             }
         })
         if graph_result.get("blocked"):
             raise HTTPException(status_code=400, detail=graph_result.get("guardrail", {}).get("reason", "Application input blocked by guardrails."))
         artifacts = graph_result.get("artifacts", {})
-        profile_data = artifacts.get("candidate_profile") or run_resume_agent(resume_text, prestige_neutralize=False)
+        profile_data = artifacts.get("candidate_profile") or parse_resume_text_fallback(resume_text)
         validate_resume_agent_profile(profile_data, name)
         profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
-        bias_analysis = artifacts.get("prestige_analysis") or analyze_prestige_indicators(profile_data, resume_text)
+        bias_analysis = artifacts.get("prestige_analysis") or analyze_prestige_indicators(profile_data, resume_text, use_llm=False)
         bias_artifacts = {
             "bias_analysis": bias_analysis,
             "neutralized_profile_data": neutralize_candidate_profile(profile_data, bias_analysis)
         }
-        match_results = artifacts.get("match_results") or run_matching_agent(job, profile_data, get_bias_controls(db), bias_artifacts["bias_analysis"])
+        match_results = artifacts.get("match_results") or build_fast_match_results(job, profile_data, get_bias_controls(db), bias_artifacts["bias_analysis"])
         custom_questions = artifacts.get("custom_questions") or run_interview_agent_phase_a(profile_data, match_results, job)
         agent_warnings.extend(graph_result.get("agent_warnings", []))
     except Exception as e:
@@ -1784,12 +1981,12 @@ async def apply_inbound(
             raise
         print(f"Error running inbound agent graph: {e}")
         agent_warnings.append("Agent graph failed, so the legacy resume and screening pipeline was used.")
-        profile_data = run_resume_agent(resume_text, prestige_neutralize=False)
+        profile_data = parse_resume_text_fallback(resume_text)
         validate_resume_agent_profile(profile_data, name)
         profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
         controls = get_bias_controls(db)
-        bias_artifacts = build_candidate_bias_artifacts(profile_data, resume_text)
-        match_results = run_matching_agent(job, profile_data, controls, bias_artifacts["bias_analysis"])
+        bias_artifacts = build_candidate_bias_artifacts(profile_data, resume_text, use_llm=False)
+        match_results = build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
         custom_questions = [
             "What technical challenge on your resume was the most architecturally complex, and how did you approach it?",
             "How do you ensure code scalability and high performance when designing REST endpoints?",
@@ -1856,6 +2053,186 @@ async def apply_inbound(
     response = serialize_candidate(candidate_record, email_clean)
     return response
 
+@router.post("/{email}/sandbox/stream")
+def submit_sandbox_stream(email: str, payload: SandboxAnswers):
+    email_clean = email.strip().lower()
+    position_id = payload.position_id
+
+    def sse(payload_data: Dict[str, Any]) -> str:
+        return f"data: {json.dumps(payload_data, default=str)}\n\n"
+
+    def emit_agent_event(node: str, event_type: str, message: str, event_payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        event_payload = event_payload or {}
+        reason = str(event_payload.get("reason") or event_payload.get("decision_reason") or message)
+        event_payload.setdefault("reason", reason)
+        event_payload.setdefault("decision_reason", reason)
+        event = {
+            "event_type": event_type,
+            "node": node,
+            "message": message,
+            "reason": reason,
+            "decision_reason": reason,
+            "candidate_email": email_clean,
+            "position_id": position_id,
+            "payload": event_payload,
+        }
+        try:
+            record_agent_event(event)
+        except Exception as exc:
+            event["payload"] = {**event["payload"], "event_logging_warning": str(exc)}
+        return event
+
+    def graph_progress(event: Dict[str, Any]) -> int:
+        node = event.get("node")
+        event_type = event.get("event_type")
+        tool = (event.get("payload") or {}).get("tool")
+        progress_by_tool = {
+            "evaluate_screening_answers": (26, 44),
+            "generate_report": (52, 62),
+            "save_screening_evaluation": (70, 76),
+            "update_application_status": (82, 86),
+            "plan_candidate_email": (90, 93),
+            "send_agent_email": (96, 98),
+        }
+        if node == "guardrail":
+            return 16
+        if node == "supervisor":
+            return 20
+        if tool in progress_by_tool:
+            started, completed = progress_by_tool[tool]
+            return started if event_type == "started" else completed
+        if node == "graph":
+            return 99
+        return 40
+
+    def event_stream():
+        try:
+            db = load_db()
+            candidate = db.setdefault("candidates", {}).get(email_clean)
+            if not candidate:
+                raise HTTPException(status_code=404, detail="Candidate not found.")
+            application = find_application(candidate, position_id)
+            if not application:
+                raise HTTPException(status_code=404, detail="Candidate application not found.")
+            if application.get("answers"):
+                raise HTTPException(status_code=409, detail="This position's interview has already been submitted.")
+
+            for idx, ans in enumerate(payload.answers):
+                if len(ans.strip()) < 10:
+                    raise HTTPException(status_code=400, detail=f"Answer for Question {idx+1} is too short. (Minimum 10 characters)")
+
+            job_id = application.get("position_id")
+            job = db.get("positions", {}).get(str(job_id), {})
+            application["draft_answers"] = payload.answers
+            candidate.setdefault("draft_answers", {})[str(application.get("position_id"))] = payload.answers
+            save_db(db)
+
+            yield sse({
+                "progress": 8,
+                "agent_event": emit_agent_event(
+                    "intake",
+                    "started",
+                    "Screening Evaluation Agent received the candidate answers."
+                )
+            })
+            graph_state = recruiting_agent_graph._initial_state({
+                "task_type": "sandbox_evaluation",
+                "candidate_email": email_clean,
+                "position_id": job_id,
+                "input": {
+                    "candidate_email": email_clean,
+                    "position_id": job_id,
+                    "questions": application.get("custom_questions", []),
+                    "answers": payload.answers,
+                    "job_requirements": job,
+                    "candidate_profile": candidate.get("profile_data", {}),
+                    "match_results": application.get("match_results") or candidate.get("match_results", {}),
+                    "supervisor_use_llm": False,
+                    "status": application.get("status", "applied"),
+                }
+            })
+            for event in recruiting_agent_graph.stream(graph_state):
+                yield sse({"progress": graph_progress(event), "agent_event": event})
+
+            if graph_state.get("blocked"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=graph_state.get("guardrail", {}).get("reason", "Screening answers blocked by guardrails.")
+                )
+
+            artifacts = graph_state.get("artifacts", {}) or {}
+            evaluation = artifacts.get("evaluation") or build_position_specific_evaluation(application.get("custom_questions", []), payload.answers, job)
+            report_data = artifacts.get("report") or {}
+            roadmap = report_data.get("upskilling_roadmap", {})
+            next_status = (
+                "rejected"
+                if int(evaluation.get("screening_score", 100) or 100) <= settings.AGENT_REJECT_MAX_SCREENING_SCORE
+                and str(evaluation.get("hiring_recommendation", "")).lower() == "reject"
+                else "screening"
+            )
+            db = load_db()
+            candidate = db.setdefault("candidates", {}).get(email_clean)
+            if not candidate:
+                raise HTTPException(status_code=404, detail="Candidate not found after graph processing.")
+            application = find_application(candidate, job_id)
+            if not application:
+                raise HTTPException(status_code=404, detail="Candidate application not found after graph processing.")
+            application["status"] = next_status
+            application["progress"] = get_application_progress(next_status)
+            application["answers"] = payload.answers
+            application["draft_answers"] = payload.answers
+            application["screening_submitted_at"] = application.get("screening_submitted_at") or datetime.now().isoformat(timespec="seconds")
+            application.pop("last_agent_error", None)
+            candidate.pop("last_agent_error", None)
+            application["evaluation"] = {
+                "screening_score": evaluation.get("screening_score", 80),
+                "critiques": evaluation.get("question_feedback") or evaluation.get("critiques", []),
+                "question_feedback": evaluation.get("question_feedback") or evaluation.get("critiques", []),
+                "score_breakdown": evaluation.get("score_breakdown", {}),
+                "position_fit_verdict": evaluation.get("position_fit_verdict", ""),
+                "hiring_recommendation": evaluation.get("hiring_recommendation", ""),
+                "decision_reason": evaluation.get("decision_reason", ""),
+                "role_alignment_summary": evaluation.get("role_alignment_summary", ""),
+                "upskilling_roadmap": roadmap
+            }
+            if graph_state.get("agent_warnings"):
+                application.setdefault("agent_warnings", []).extend(graph_state.get("agent_warnings", []))
+                candidate.setdefault("agent_warnings", []).extend(graph_state.get("agent_warnings", []))
+            sync_current_application(candidate, application)
+            save_db(db)
+            yield sse({
+                "progress": 100,
+                "agent_event": emit_agent_event(
+                    "graph",
+                    "final",
+                    "Screening Evaluation Agent completed feedback, status update, and action policy review."
+                ),
+                "result": serialize_application_candidate(candidate, email_clean, application)
+            })
+        except HTTPException as exc:
+            yield sse({
+                "error": exc.detail,
+                "agent_event": emit_agent_event(
+                    "guardrail" if exc.status_code in {400, 403, 409} else "graph",
+                    "blocked" if exc.status_code in {400, 403, 409} else "failed",
+                    str(exc.detail),
+                    {"status_code": exc.status_code}
+                )
+            })
+        except Exception as exc:
+            print(f"Sandbox stream failed: {exc}")
+            yield sse({
+                "error": str(exc) or "Unable to evaluate your answers. Please try again.",
+                "agent_event": emit_agent_event(
+                    "graph",
+                    "failed",
+                    "Screening Evaluation Agent failed before completion.",
+                    {"error": str(exc)}
+                )
+            })
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
 @router.post("/{email}/sandbox")
 def submit_sandbox(email: str, payload: SandboxAnswers):
     db = load_db()
@@ -1897,13 +2274,14 @@ def submit_sandbox(email: str, payload: SandboxAnswers):
                 "job_requirements": job,
                 "candidate_profile": candidate.get("profile_data", {}),
                 "match_results": application.get("match_results") or candidate.get("match_results", {}),
-            }
+                "supervisor_use_llm": False,
+                }
         })
         if graph_result.get("blocked"):
             raise HTTPException(status_code=400, detail=graph_result.get("guardrail", {}).get("reason", "Screening answers blocked by guardrails."))
         artifacts = graph_result.get("artifacts", {})
-        evaluation = artifacts.get("evaluation") or run_interview_agent_phase_b(application.get("custom_questions", []), payload.answers, job)
-        report_data = artifacts.get("report") or run_report_agent(candidate.get("profile_data", {}), application.get("match_results") or candidate.get("match_results", {}), job)
+        evaluation = artifacts.get("evaluation") or build_position_specific_evaluation(application.get("custom_questions", []), payload.answers, job)
+        report_data = artifacts.get("report") or {}
         roadmap = report_data.get("upskilling_roadmap", {})
         agent_warnings.extend(graph_result.get("agent_warnings", []))
     except Exception as e:
@@ -1926,10 +2304,12 @@ def submit_sandbox(email: str, payload: SandboxAnswers):
     candidate.pop("last_agent_error", None)
     application["evaluation"] = {
         "screening_score": evaluation.get("screening_score", 80),
-        "critiques": evaluation.get("critiques", []),
+        "critiques": evaluation.get("question_feedback") or evaluation.get("critiques", []),
+        "question_feedback": evaluation.get("question_feedback") or evaluation.get("critiques", []),
         "score_breakdown": evaluation.get("score_breakdown", {}),
         "position_fit_verdict": evaluation.get("position_fit_verdict", ""),
         "hiring_recommendation": evaluation.get("hiring_recommendation", ""),
+        "decision_reason": evaluation.get("decision_reason", ""),
         "role_alignment_summary": evaluation.get("role_alignment_summary", ""),
         "upskilling_roadmap": roadmap
     }
@@ -1969,6 +2349,8 @@ def scrape_profile(payload: ScrapePayload):
                 "position_id": payload.position_id,
                 "candidate_profile": profile_data,
                 "job_requirements": job,
+                "supervisor_use_llm": False,
+                "bias_use_llm": False,
                 "source_method": profile_data.get("source_method", "manual_apify"),
             }
         })
@@ -2172,6 +2554,8 @@ def auto_source_candidates(payload: AutoSourcePayload):
                             "position_id": payload.position_id,
                             "candidate_profile": profile_data,
                             "job_requirements": job,
+                            "supervisor_use_llm": False,
+                            "bias_use_llm": False,
                             "source_method": "apify_auto_source",
                         }
                     })
@@ -2252,6 +2636,8 @@ def auto_source_candidates(payload: AutoSourcePayload):
                         "position_id": payload.position_id,
                         "candidate_profile": profile_data,
                         "job_requirements": job,
+                        "supervisor_use_llm": False,
+                        "bias_use_llm": False,
                         "source_method": "prototype_auto_source",
                     }
                 })
@@ -2452,17 +2838,30 @@ def invite_candidate(payload: InvitePayload):
     # Trigger Outreach SMTP dispatch only when real SMTP credentials exist.
     smtp_configured = is_smtp_configured(payload.smtp_settings)
     try:
-        email_sent = send_recruitment_email(
+        email_receipt = send_recruitment_email(
             to_email=email_clean,
             subject=f"Exclusive Sourcing Invitation - {candidate.get('profile_data', {}).get('headline')}",
             body=candidate.get("outreach_email", ""),
             smtp_settings=payload.smtp_settings
-        ) if smtp_configured else False
+        ) if smtp_configured else {
+            "sent": False,
+            "smtp_configured": False,
+            "reason": "SMTP is not configured; invitation was saved but not sent.",
+            "error_type": "smtp_not_configured",
+            "provider_message": "",
+        }
     except Exception as e:
         print(f"SMTP dispatch failure: {e}")
-        email_sent = False
+        email_receipt = {
+            "sent": False,
+            "smtp_configured": smtp_configured,
+            "reason": "Invitation email dispatch failed.",
+            "error_type": e.__class__.__name__,
+            "provider_message": str(e),
+        }
+    email_sent = _email_sent(email_receipt)
     history_status = "sent" if email_sent else "prototype"
-    history_detail = "SMTP dispatch completed." if email_sent else "SMTP is not configured; invitation was saved in prototype mode."
+    history_detail = email_receipt.get("reason") if isinstance(email_receipt, dict) else ("SMTP dispatch completed." if email_sent else "SMTP is not configured; invitation was saved in prototype mode.")
     record_outreach_history(
         candidate,
         candidate.get("outreach_email", ""),
@@ -2476,7 +2875,8 @@ def invite_candidate(payload: InvitePayload):
     return {
         "candidate": serialize_candidate(candidate, email_clean),
         "outreach_sent": email_sent,
-        "smtp_configured": smtp_configured
+        "smtp_configured": smtp_configured,
+        "email_receipt": email_receipt,
     }
 
 @router.post("/{email}/reject")
@@ -2518,10 +2918,11 @@ def reject_candidate(email: str, payload: RejectCandidatePayload):
         candidate["rejected_at"] = datetime.now().isoformat(timespec="seconds")
         add_notification(candidate, "Application update", rejection_message, "decision")
 
-    email_sent = send_decision_email(email_clean, "Application update", rejection_message)
+    email_receipt = send_decision_email(email_clean, "Application update", rejection_message)
     save_db(db)
     result = serialize_application_candidate(candidate, email_clean, application) if application else serialize_candidate(candidate, email_clean)
-    result["email_sent"] = email_sent
+    result["email_sent"] = _email_sent(email_receipt)
+    result["email_receipt"] = email_receipt
     result["smtp_configured"] = is_smtp_configured()
     return result
 
@@ -2591,20 +2992,28 @@ def schedule_interview(email: str, payload: InterviewSlotPayload):
         f"We look forward to meeting you.\n\nBest regards,\nHiring Team"
     )
     smtp_configured = is_smtp_configured()
-    email_sent = False
+    email_receipt: Dict[str, Any] = {"sent": False, "smtp_configured": smtp_configured}
     if smtp_configured:
         try:
-            email_sent = send_recruitment_email(
+            email_receipt = send_recruitment_email(
                 to_email=email_clean,
                 subject=f"Interview Invitation - {position_title}",
                 body=interview_body
             )
         except Exception as e:
             print(f"Interview invite SMTP failure: {e}")
+            email_receipt = {
+                "sent": False,
+                "smtp_configured": smtp_configured,
+                "reason": "Interview invitation email dispatch failed.",
+                "error_type": e.__class__.__name__,
+                "provider_message": str(e),
+            }
 
     save_db(db)
     result = serialize_application_candidate(candidate, email_clean, application) if application else serialize_candidate(candidate, email_clean)
-    result["interview_email_sent"] = email_sent
+    result["interview_email_sent"] = _email_sent(email_receipt)
+    result["email_receipt"] = email_receipt
     result["smtp_configured"] = smtp_configured
     return result
 

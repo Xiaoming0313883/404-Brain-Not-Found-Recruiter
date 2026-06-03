@@ -6,6 +6,8 @@ import { CandidateData } from '../CandidatePortal';
 import { BrandLogo } from '../BrandLogo';
 import * as Progress from '@radix-ui/react-progress';
 import { API_BASE_URL, BACKEND_FETCH_ERROR_MESSAGE } from '../../api';
+import { AgentActivityEvent, AgentActivityFeed } from './AgentActivityFeed';
+import { KnowledgeTooltip } from '../KnowledgeTooltip';
 
 interface Props {
   onAuthenticate: (data: CandidateData) => void;
@@ -36,6 +38,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
   const [emailOpen, setEmailOpen] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [processingMessage, setProcessingMessage] = useState('');
+  const [agentEvents, setAgentEvents] = useState<AgentActivityEvent[]>([]);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [pendingVerification, setPendingVerification] = useState<CandidateData | null>(null);
@@ -241,6 +244,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
     const timeoutId = window.setTimeout(() => controller.abort(), 240000);
     setUploadProgress(5);
     setProcessingMessage('Connecting to signup agent graph...');
+    setAgentEvents([]);
 
     try {
       const response = await fetch(`${API_BASE_URL}/candidates/signup/stream`, {
@@ -289,6 +293,9 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
           }
           if (payload.agent_event?.message) {
             setProcessingMessage(payload.agent_event.message);
+          }
+          if (payload.agent_event) {
+            setAgentEvents(events => [...events, payload.agent_event]);
           }
           if (payload.error) {
             throw new Error(payload.error);
@@ -403,6 +410,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
     setErrorMessage('');
     setUploadProgress(0);
     setProcessingMessage('');
+    setAgentEvents([]);
 
     try {
       const formData = new FormData();
@@ -464,6 +472,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
         setIsSubmitting(false);
         setUploadProgress(0);
         setProcessingMessage('');
+        setAgentEvents([]);
         return;
       }
 
@@ -476,6 +485,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       setIsSubmitting(false);
       setUploadProgress(0);
       setProcessingMessage('');
+      setAgentEvents([]);
     }
   };
 
@@ -1059,7 +1069,12 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
             {isSubmitting && (
               <div className="bg-[#f0ede8] border border-[#e4e1da] rounded-xl p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs text-[#a8a49d] font-semibold uppercase tracking-wider">Upload Progress</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-[#a8a49d] font-semibold uppercase tracking-wider">Upload Progress</p>
+                    <KnowledgeTooltip label="What upload progress means">
+                      Progress is streamed from the signup agent graph as resume intake, guardrails, resume parsing, bias analysis, and Supabase persistence complete.
+                    </KnowledgeTooltip>
+                  </div>
                   <span className="text-xs text-[#2d6a55] font-semibold">{uploadProgress}%</span>
                 </div>
                 <Progress.Root className="relative overflow-hidden bg-white rounded-full h-2 w-full mb-3">
@@ -1068,13 +1083,12 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
                     style={{ transform: `translateX(-${100 - uploadProgress}%)`, width: '100%' }}
                   />
                 </Progress.Root>
-                <p className="text-xs text-[#6b7063] mb-3">{processingMessage}</p>
-                <p className="text-xs text-[#a8a49d] font-semibold uppercase tracking-wider mb-2">AI Processing Pipeline</p>
-                <ul className="text-xs text-[#6b7063] space-y-1.5 list-disc list-inside">
-                  <li>Resume Agent: Standardizing profile data...</li>
-                  <li>Matching Agent: Running debate analysis...</li>
-                  <li>Interview Agent: Generating personalized questions...</li>
-                </ul>
+                <AgentActivityFeed
+                  events={agentEvents}
+                  currentMessage={processingMessage}
+                  progress={uploadProgress}
+                  title="Signup Agent Trace"
+                />
               </div>
             )}
           </div>

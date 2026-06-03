@@ -62,6 +62,7 @@ export interface ScrapedCandidate {
   screeningScore?: number;
   evaluation?: any;
   answers?: string[];
+  customQuestions?: string[];
   resumeFilename?: string;
   resumeText?: string;
   resumeSummary?: string;
@@ -281,6 +282,7 @@ export function HiringManagerPortal() {
           screeningScore: c.evaluation?.screening_score,
           evaluation: c.evaluation,
           answers: c.answers || c.draft_answers || [],
+          customQuestions: c.custom_questions || [],
           resumeFilename: c.resume_filename,
           resumeText: c.resume_text,
           resumeSummary: c.resume_summary,
