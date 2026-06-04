@@ -47,15 +47,32 @@ UNAUTHORIZED_ACTION_PATTERNS = [
 ]
 
 PROTECTED_CLASS_PATTERNS = [
-    r"\b(age|race|religion|gender|sex|pregnancy|marital status|nationality|ethnicity|disability)\b.*\b(reject|prefer|hire|filter|rank|score)\b",
-    r"\b(reject|prefer|hire|filter|rank|score)\b.*\b(age|race|religion|gender|sex|pregnancy|marital status|nationality|ethnicity|disability)\b",
+    r"\b(age|race|religion|gender|sex|pregnancy|marital status|nationality|ethnicity|disability)\b.{0,120}\b(reject|prefer|hire|filter|rank|score)\b",
+    r"\b(reject|prefer|hire|filter|rank|score)\b.{0,120}\b(age|race|religion|gender|sex|pregnancy|marital status|nationality|ethnicity|disability)\b",
+]
+
+PROTECTED_CLASS_SAFE_PHRASES = [
+    r"\brace\s+condition",
+    r"\brace\s+to\b",
+    r"\brace\s+against\b",
+    r"\bage\s+of\b",
+    r"\bage\s+group\b",
+    r"\bgender\s+reveal\b",
+    r"\bsex(?:tion|tor)\b",
 ]
 
 
-def _match_patterns(text: str, patterns: List[str]) -> List[str]:
+def _sanitize_for_protected_class_check(text: str) -> str:
+    result = text
+    for pattern in PROTECTED_CLASS_SAFE_PHRASES:
+        result = re.sub(pattern, "[SAFE]", result, flags=re.IGNORECASE)
+    return result
+
+
+def _match_patterns(text: str, patterns: List[str], flags: int = re.IGNORECASE | re.DOTALL) -> List[str]:
     return [
         pattern for pattern in patterns
-        if re.search(pattern, text or "", flags=re.IGNORECASE | re.DOTALL)
+        if re.search(pattern, text or "", flags=flags)
     ]
 
 
@@ -70,7 +87,7 @@ def evaluate_guardrails(value: Any, context: Dict[str, Any] | None = None) -> Gu
     if _match_patterns(text, UNAUTHORIZED_ACTION_PATTERNS):
         categories.append("unauthorized_action")
         reasons.append("Input asks for an unauthorized data or communication action.")
-    if _match_patterns(text, PROTECTED_CLASS_PATTERNS):
+    if _match_patterns(_sanitize_for_protected_class_check(text), PROTECTED_CLASS_PATTERNS, flags=re.IGNORECASE):
         categories.append("protected_class_hiring")
         reasons.append("Input asks the system to evaluate or act using protected-class criteria.")
 
