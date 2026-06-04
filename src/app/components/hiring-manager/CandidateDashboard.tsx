@@ -209,6 +209,7 @@ export function CandidateDashboard({
   const [actionError, setActionError] = useState('');
   const [selectedPositionId, setSelectedPositionId] = useState<number | 'all'>('all');
   const [selectedTrajectoryCandidate, setSelectedTrajectoryCandidate] = useState<ScrapedCandidate | null>(null);
+  const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
   const [fairnessAudit, setFairnessAudit] = useState<any>(null);
   const [fairnessLoading, setFairnessLoading] = useState(false);
   const [biasControlsSaving, setBiasControlsSaving] = useState(false);
@@ -1304,12 +1305,15 @@ export function CandidateDashboard({
                     <Accordion.Header>
                       <Accordion.Trigger className="w-full px-5 py-4 bg-[#f7f6f3] hover:bg-[#f0ede8] transition-colors text-left group cursor-pointer">
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4 flex-1">
+                          <div className="flex items-center gap-4 flex-1 min-w-0">
                             <div className="relative flex-shrink-0">
-                              {candidate.profilePictureUrl ? (
+                              {candidate.profilePictureUrl && !brokenImages[candidate.email] ? (
                                 <img
                                   src={`${API_ORIGIN}${candidate.profilePictureUrl}`}
                                   alt={displayName}
+                                  onError={() => {
+                                    setBrokenImages(prev => ({ ...prev, [candidate.email]: true }));
+                                  }}
                                   className="w-12 h-12 rounded-xl object-cover border border-[#e4e1da]"
                                 />
                               ) : (
@@ -1384,7 +1388,7 @@ export function CandidateDashboard({
                               <p className="text-xs text-[#a8a49d] mt-0.5">{job?.title || 'Sourced Position'}</p>
                             </div>
 
-                            <div className="flex items-center gap-5 mr-4">
+                            <div className="flex items-center gap-5 mr-4 flex-shrink-0">
                               <div className="text-center">
                                 <div className={`text-lg font-semibold ${
                                   candidate.matchScore >= 80 ? 'text-[#2d6a55]' :
@@ -2748,10 +2752,13 @@ export function CandidateDashboard({
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl border border-[#e4e1da] max-h-[90vh] overflow-hidden">
             <div className="flex items-start justify-between gap-4 p-5 border-b border-[#e4e1da] bg-[#f7f6f3]">
               <div className="flex items-start gap-4 min-w-0">
-                {selectedTrajectoryCandidate.profilePictureUrl ? (
+                {selectedTrajectoryCandidate.profilePictureUrl && !brokenImages[selectedTrajectoryCandidate.email] ? (
                   <img
                     src={`${API_ORIGIN}${selectedTrajectoryCandidate.profilePictureUrl}`}
                     alt={getDisplayName(selectedTrajectoryCandidate)}
+                    onError={() => {
+                      setBrokenImages(prev => ({ ...prev, [selectedTrajectoryCandidate.email]: true }));
+                    }}
                     className="w-14 h-14 rounded-xl object-cover border border-[#e4e1da] flex-shrink-0"
                   />
                 ) : (

@@ -56,6 +56,7 @@ export function CandidateAccountsPage({
   const [currentPage, setCurrentPage] = useState(1);
   const [passwordResetMessage, setPasswordResetMessage] = useState('');
   const [selectedCandidate, setSelectedCandidate] = useState<ScrapedCandidate | null>(null);
+  const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
 
   const getActionEmail = (candidate: ScrapedCandidate): string =>
     candidate.managementEmail || candidate.email;
@@ -207,10 +208,13 @@ export function CandidateAccountsPage({
               return (
                 <div key={accountEmail} className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 p-4 bg-[#f7f6f3] border border-[#e4e1da] rounded-xl">
                   <div className="flex items-center gap-3 min-w-0">
-                    {candidate.profilePictureUrl ? (
+                    {candidate.profilePictureUrl && !brokenImages[accountEmail] ? (
                       <img
                         src={`${API_ORIGIN}${candidate.profilePictureUrl}`}
                         alt={displayName}
+                        onError={() => {
+                          setBrokenImages(prev => ({ ...prev, [accountEmail]: true }));
+                        }}
                         className="w-11 h-11 rounded-xl object-cover border border-[#e4e1da]"
                       />
                     ) : (
@@ -267,7 +271,7 @@ export function CandidateAccountsPage({
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap gap-2 xl:justify-end">
+                  <div className="flex flex-wrap sm:flex-nowrap gap-2 xl:justify-end xl:flex-shrink-0">
                     <button
                       onClick={() => setSelectedCandidate(candidate)}
                       disabled={isBusy}
@@ -355,9 +359,20 @@ export function CandidateAccountsPage({
             {/* Header */}
             <div className="px-6 py-4 border-b border-[#e4e1da] flex items-center justify-between bg-[#f7f6f3]">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-[#e8f2ee] rounded-xl flex items-center justify-center text-[#2d6a55] font-semibold text-lg">
-                  {selectedCandidate.name.charAt(0).toUpperCase()}
-                </div>
+                {selectedCandidate.profilePictureUrl && !brokenImages[selectedCandidate.email] ? (
+                  <img
+                    src={`${API_ORIGIN}${selectedCandidate.profilePictureUrl}`}
+                    alt={selectedCandidate.name}
+                    onError={() => {
+                      setBrokenImages(prev => ({ ...prev, [selectedCandidate.email]: true }));
+                    }}
+                    className="w-10 h-10 rounded-xl object-cover border border-[#e4e1da]"
+                  />
+                ) : (
+                  <div className="w-10 h-10 bg-[#e8f2ee] rounded-xl flex items-center justify-center text-[#2d6a55] font-semibold text-lg">
+                    {selectedCandidate.name.charAt(0).toUpperCase()}
+                  </div>
+                )}
                 <div>
                   <h3 className="text-base font-semibold text-[#1c1c1a]">{selectedCandidate.name}</h3>
                   <p className="text-xs text-[#6b7063]">{selectedCandidate.headline || 'Candidate Profile'}</p>

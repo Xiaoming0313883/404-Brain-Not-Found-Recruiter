@@ -116,6 +116,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
   const [positionPage, setPositionPage] = useState(1);
   const [showNotifications, setShowNotifications] = useState(false);
   const notifRef = useRef<HTMLDivElement | null>(null);
+  const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
 
   const unreadCount = (candidateData.notifications || []).filter(n => !n.read).length;
 
@@ -1075,8 +1076,15 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
                 Edit profile
               </Link>
             </div>
-            {candidateData.profilePictureUrl ? (
-              <img src={`${API_ORIGIN}${candidateData.profilePictureUrl}`} alt={candidateData.name} className="w-14 h-14 rounded-2xl object-cover border border-[#e4e1da] flex-shrink-0" />
+            {candidateData.profilePictureUrl && !brokenImages[candidateData.email] ? (
+              <img
+                src={`${API_ORIGIN}${candidateData.profilePictureUrl}`}
+                alt={candidateData.name}
+                onError={() => {
+                  setBrokenImages(prev => ({ ...prev, [candidateData.email]: true }));
+                }}
+                className="w-14 h-14 rounded-2xl object-cover border border-[#e4e1da] flex-shrink-0"
+              />
             ) : (
               <div className="w-14 h-14 rounded-2xl bg-[#e8f2ee] flex items-center justify-center text-[#2d6a55] text-xl font-semibold flex-shrink-0">
                 {candidateData.name.charAt(0).toUpperCase()}

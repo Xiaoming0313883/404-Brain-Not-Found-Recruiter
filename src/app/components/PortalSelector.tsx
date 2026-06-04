@@ -69,8 +69,8 @@ export function PortalSelector() {
         {/* Feature Strip */}
         <div className="border-t border-[#e4e1da] pt-10 grid md:grid-cols-3 gap-8">
           <div>
-            <p className="text-xs tracking-[0.15em] uppercase text-[#1c1c1a] mb-2">6 AI Agents</p>
-            <p className="text-sm text-[#6b7063]">Multi-agent orchestration for intelligent candidate evaluation</p>
+            <p className="text-xs tracking-[0.15em] uppercase text-[#1c1c1a] mb-2">Agentic State Graph</p>
+            <p className="text-sm text-[#6b7063]">Supervisor-driven multi-agent routing for adaptive candidate evaluation</p>
           </div>
           <div>
             <p className="text-xs tracking-[0.15em] uppercase text-[#1c1c1a] mb-2">Prestige Neutralization</p>

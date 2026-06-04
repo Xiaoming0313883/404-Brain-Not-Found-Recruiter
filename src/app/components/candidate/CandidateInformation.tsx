@@ -26,6 +26,7 @@ const requiredProfileFields = [
 ] as const;
 
 export function CandidateInformation({ candidateData, onUpdateCandidate, onSignOut }: Props) {
+  const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
   const [form, setForm] = useState({
     name: candidateData.name || '',
     age: candidateData.age || '',
@@ -319,8 +320,15 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
           <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm">
             <User className="w-5 h-5 text-[#2d6a55] mb-3" />
             <h2 className="text-[#1c1c1a] font-semibold mb-2">Profile Picture</h2>
-            {candidateData.profilePictureUrl ? (
-              <img src={`${API_ORIGIN}${candidateData.profilePictureUrl}`} alt={candidateData.name} className="w-32 h-32 object-cover rounded-2xl border border-[#e4e1da] mb-4" />
+            {candidateData.profilePictureUrl && !brokenImages[candidateData.email] ? (
+              <img
+                src={`${API_ORIGIN}${candidateData.profilePictureUrl}`}
+                alt={candidateData.name}
+                onError={() => {
+                  setBrokenImages(prev => ({ ...prev, [candidateData.email]: true }));
+                }}
+                className="w-32 h-32 object-cover rounded-2xl border border-[#e4e1da] mb-4"
+              />
             ) : (
               <div className="w-32 h-32 rounded-2xl bg-[#e8f2ee] flex items-center justify-center text-[#2d6a55] text-3xl font-semibold mb-4">{candidateData.name.charAt(0).toUpperCase()}</div>
             )}
