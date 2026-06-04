@@ -7,6 +7,7 @@ import { CandidateSandbox } from './candidate/CandidateSandbox';
 import { CandidateInformation } from './candidate/CandidateInformation';
 import { CandidateApplyLoading } from './candidate/CandidateApplyLoading';
 import { CandidateFeedback } from './candidate/CandidateFeedback';
+import { CandidateNav } from './candidate/CandidateNav';
 import { API_BASE_URL } from '../api';
 
 export interface CandidateData {
@@ -128,6 +129,10 @@ function CandidatePageAppear({ children, pageKey }: { children: ReactNode; pageK
 export function CandidatePortal() {
   const location = useLocation();
   const [candidateData, setCandidateData] = useState<CandidateData | null>(loadCandidateSession);
+  const showCandidateNav = Boolean(
+    candidateData &&
+    /^\/candidate\/(home|applications|jobs|profile|feedback)(\/|$)/.test(location.pathname)
+  );
 
   const updateCandidateData = (value: CandidateData | null | ((current: CandidateData | null) => CandidateData | null)) => {
     setCandidateData(current => {
@@ -212,6 +217,13 @@ export function CandidatePortal() {
 
   return (
     <div className="min-h-screen bg-[#f7f6f3]">
+      {showCandidateNav && (
+        <CandidateNav
+          onSignOut={handleSignOut}
+          candidateName={candidateData?.name}
+          candidateRole={candidateData?.position || 'Candidate'}
+        />
+      )}
       <Routes>
         <Route
           index

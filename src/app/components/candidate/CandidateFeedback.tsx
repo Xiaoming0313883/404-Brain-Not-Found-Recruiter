@@ -2,7 +2,6 @@ import { Link } from 'react-router';
 import { CandidateData } from '../CandidatePortal';
 import * as Progress from '@radix-ui/react-progress';
 import { ArrowLeft, BookOpen, Calendar, CheckCircle2, TrendingUp, Target } from 'lucide-react';
-import { CandidateNav } from './CandidateNav';
 import { KnowledgeTooltip } from '../KnowledgeTooltip';
 
 interface Props {
@@ -143,13 +142,7 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
 
   if (!hasResults) {
     return (
-      <div className="min-h-screen bg-[#f7f6f3]">
-        <CandidateNav
-          onSignOut={onSignOut}
-          candidateName={candidateData.name}
-          candidateRole={candidateData.position || 'Candidate'}
-        />
-        <div className="py-12 px-6">
+      <div className="py-12 px-6">
           <div className="max-w-3xl mx-auto">
           <div className="bg-white border border-[#e4e1da] rounded-2xl p-8 text-center shadow-sm">
             <p className="text-xs tracking-[0.2em] uppercase text-[#2d6a55] mb-4 font-semibold">Results</p>
@@ -168,18 +161,11 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
           </div>
         </div>
       </div>
-    </div>
   );
   }
 
   return (
-    <div className="min-h-screen bg-[#f7f6f3]">
-      <CandidateNav
-        onSignOut={onSignOut}
-        candidateName={candidateData.name}
-        candidateRole={candidateData.position || 'Candidate'}
-      />
-      <div className="py-12 px-6">
+    <div className="py-12 px-6">
         <div className="max-w-3xl mx-auto">
 
         {/* Header */}
@@ -488,6 +474,5 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
 
         </div>
       </div>
-    </div>
   );
 }

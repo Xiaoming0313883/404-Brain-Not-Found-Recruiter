@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router';
 import { BarChart3, Bell, BookOpen, Briefcase, Calendar, CheckCircle2, FileText, Loader2, MessageSquare, PlayCircle, Send, Target, User, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
-import { CandidateNav } from './CandidateNav';
 import { API_BASE_URL, API_ORIGIN } from '../../api';
 import { KnowledgeTooltip } from '../KnowledgeTooltip';
 
@@ -990,13 +989,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
   };
 
   return (
-    <div className="min-h-screen bg-[#f7f6f3]">
-      <CandidateNav
-        onSignOut={onSignOut}
-        candidateName={candidateData.name}
-        candidateRole={candidateData.position || 'Candidate'}
-      />
-      <div className="py-10 px-6">
+    <div className="py-10 px-6">
         <div className={`${view === 'overview' ? 'max-w-4xl' : 'max-w-5xl'} mx-auto`}>
         <div className="flex justify-end mb-4">
           <div className="flex items-center gap-3">
@@ -1584,6 +1577,5 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
 
         </div>
       </div>
-    </div>
   );
 }

@@ -3,7 +3,6 @@ import { FileText, Loader2, Save, Upload, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { CandidateData } from '../CandidatePortal';
 import { PdfResumeViewer } from '../PdfResumeViewer';
-import { CandidateNav } from './CandidateNav';
 import { API_BASE_URL, API_ORIGIN } from '../../api';
 
 interface Props {
@@ -197,13 +196,7 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
   const inputClass = "w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]";
 
   return (
-    <div className="min-h-screen bg-[#f7f6f3]">
-        <CandidateNav
-          onSignOut={onSignOut}
-          candidateName={candidateData.name}
-          candidateRole={candidateData.position || 'Candidate'}
-        />
-      <div className="px-6 py-10">
+    <div className="px-6 py-10">
         <div className="max-w-4xl mx-auto">
 
         <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mb-5">
@@ -371,6 +364,5 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
         </div>
         </div>
       </div>
-    </div>
   );
 }
