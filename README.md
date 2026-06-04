@@ -581,6 +581,10 @@ flowchart TB
 
 ---
 
+## Agent Orchestration (Supervisor System)
+
+The following process flows are managed by the **Supervisor Node** in the `RecruitingAgentGraph`. The Supervisor dynamically selects the required tools and executes them. If any tool fails or times out, the Supervisor gracefully logs the error as an `agent_warning` in the graph state, falls back to deterministic processing or rule-based logic, and continues the pipeline to ensure the user always receives an actionable outcome.
+
 ## Two-Sided Agent Orchestration
 
 ```mermaid
@@ -742,7 +746,7 @@ flowchart TD
 2. For manual sourcing, the backend validates and normalizes a provided LinkedIn profile URL.
 3. For automatic sourcing, `POST /candidates/auto-source` streams progress via Server-Sent Events.
 4. If `APIFY_API_TOKEN` is set, the backend triggers the Apify search actor and then the profile scraper actor.
-5. If Apify is not configured, the backend generates prototype candidate profiles aligned to the job criteria.
+5. If Apify is not configured, the backend generates mocked candidate profiles aligned to the job criteria.
 6. For each sourced profile: Bias Agent → Matching Agent → Interview Agent Phase A → Report Agent run in sequence.
 7. Candidates are saved with status `staged` and appear in the HM pipeline; the hiring manager must send an invitation to advance them.
 
@@ -1100,6 +1104,14 @@ Create the frontend `.env.local` in the project root:
 VITE_API_URL=http://localhost:8000/api/v1
 ```
 
+### Step 3.5 — Initialize Supabase Database
+
+404Hire uses Supabase as the central runtime persistence layer. Before starting the backend:
+1. Create a Supabase project at [supabase.com](https://supabase.com).
+2. Open the SQL Editor in your Supabase dashboard.
+3. Copy the contents of `backend/supabase_schema.sql` and run it to set up all tables and RLS policies.
+4. Copy the Project API URL and `service_role` key into your `backend/.env` file.
+
 ### Step 4 — Run Locally
 
 **Backend terminal:**
@@ -1138,40 +1150,37 @@ Expected response:
 
 ### Backend — `backend/.env`
 
+See `backend/.env.example` for the complete and most up-to-date configuration variables.
+Key variables include:
+
 ```env
 # Server
 HOST=0.0.0.0
 PORT=8000
-DEBUG=True
-DATABASE_PATH=data/recruiting_db.json
+SECRET_KEY=replace_with_a_long_random_secret_key
 
-# LLM API (OpenAI-compatible endpoint)
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_BASE_URL=https://api.mor.org/api/v1
-OPENAI_MODEL=deepseek-v4-pro
+# Supabase Persistence API
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 
-# Agent temperatures (controls determinism per agent)
-RESUME_AGENT_TEMP=0.1        # Low: deterministic extraction
-REQUIREMENT_AGENT_TEMP=0.2   # Low: consistent requirement generation
-INTERVIEW_AGENT_TEMP=0.3     # Medium: varied but targeted questions
-REPORT_AGENT_TEMP=0.3        # Medium: varied narrative artifacts
-MATCHING_AGENT_TEMP=0.4      # Medium: nuanced position scoring
+# OpenAI-Compatible LLM API
+OPENAI_API_KEY=your_openai_or_compatible_api_key
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
 
-# SMTP (set for live email; omit to use prototype code exposure)
+# Agent Graph Orchestration
+AGENT_SUPERVISOR_MODE=single_plan
+AGENT_MAX_STEPS=10
+AGENT_AUTONOMY_MODE=bounded
+
+# SMTP Email API
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your_email@gmail.com
 SMTP_PASSWORD=your_app_specific_password
 
-# LinkedIn — Playwright cookie method (optional)
-LINKEDIN_LI_AT_COOKIE=
-LINKEDIN_HEADLESS=True
-
-# Apify — actor-based scraping (optional)
+# Apify Sourcing API
 APIFY_API_TOKEN=
-APIFY_PROFILE_ACTOR_ID=
-APIFY_SEARCH_ACTOR_ID=
-APIFY_TIMEOUT_SECONDS=90
 ```
 
 > ⚠️ Never commit real API keys, SMTP passwords, cookies, or personal secrets to version control.
@@ -1522,15 +1531,15 @@ Some Apify actors require manual approval in the Apify Console on first use. Ope
 
 ## Production Notes
 
-404Hire is a hackathon-grade prototype. Before a production release, address the following:
+Before a production release, review the following enterprise hardening recommendations:
 
 | Area | Recommendation |
 |---|---|
 | Authentication | Replace demo HM login with a proper auth system (JWT, OAuth) |
-| Database | Migrate from JSON file to PostgreSQL, MySQL, or equivalent |
+| Database | Supabase is already utilized as the production PostgreSQL database. Optimize queries as needed. |
 | File storage | Move resumes to managed object storage (S3, GCS, Cloudflare R2) with signed download URLs |
 | CORS | Restrict `allow_origins` in `backend/main.py` to known frontend domains |
-| Prototype code exposure | Remove verification code from API responses in production |
+
 | Email | Configure a reliable transactional email provider |
 | Password hashing | Replace SHA-256 with bcrypt or Argon2 |
 | Audit logging | Log all candidate status changes with actor identity and timestamp |
