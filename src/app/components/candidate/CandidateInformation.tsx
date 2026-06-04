@@ -196,9 +196,14 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
   const inputClass = "w-full px-3 py-2 border border-[#e4e1da] rounded-lg text-sm text-[#1c1c1a] focus:outline-none focus:border-[#2d6a55]";
 
   return (
-    <div className="min-h-screen bg-[#f7f6f3] px-6 py-10">
-      <div className="max-w-4xl mx-auto">
-        <CandidateNav onSignOut={onSignOut} />
+    <div className="min-h-screen bg-[#f7f6f3]">
+        <CandidateNav
+          onSignOut={onSignOut}
+          candidateName={candidateData.name}
+          candidateRole={candidateData.position || 'Candidate'}
+        />
+      <div className="px-6 py-10">
+        <div className="max-w-4xl mx-auto">
 
         <div className="bg-white border border-[#e4e1da] rounded-2xl p-6 shadow-sm mb-5">
           <div className="flex items-center gap-3 mb-5">
@@ -355,6 +360,7 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
               {isSaving && uploadProgress !== null && picture ? `Uploading (${uploadProgress}%)` : 'Upload Picture'}
             </button>
           </div>
+        </div>
         </div>
       </div>
     </div>

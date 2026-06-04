@@ -989,9 +989,14 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
   };
 
   return (
-    <div className="min-h-screen py-10 px-6 bg-[#f7f6f3]">
-      <div className={`${view === 'overview' ? 'max-w-4xl' : 'max-w-5xl'} mx-auto`}>
-        <CandidateNav onSignOut={onSignOut} />
+    <div className="min-h-screen bg-[#f7f6f3]">
+      <CandidateNav
+        onSignOut={onSignOut}
+        candidateName={candidateData.name}
+        candidateRole={candidateData.position || 'Candidate'}
+      />
+      <div className="py-10 px-6">
+        <div className={`${view === 'overview' ? 'max-w-4xl' : 'max-w-5xl'} mx-auto`}>
         <div className="flex justify-end mb-4">
           <div className="flex items-center gap-3">
             <div className="relative" ref={notifRef}>
@@ -1569,6 +1574,7 @@ export function CandidateHome({ candidateData, onUpdateCandidate, onSignOut, vie
         </div>
         )}
 
+        </div>
       </div>
     </div>
   );

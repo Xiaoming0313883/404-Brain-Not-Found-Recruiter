@@ -14,7 +14,15 @@ function isActiveRoute(currentPath: string, tabPath: string) {
   return currentPath === tabPath || currentPath.startsWith(`${tabPath}/`);
 }
 
-export function CandidateNav({ onSignOut }: { onSignOut?: () => void }) {
+export function CandidateNav({
+  onSignOut,
+  candidateName,
+  candidateRole,
+}: {
+  onSignOut?: () => void;
+  candidateName?: string;
+  candidateRole?: string;
+}) {
   const location = useLocation();
   const navigate = useNavigate();
   const currentPath = location.pathname;
@@ -45,6 +53,20 @@ export function CandidateNav({ onSignOut }: { onSignOut?: () => void }) {
             </div>
 
             <div className="flex items-center gap-5">
+              {candidateName && (
+                <>
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-[#e8f2ee] flex items-center justify-center text-[#2d6a55] text-sm flex-shrink-0 font-medium">
+                      {candidateName.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="hidden sm:block">
+                      <p className="text-xs text-[#1c1c1a] leading-none mb-0.5 font-medium">{candidateName}</p>
+                      <p className="text-xs text-[#a8a49d]">{candidateRole ?? "Candidate"}</p>
+                    </div>
+                  </div>
+                  <div className="w-px h-6 bg-[#e4e1da]" />
+                </>
+              )}
               <Link
                 to="/"
                 className="inline-flex items-center gap-2 text-sm text-[#6b7063] hover:text-[#1c1c1a] transition-colors"

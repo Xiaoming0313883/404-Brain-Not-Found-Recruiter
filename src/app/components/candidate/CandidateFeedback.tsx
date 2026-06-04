@@ -143,9 +143,14 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
 
   if (!hasResults) {
     return (
-      <div className="min-h-screen py-12 px-6 bg-[#f7f6f3]">
-        <div className="max-w-3xl mx-auto">
-          <CandidateNav onSignOut={onSignOut} />
+      <div className="min-h-screen bg-[#f7f6f3]">
+        <CandidateNav
+          onSignOut={onSignOut}
+          candidateName={candidateData.name}
+          candidateRole={candidateData.position || 'Candidate'}
+        />
+        <div className="py-12 px-6">
+          <div className="max-w-3xl mx-auto">
           <div className="bg-white border border-[#e4e1da] rounded-2xl p-8 text-center shadow-sm">
             <p className="text-xs tracking-[0.2em] uppercase text-[#2d6a55] mb-4 font-semibold">Results</p>
             <h1 className="text-[#1c1c1a] mb-2 font-semibold text-2xl">No results yet</h1>
@@ -163,13 +168,19 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
           </div>
         </div>
       </div>
-    );
+    </div>
+  );
   }
 
   return (
-    <div className="min-h-screen py-12 px-6 bg-[#f7f6f3]">
-      <div className="max-w-3xl mx-auto">
-        <CandidateNav onSignOut={onSignOut} />
+    <div className="min-h-screen bg-[#f7f6f3]">
+      <CandidateNav
+        onSignOut={onSignOut}
+        candidateName={candidateData.name}
+        candidateRole={candidateData.position || 'Candidate'}
+      />
+      <div className="py-12 px-6">
+        <div className="max-w-3xl mx-auto">
 
         {/* Header */}
         <div className="text-center mb-10">
@@ -475,6 +486,7 @@ export function CandidateFeedback({ candidateData, onSignOut }: Props) {
           This feedback is saved to {candidateData.email}
         </p>
 
+        </div>
       </div>
     </div>
   );
