@@ -43,6 +43,7 @@ from ..services.agents.bias_agent import (
     neutralize_candidate_profile,
     neutralize_text as agent_neutralize_text,
     apply_bias_controls_to_assessment,
+    fetch_university_ranking,
     lookup_qs_rank_from_csv,
 )
 from ..services.agents import (
@@ -410,6 +411,59 @@ def sync_current_application(candidate: Dict[str, Any], application: Dict[str, A
     candidate["hired_at"] = application.get("hired_at", candidate.get("hired_at"))
     candidate["interview_slot"] = application.get("interview_slot", candidate.get("interview_slot"))
 
+
+def _to_int_rank(value: Any) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        match = re.search(r"\d+", str(value).replace(",", ""))
+        return int(match.group(0)) if match else None
+
+
+def _same_school_name(left: str, right: str) -> bool:
+    left_clean = str(left or "").strip().lower()
+    right_clean = str(right or "").strip().lower()
+    if not left_clean or not right_clean:
+        return False
+    return left_clean == right_clean or left_clean in right_clean or right_clean in left_clean
+
+
+def _rank_from_prestige_analysis(analysis: Dict[str, Any], school: str) -> Optional[int]:
+    for indicator in (analysis or {}).get("prestige_indicators") or []:
+        if not isinstance(indicator, dict) or indicator.get("type") != "university":
+            continue
+        if _same_school_name(indicator.get("original", ""), school):
+            rank = _to_int_rank(indicator.get("qs_rank") or indicator.get("rank_value"))
+            if rank:
+                return rank
+    return None
+
+
+def resolve_school_rank(school: str, candidate: Optional[Dict[str, Any]] = None, edu: Optional[Dict[str, Any]] = None) -> Optional[int]:
+    rank = _to_int_rank((edu or {}).get("qs_rank"))
+    if rank:
+        return rank
+
+    candidate = candidate or {}
+    rank = _rank_from_prestige_analysis(candidate.get("bias_analysis") or {}, school)
+    if rank:
+        return rank
+
+    match_results = candidate.get("match_results") or {}
+    rank = _rank_from_prestige_analysis(match_results.get("prestige_analysis") or {}, school)
+    if rank:
+        return rank
+
+    ranking = fetch_university_ranking(school)
+    rank = _to_int_rank(ranking.get("rank_value"))
+    if rank:
+        return rank
+
+    return lookup_qs_rank_from_csv(school)
+
+
 def inject_qs_ranks_into_profile(profile_data: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(profile_data, dict):
         return profile_data
@@ -418,7 +472,7 @@ def inject_qs_ranks_into_profile(profile_data: Dict[str, Any]) -> Dict[str, Any]
         if isinstance(edu, dict):
             school = edu.get("school") or edu.get("institution") or ""
             if school:
-                rank = lookup_qs_rank_from_csv(school)
+                rank = resolve_school_rank(school, edu=edu)
                 if rank:
                     edu["qs_rank"] = rank
     return profile_data
@@ -548,7 +602,7 @@ def serialize_candidate(candidate: Dict[str, Any], management_email: Optional[st
         if isinstance(edu, dict):
             school = edu.get("school") or edu.get("institution") or ""
             if school:
-                rank = lookup_qs_rank_from_csv(school)
+                rank = resolve_school_rank(school, candidate, edu)
                 qs_ranking.append({
                     "school": school,
                     "rank": rank
@@ -2769,6 +2823,7 @@ def add_mock_bias_comparison_candidates(payload: MockBiasComparisonPayload):
             "source_type": "linkedin",
             "source_method": "mock_bias_comparison"
         }
+        profile_data = inject_qs_ranks_into_profile(profile_data)
         bias_artifacts = build_candidate_bias_artifacts(profile_data, use_llm=False)
         match_results = build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
         custom_questions = [

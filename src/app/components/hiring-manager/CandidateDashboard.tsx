@@ -2774,11 +2774,11 @@ export function CandidateDashboard({
                 Cancel
               </button>
               <button
-                disabled={!scheduleDate || !scheduleTime || isSchedulingInterview}
+                disabled={isSchedulingInterview || !scheduleDate || !scheduleTime}
                 onClick={async () => {
+                  const email = scheduleTarget.managementEmail || scheduleTarget.email;
                   setIsSchedulingInterview(true);
                   try {
-                    const email = scheduleTarget.managementEmail || scheduleTarget.email;
                     const result: any = await runAction(email, () => onScheduleInterview(email, scheduleTarget.jobId, scheduleDate, scheduleTime, scheduleLocation, scheduleNotes));
                     if (result) {
                       toast.success(result.interview_email_sent
@@ -2786,8 +2786,8 @@ export function CandidateDashboard({
                         : result.smtp_configured === false
                           ? `Interview scheduled for ${scheduleTarget.name}. SMTP is not configured, so no email was sent.`
                           : `Interview scheduled for ${scheduleTarget.name}. Email delivery was not confirmed.`);
+                      setScheduleTarget(null);
                     }
-                    setScheduleTarget(null);
                   } finally {
                     setIsSchedulingInterview(false);
                   }
@@ -2795,7 +2795,7 @@ export function CandidateDashboard({
                 className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#3730a3] text-white rounded-lg hover:bg-[#312e81] disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
               >
                 {isSchedulingInterview && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isSchedulingInterview ? 'Scheduling...' : 'Confirm Schedule'}
+                {isSchedulingInterview ? 'Confirming...' : 'Confirm Interview'}
               </button>
             </div>
           </div>
