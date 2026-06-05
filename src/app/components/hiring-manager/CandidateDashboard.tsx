@@ -310,6 +310,7 @@ export function CandidateDashboard({
   const [scheduleTime, setScheduleTime] = useState<string>('');
   const [scheduleLocation, setScheduleLocation] = useState<string>('To be confirmed');
   const [scheduleNotes, setScheduleNotes] = useState<string>('');
+  const [isSchedulingInterview, setIsSchedulingInterview] = useState(false);
 
   const activePositions = jobs.filter(job => job.isOpenForApplications).length;
   const selectedJob = selectedPositionId === 'all' ? null : jobs.find(job => job.id === selectedPositionId);
@@ -2724,22 +2725,28 @@ export function CandidateDashboard({
                 Cancel
               </button>
               <button
-                disabled={!scheduleDate || !scheduleTime}
+                disabled={isSchedulingInterview || !scheduleDate || !scheduleTime}
                 onClick={async () => {
                   const email = scheduleTarget.managementEmail || scheduleTarget.email;
-                  const result: any = await runAction(email, () => onScheduleInterview(email, scheduleTarget.jobId, scheduleDate, scheduleTime, scheduleLocation, scheduleNotes));
-                  if (result) {
-                    toast.success(result.interview_email_sent
-                      ? `Interview scheduled and email sent to ${scheduleTarget.name}.`
-                      : result.smtp_configured === false
-                        ? `Interview scheduled for ${scheduleTarget.name}. SMTP is not configured, so no email was sent.`
-                        : `Interview scheduled for ${scheduleTarget.name}. Email delivery was not confirmed.`);
+                  setIsSchedulingInterview(true);
+                  try {
+                    const result: any = await runAction(email, () => onScheduleInterview(email, scheduleTarget.jobId, scheduleDate, scheduleTime, scheduleLocation, scheduleNotes));
+                    if (result) {
+                      toast.success(result.interview_email_sent
+                        ? `Interview scheduled and email sent to ${scheduleTarget.name}.`
+                        : result.smtp_configured === false
+                          ? `Interview scheduled for ${scheduleTarget.name}. SMTP is not configured, so no email was sent.`
+                          : `Interview scheduled for ${scheduleTarget.name}. Email delivery was not confirmed.`);
+                      setScheduleTarget(null);
+                    }
+                  } finally {
+                    setIsSchedulingInterview(false);
                   }
-                  setScheduleTarget(null);
                 }}
-                className="flex-1 px-4 py-2.5 bg-[#3730a3] text-white rounded-lg hover:bg-[#312e81] disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#3730a3] text-white rounded-lg hover:bg-[#312e81] disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
               >
-                Confirm Schedule
+                {isSchedulingInterview && <Loader2 className="w-4 h-4 animate-spin" />}
+                {isSchedulingInterview ? 'Confirming...' : 'Confirm Interview'}
               </button>
             </div>
           </div>

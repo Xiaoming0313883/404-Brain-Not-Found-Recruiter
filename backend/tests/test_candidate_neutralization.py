@@ -1,4 +1,4 @@
-from app.routes.candidates import serialize_neutralized_candidate
+from app.routes.candidates import serialize_candidate, serialize_neutralized_candidate
 
 
 def test_school_company_neutralization_preserves_candidate_identity():
@@ -62,3 +62,34 @@ def test_school_company_neutralization_preserves_candidate_identity():
     assert "Jane Candidate" not in {"Candidate #0000", "Anonymous City"}
     assert "Acme Labs" not in result["match_results"]["position_fit_summary"]
     assert "Prestige University" not in result["match_results"]["score_explanation"]
+
+
+def test_serialize_candidate_exposes_qs_ranking_from_bias_analysis():
+    candidate = {
+        "name": "Alex Prestige",
+        "email": "alex@example.com",
+        "status": "staged",
+        "profile_data": {
+            "name": "Alex Prestige",
+            "email": "alex@example.com",
+            "education": [
+                {"school": "Asia Pacific University", "degree": "Software Engineering"}
+            ],
+        },
+        "bias_analysis": {
+            "prestige_indicators": [
+                {
+                    "type": "university",
+                    "original": "Asia Pacific University",
+                    "qs_rank": 597,
+                    "qs_badge": "Ranking found",
+                }
+            ],
+            "prestige_score": 45,
+        },
+        "applications": [],
+    }
+
+    result = serialize_candidate(candidate, "alex@example.com")
+
+    assert result["qs_ranking"] == [{"school": "Asia Pacific University", "rank": 597}]

@@ -84,6 +84,52 @@ def _fetch_json_url(url: str, api_key: str = "") -> Dict[str, Any]:
 
 _qs_rankings_cache = None
 
+_BUILTIN_DEMO_QS_RANKINGS: Dict[str, Dict[str, Any]] = {
+    "asia pacific university": {
+        "rank": 597,
+        "school": "Asia Pacific University of Technology and Innovation (APU) Malaysia",
+        "country": "Malaysia",
+    },
+    "apu": {
+        "rank": 597,
+        "school": "Asia Pacific University of Technology and Innovation (APU) Malaysia",
+        "country": "Malaysia",
+    },
+    "asia pacific university of technology and innovation": {
+        "rank": 597,
+        "school": "Asia Pacific University of Technology and Innovation (APU) Malaysia",
+        "country": "Malaysia",
+    },
+    "universiti kuala lumpur": {
+        "rank": 1201,
+        "school": "Universiti Kuala Lumpur (UniKL)",
+        "country": "Malaysia",
+    },
+    "unikl": {
+        "rank": 1201,
+        "school": "Universiti Kuala Lumpur (UniKL)",
+        "country": "Malaysia",
+    },
+}
+
+
+def _normalize_institution_name(name: str) -> str:
+    normalized = re.sub(r"\(.*?\)", "", str(name or "")).lower()
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return " ".join(normalized.split())
+
+
+def _lookup_builtin_demo_rank_details(school_name: str) -> Optional[Dict[str, Any]]:
+    query = _normalize_institution_name(school_name)
+    if not query:
+        return None
+    if query in _BUILTIN_DEMO_QS_RANKINGS:
+        return dict(_BUILTIN_DEMO_QS_RANKINGS[query])
+    for alias, details in _BUILTIN_DEMO_QS_RANKINGS.items():
+        if alias in query or query in alias:
+            return dict(details)
+    return None
+
 def _load_qs_rankings() -> Dict[str, Dict[str, Any]]:
     global _qs_rankings_cache
     if _qs_rankings_cache is not None:
@@ -152,11 +198,18 @@ def lookup_qs_rank_details(school_name: str) -> Optional[Dict[str, Any]]:
                 return details
 
         for name, details in rankings.items():
-            name_csv_clean = re.sub(r"\(.*?\)", "", name).strip().lower()
-            query_clean = re.sub(r"\(.*?\)", "", name_clean).strip().lower()
+            name_csv_clean = _normalize_institution_name(name)
+            query_clean = _normalize_institution_name(name_clean)
             if name_csv_clean and query_clean:
                 if name_csv_clean == query_clean or query_clean in name_csv_clean or name_csv_clean in query_clean:
                     return details
+
+    # Railway deployments should normally include backend/data/qs_rankings.csv.
+    # This narrow fallback keeps seeded demo candidates rank-tagged even if the
+    # CSV is missing from a deployment image or an old cache-only backend.
+    demo_match = _lookup_builtin_demo_rank_details(name_clean)
+    if demo_match:
+        return demo_match
 
     return None
 

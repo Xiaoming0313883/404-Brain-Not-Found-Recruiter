@@ -178,7 +178,7 @@ Each agent's system prompt contains an explicit **scope contract** that instruct
 **Layer 3 — Output Guardrails (after the LLM responds)**
 
 - Every agent response is parsed and validated against an expected JSON schema. If the LLM returns a response that does not conform (e.g., missing required fields, wrong types), the backend falls back to a deterministic rule-based output and attaches a `fallback_warning` flag to the candidate record — making the fallback visible to the hiring manager rather than silently degrading.
-- Agent outputs are stored as structured records in the JSON database, not served directly to the frontend. The API layer controls exactly which fields each portal can read, preventing raw LLM output from leaking to the wrong user.
+- Agent outputs are stored as structured records in Supabase PostgreSQL, not served directly to the frontend. The API layer controls exactly which fields each portal can read, preventing raw LLM output from leaking to the wrong user.
 
 ---
 
@@ -203,7 +203,7 @@ The Resume Agent autonomously selects the best extraction strategy per document.
 The mailer service sends live emails autonomously — verification codes on signup, interview schedule confirmations, rejection notifications, and hire confirmations — based on agent-driven status transitions triggered by the hiring manager.
 
 **Database Read/Write Tool**
-All agents can direct the backend to persist their structured outputs — job profiles, candidate records, match scores, bias flags, interview questions, screening evaluations, sourcing pitches, outreach emails, and upskilling roadmaps — into the JSON database. These writes are performed autonomously as part of the pipeline execution, not as a separate manual step.
+All agents can direct the backend to persist their structured outputs — job profiles, candidate records, match scores, bias flags, interview questions, screening evaluations, sourcing pitches, outreach emails, and upskilling roadmaps — into Supabase PostgreSQL. These writes are performed autonomously as part of the pipeline execution, not as a separate manual step.
 
 **Server-Sent Events Streaming Tool**
 The auto-sourcing pipeline streams real-time progress logs to the frontend via `text/event-stream`. This is not just a reporting mechanism — it drives the hiring manager's live console display during the 60–120 second Apify execution window.
@@ -304,8 +304,8 @@ Every agent in 404Hire produces outputs that result in **real, durable side-effe
 
 | Action | Real-World Effect |
 |---|---|
-| Requirement Agent generates job profile | `POST /jobs` saves the full structured position to `recruiting_db.json`; it becomes immediately queryable via `GET /jobs?active_only=true` |
-| Resume Agent extracts candidate profile | PDF is written to `backend/uploads/resumes/`; structured profile is persisted to `recruiting_db.json`; the candidate account is created and is immediately loginable |
+| Requirement Agent generates job profile | `POST /jobs` saves the full structured position to Supabase; it becomes immediately queryable via `GET /jobs?active_only=true` |
+| Resume Agent extracts candidate profile | PDF is written to `backend/uploads/resumes/`; structured profile is persisted to Supabase; the candidate account is created and is immediately loginable |
 | Bias Agent classifies prestige signals | Prestige metadata, reputation score, and neutralized profile are written to the candidate's record; immediately used by the Matching Agent and available to the HM dashboard |
 | Matching Agent produces fit score | Score, contributors, fit breakdown, debate view, and bias calculation are persisted to the candidate's application record; immediately visible in the HM pipeline |
 | Interview Agent Phase A generates questions | Questions are stored on the candidate's application record; immediately served to the candidate's Screening page without any re-generation |
@@ -470,7 +470,7 @@ flowchart TB
   subgraph API_GATEWAY["FastAPI — backend/main.py"]
     CORS["CORS middleware\n(open for prototype)"]
     UPLOAD_SERVE["Static /uploads mount\n(resume PDFs + profile pictures)"]
-    DB_INIT["JSON DB initializer\nruns at startup"]
+    DB_INIT["Supabase connection check\nruns at startup"]
     ROUTER["APIRouter prefix /api/v1"]
   end
 
@@ -541,12 +541,12 @@ flowchart TB
   MAILER_SVC --> SMTP
 
   subgraph DATA["Data Layer"]
-    JSON_DB["recruiting_db.json\nbackend/data/\n─────────────────\nPositions\nCandidates + profiles\nApplications\nStatus history\nBias control settings\nInterview calendar\nNotifications"]
+    SUPABASE_DB["Supabase PostgreSQL\nbackend/supabase_schema.sql\n─────────────────\nPositions\nCandidates + profiles\nApplications\nStatus history\nBias control settings\nInterview calendar\nNotifications"]
     RESUME_FILES["backend/uploads/resumes/\nPDF files served via /uploads"]
     PIC_FILES["backend/uploads/profile_pictures/\nExtracted avatars served via /uploads"]
   end
 
-  ROUTES --> JSON_DB
+  ROUTES --> SUPABASE_DB
   CANDS_R --> RESUME_FILES
   RS_AG --> PIC_FILES
 
@@ -575,7 +575,7 @@ flowchart TB
   classDef sse fill:#fce4ec,stroke:#880e4f,stroke-width:1px,color:#3b0620;
   class RQ_AG,RS_AG,BA_AG,MA_AG,IA_AG,RP_AG agent;
   class LLM_API,APIFY,PLAYWRIGHT,SMTP external;
-  class JSON_DB,RESUME_FILES,PIC_FILES data;
+  class SUPABASE_DB,RESUME_FILES,PIC_FILES data;
   class SSE_GEN,SSE_CLIENT sse;
 ```
 
@@ -966,7 +966,7 @@ The fairness audit (`GET /candidates/fairness-audit`) analyzes all outcomes for 
 |---|---|
 | Frontend hosting | Vercel — static Vite build with SPA rewrite |
 | Backend hosting | Railway — Railpack (default) or Docker |
-| JSON database | `backend/data/recruiting_db.json` |
+| Database | Supabase PostgreSQL, initialized with `backend/supabase_schema.sql` |
 | Resume files | `backend/uploads/resumes/` |
 | Profile pictures | `backend/uploads/profile_pictures/` |
 | LLM provider | OpenAI-compatible endpoint (default: mor.org/api/v1, model: deepseek-v4-pro) |
@@ -981,7 +981,7 @@ The fairness audit (`GET /candidates/fairness-audit`) analyzes all outcomes for 
 ├── backend/
 │   ├── app/
 │   │   ├── config.py                  # pydantic-settings configuration loader
-│   │   ├── database.py                # JSON DB initializer and read/write helpers
+│   │   ├── database.py                # Supabase connection and read/write helpers
 │   │   ├── routes/
 │   │   │   ├── candidates.py          # 30+ endpoints: auth, resume, apply, source, status
 │   │   │   ├── jobs.py                # Job CRUD + /jobs/intake (Requirement Agent)
@@ -998,8 +998,7 @@ The fairness audit (`GET /candidates/fairness-audit`) analyzes all outcomes for 
 │   │       ├── job_windows.py             # Application window date validation
 │   │       ├── linkedin_profiles.py       # Manual/auto sourcing + SSE generator
 │   │       └── mailer.py                  # SMTP verification + notification sender
-│   ├── data/
-│   │   └── recruiting_db.json         # Local JSON database (auto-initialized)
+│   ├── supabase_schema.sql            # Supabase tables, indexes, and RLS policies
 │   ├── uploads/
 │   │   ├── resumes/                   # Uploaded candidate PDF resumes
 │   │   └── profile_pictures/          # Extracted candidate avatars
@@ -1360,13 +1359,13 @@ Base URL (production): `https://<your-railway-service>.up.railway.app/api/v1`
 
 | Path | Content |
 |---|---|
-| `backend/data/recruiting_db.json` | Single-file JSON database: positions, candidates, applications, status history, bias settings, interviews, notifications |
+| Supabase PostgreSQL | Runtime database for positions, candidates, applications, status history, bias settings, interviews, notifications, agent events, and ranking cache |
 | `backend/uploads/resumes/` | Uploaded PDF resume files |
 | `backend/uploads/profile_pictures/` | Extracted candidate avatar images |
 
 Files in `backend/uploads/` are served via the static `/uploads` mount in `backend/main.py`.
 
-> This storage model is designed for hackathon speed and easy inspection. See [Production Notes](#production-notes) for what to change before a production release.
+> Supabase is the required runtime persistence layer. Run `backend/supabase_schema.sql` in the Supabase SQL Editor before starting the backend.
 
 ---
 
