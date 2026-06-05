@@ -38,7 +38,7 @@ from ..services.agents import (
     run_report_agent
 )
 from ..services.agents.graph import recruiting_agent_graph, run_agent_graph
-from ..services.agents.resume_agent import parse_resume_text_fallback
+from ..services.agents.resume_agent import classify_resume_document, parse_resume_text_fallback
 from ..services.agents.tools import plan_candidate_email, send_agent_email
 from ..services.mailer import is_smtp_configured, send_candidate_verification_email, send_recruitment_email
 
@@ -919,6 +919,17 @@ def validate_resume_text_for_agent(resume_text: str) -> None:
                 "candidate identity, and resume sections such as experience, education, skills, projects, or certifications."
             )
         )
+    if settings.RESUME_UPLOAD_USE_LLM:
+        verdict = classify_resume_document(text)
+        if verdict and not verdict.get("is_resume"):
+            reason = str(verdict.get("reason") or "The document does not appear to be a candidate resume.").strip()
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Resume checker warning: {reason} "
+                    "Please upload a candidate resume/CV, not another document type."
+                )
+            )
 
 def validate_resume_agent_profile(profile_data: Dict[str, Any], submitted_name: str) -> None:
     profile_data = profile_data or {}
