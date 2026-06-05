@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     AGENT_INVITE_MIN_FIT_SCORE: int = 75
     AGENT_REJECT_MAX_SCREENING_SCORE: int = 45
     OPENAI_STRUCTURED_OUTPUTS: bool = True
+    RESUME_UPLOAD_USE_LLM: bool = True
     LLM_TIMEOUT: float = 35.0
     RESUME_AGENT_TEMP: float = 0.1
     REQUIREMENT_AGENT_TEMP: float = 0.2
@@ -42,6 +43,7 @@ class Settings(BaseSettings):
     APIFY_TIMEOUT_SECONDS: int = 90
     RANKING_API_URL: str = ""
     RANKING_API_KEY: str = ""
+    APP_TIMEZONE: str = "Asia/Kuala_Lumpur"
 
     @field_validator("DEBUG", mode="before")
     @classmethod

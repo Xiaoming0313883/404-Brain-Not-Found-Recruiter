@@ -1,7 +1,17 @@
 from datetime import datetime
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException
+
+from ..config import settings
+
+
+def get_app_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(settings.APP_TIMEZONE)
+    except ZoneInfoNotFoundError:
+        raise HTTPException(status_code=500, detail=f"Invalid APP_TIMEZONE setting: {settings.APP_TIMEZONE}")
 
 
 def parse_position_time(value: Optional[str]) -> Optional[datetime]:
@@ -9,7 +19,10 @@ def parse_position_time(value: Optional[str]) -> Optional[datetime]:
         return None
     try:
         normalized = value.replace("Z", "+00:00")
-        return datetime.fromisoformat(normalized)
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=get_app_timezone())
+        return parsed
     except ValueError:
         raise HTTPException(status_code=400, detail="Position dates must be valid ISO date-time values.")
 

@@ -650,9 +650,9 @@ def run_resume_profile_upload_graph(
     """Run the lightweight agent graph used by account/resume uploads.
 
     Signup needs a verified candidate profile quickly. The graph still routes
-    through guardrails, supervisor, Resume Agent, and Bias Agent, but the worker
-    tools use deterministic in-agent modes so the browser is not held hostage by
-    long model calls before the candidate can enter the portal.
+    through guardrails, supervisor, Resume Agent, and Bias Agent. Resume parsing
+    can use the LLM-backed Resume Agent when RESUME_UPLOAD_USE_LLM is enabled,
+    while bias review remains deterministic to keep uploads responsive.
     """
     agent_warnings: List[str] = []
     try:
@@ -662,7 +662,7 @@ def run_resume_profile_upload_graph(
                 "candidate_email": candidate_email,
                 "resume_text": resume_text,
                 "supervisor_use_llm": False,
-                "resume_use_llm": False,
+                "resume_use_llm": settings.RESUME_UPLOAD_USE_LLM,
                 "bias_use_llm": False,
                 "status": "profile",
                 "source_type": "inbound",
@@ -1718,7 +1718,7 @@ async def signup_candidate_stream(
                     "candidate_email": email_clean,
                     "resume_text": resume_text,
                     "supervisor_use_llm": False,
-                    "resume_use_llm": False,
+                    "resume_use_llm": settings.RESUME_UPLOAD_USE_LLM,
                     "bias_use_llm": False,
                     "status": "profile",
                     "source_type": "inbound",
@@ -2168,7 +2168,7 @@ async def apply_inbound(
                 "resume_text": resume_text,
                 "job_requirements": job,
                 "supervisor_use_llm": False,
-                "resume_use_llm": False,
+                "resume_use_llm": settings.RESUME_UPLOAD_USE_LLM,
                 "bias_use_llm": False,
                 "status": "applied",
             }
