@@ -96,6 +96,11 @@ export function CandidateApplyLoading({ candidateData, onUpdateCandidate }: Prop
           progress: application.progress ?? 40
         }));
         const selectedApplication = normalizedApplications.find((application: any) => application.position_id === position.id);
+        const prefilledAnswers = data.answers?.length
+          ? data.answers
+          : selectedApplication?.draft_answers?.length
+            ? selectedApplication.draft_answers
+            : [];
         onUpdateCandidate({
           ...candidateData,
           jobId: position.id,
@@ -105,7 +110,7 @@ export function CandidateApplyLoading({ candidateData, onUpdateCandidate }: Prop
           progress: 40,
           applications: normalizedApplications,
           customQuestions: data.custom_questions,
-          sandboxAnswers: data.answers || [],
+          sandboxAnswers: prefilledAnswers,
           evaluation: data.evaluation,
           agentWarnings: data.agent_warnings || candidateData.agentWarnings || [],
           notifications: data.notifications || candidateData.notifications || []

@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 from app.database import init_db
 from app.config import settings
-from app.routes import agents, jobs, candidates, settings as settings_router
+from app.routes import agents, jobs, candidates, demo, settings as settings_router
 
 DATABASE_STARTUP_ERROR = ""
 try:
@@ -39,6 +39,7 @@ app.include_router(jobs.router, prefix="/api/v1")
 app.include_router(candidates.router, prefix="/api/v1")
 app.include_router(settings_router.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
+app.include_router(demo.router, prefix="/api/v1")
 
 @app.exception_handler(RuntimeError)
 async def runtime_error_handler(_request: Request, exc: RuntimeError):

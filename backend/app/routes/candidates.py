@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import io
@@ -5,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import time
 import uuid
 import base64
 import secrets
@@ -17,6 +19,21 @@ from pypdf import PdfReader
 
 from ..database import load_db, record_agent_event, save_db
 from ..config import settings
+from ..demo_fixtures import (
+    DEMO_RESUME_TEXT,
+    demo_answers,
+    demo_bias_artifacts,
+    demo_evaluation,
+    demo_job_context,
+    demo_linkedin_profiles,
+    demo_match_results,
+    demo_outreach_for,
+    demo_profile_data,
+    demo_questions,
+    demo_resume_summary,
+    demo_sourced_candidate,
+    is_demo_resume_filename,
+)
 from ..services.agents.base_agent import get_openai_client
 from ..services.job_windows import is_open_for_applications
 from ..services.linkedin_profiles import build_fast_match_results, build_fast_outreach, scrape_live_linkedin_profile, parse_apify_profile, _get_run_field
@@ -658,7 +675,7 @@ def save_signup_candidate_record(
     agent_warnings: List[str]
 ) -> Dict[str, Any]:
     resume_path = save_resume_file(email_clean, resume_filename or "resume.pdf", contents)
-    resume_summary = get_resume_summary(profile_data, resume_text)
+    resume_summary = demo_resume_summary()
     parsed_name = profile_data.get("name") if profile_data.get("name") and profile_data.get("name") != "Candidate Full Name" else name
 
     candidate_record = {
@@ -700,6 +717,43 @@ def save_signup_candidate_record(
     db.setdefault("pending_email_verifications", {}).pop(email_clean, None)
     save_db(db)
     return serialize_candidate(candidate_record, email_clean)
+
+
+async def read_demo_resume_upload(resume: UploadFile) -> tuple[str, bytes]:
+    filename = resume.filename or ""
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Please upload a PDF resume.")
+    contents = await resume.read()
+    if len(contents) > MAX_RESUME_BYTES:
+        raise HTTPException(status_code=400, detail="Resume must be 10MB or smaller.")
+    return DEMO_RESUME_TEXT, contents
+
+
+def demo_evaluation_for_answers(answers: List[str]) -> Dict[str, Any]:
+    evaluation = demo_evaluation()
+    for index, item in enumerate(evaluation.get("question_feedback", [])):
+        if index < len(answers):
+            item["candidate_answer"] = answers[index]
+    evaluation["critiques"] = evaluation.get("question_feedback", [])
+    return evaluation
+
+
+def build_demo_application(position_id: int, candidate: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "application_id": build_application_id(position_id),
+        "position_id": position_id,
+        "status": "applied",
+        "applied_at": datetime.now().isoformat(timespec="seconds"),
+        "progress": get_application_progress("applied"),
+        "match_results": demo_match_results(),
+        "custom_questions": demo_questions(),
+        "answers": [],
+        "draft_answers": demo_answers(),
+        "evaluation": {},
+        "agent_warnings": [],
+        "sourcing_pitch": "Inbound applicant with verified demo profile details.",
+        "outreach_email": candidate.get("outreach_email", ""),
+    }
 
 def ensure_candidate_bias_metadata(candidate: Dict[str, Any], db: Dict[str, Any]) -> None:
     controls = get_bias_controls(db)
@@ -1296,20 +1350,18 @@ async def replace_candidate_resume(email: str, resume: UploadFile = File(...)):
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate account not found.")
 
-    resume_text, contents = await read_resume_text(resume)
-    validate_resume_text_for_agent(resume_text)
-    profile_data, bias_artifacts, graph_warnings = run_resume_profile_upload_graph(
-        resume_text,
-        email_clean,
-        candidate.get("name", "")
-    )
+    resume_text, contents = await read_demo_resume_upload(resume)
+    await asyncio.sleep(3)
+    profile_data = normalize_profile_details(demo_profile_data(candidate.get("name", "")))
+    bias_artifacts = demo_bias_artifacts()
+    graph_warnings = [] if is_demo_resume_filename(resume.filename) else ["Demo mode used hardcoded profile data for this PDF."]
     candidate["profile_data"] = {**candidate.get("profile_data", {}), **profile_data}
     candidate["name"] = candidate["profile_data"].get("name") or candidate.get("name")
     candidate["resume_filename"] = resume.filename
     candidate["resume_path"] = save_resume_file(email_clean, resume.filename or "resume.pdf", contents)
     candidate["resume_url"] = f"/api/v1/candidates/{email_clean}/resume"
     candidate["resume_text"] = resume_text
-    candidate["resume_summary"] = get_resume_summary(candidate["profile_data"], resume_text)
+    candidate["resume_summary"] = demo_resume_summary()
     candidate["profile_verified"] = not get_missing_profile_fields(candidate["profile_data"])
     candidate["bias_analysis"] = bias_artifacts["bias_analysis"]
     candidate["neutralized_profile_data"] = bias_artifacts["neutralized_profile_data"]
@@ -1482,49 +1534,7 @@ def build_interview_for_position(db: Dict[str, Any], candidate: Dict[str, Any], 
         raise HTTPException(status_code=400, detail="Selected position is not open for applications.")
     if find_application(candidate, position_id):
         raise HTTPException(status_code=409, detail="You have already applied for this position.")
-
-    profile_data = inject_qs_ranks_into_profile(candidate.get("profile_data", {}))
-    agent_warnings: List[str] = []
-    controls = get_bias_controls(db)
-    artifacts = attach_bias_artifacts_to_candidate(candidate)
-
-    try:
-        match_results = run_matching_agent(job, profile_data, controls, artifacts["bias_analysis"])
-    except Exception as e:
-        print(f"Error running matching agent: {e}")
-        agent_warnings.append("Matching Agent failed, so a basic position-fit assessment was used.")
-        match_results = apply_bias_to_match_results({
-            "debate": {"critical_recruiter_cons": ["Stack verification required."], "talent_advocate_pros": ["Strong interest in the position."]},
-            "scores": {"technical": 75, "domain": 70, "culture": 80, "trajectory_slope": 75}
-        }, job, profile_data, controls, artifacts["bias_analysis"])
-
-    try:
-        custom_questions = run_interview_agent_phase_a(profile_data, match_results, job)
-    except Exception as e:
-        print(f"Error generating screening questions: {e}")
-        agent_warnings.append("Interview Agent question generation failed, so standard role-focused screening questions were used.")
-        custom_questions = [
-            "What technical challenge on your resume was the most architecturally complex, and how did you approach it?",
-            "How do you ensure code scalability and high performance when designing REST endpoints?",
-            "Describe how you structure React component hierarchies for high maintainability."
-        ]
-
-    application = {
-        "application_id": build_application_id(position_id),
-        "position_id": position_id,
-        "status": "applied",
-        "applied_at": datetime.now().isoformat(timespec="seconds"),
-        "progress": get_application_progress("applied"),
-        "match_results": match_results,
-        "custom_questions": custom_questions,
-        "answers": [],
-        "evaluation": {},
-        "agent_warnings": agent_warnings,
-        "sourcing_pitch": "Inbound applicant with verified profile details.",
-        "outreach_email": candidate.get("outreach_email", "")
-    }
-    if agent_warnings:
-        candidate.setdefault("agent_warnings", []).extend(agent_warnings)
+    application = build_demo_application(position_id, candidate)
     normalize_candidate_applications(candidate).append(application)
     sync_current_application(candidate, application)
     return application
@@ -1543,13 +1553,11 @@ async def signup_candidate(
         raise HTTPException(status_code=409, detail="Candidate account already exists. Please log in.")
 
     require_pending_email_verified(db, email_clean)
-    resume_text, contents = await read_resume_text(resume)
-    validate_resume_text_for_agent(resume_text)
-    profile_data, bias_artifacts, agent_warnings = run_resume_profile_upload_graph(
-        resume_text,
-        email_clean,
-        name
-    )
+    resume_text, contents = await read_demo_resume_upload(resume)
+    await asyncio.sleep(3)
+    profile_data = normalize_profile_details(demo_profile_data(name))
+    bias_artifacts = demo_bias_artifacts()
+    agent_warnings = [] if is_demo_resume_filename(resume.filename) else ["Demo mode used hardcoded profile data for this PDF."]
 
     return save_signup_candidate_record(
         db,
@@ -1636,65 +1644,30 @@ async def signup_candidate_stream(
                 )
             })
             require_pending_email_verified(db, email_clean)
+            await asyncio.sleep(1)
 
             yield sse({
-                "progress": 26,
+                "progress": 42,
                 "agent_event": emit_agent_event(
                     "tool",
                     "started",
-                    "Resume Intake Agent is extracting readable PDF text."
+                    "Resume Intake Agent is loading the hardcoded demo profile."
                 )
             })
-            resume_text, contents = await read_resume_text(resume)
-            validate_resume_text_for_agent(resume_text)
+            resume_text, contents = await read_demo_resume_upload(resume)
+            await asyncio.sleep(1)
             yield sse({
-                "progress": 30,
+                "progress": 72,
                 "agent_event": emit_agent_event(
                     "tool",
                     "completed",
-                    "Resume Intake Agent extracted readable resume text.",
-                    {"text_length": len(resume_text or "")}
+                    "Resume Intake Agent prepared the demo profile data.",
+                    {"filename": resume.filename or "resume.pdf"}
                 )
             })
-
-            graph_state = recruiting_agent_graph._initial_state({
-                "task_type": "resume_profile",
-                "candidate_email": email_clean,
-                "input": {
-                    "candidate_email": email_clean,
-                    "resume_text": resume_text,
-                    "supervisor_use_llm": False,
-                    "resume_use_llm": False,
-                    "bias_use_llm": False,
-                    "status": "profile",
-                    "source_type": "inbound",
-                    "source_method": "resume_agent_graph",
-                }
-            })
-            for event in recruiting_agent_graph.stream(graph_state):
-                yield sse({"progress": graph_progress(event), "agent_event": event})
-
-            if graph_state.get("blocked"):
-                raise HTTPException(
-                    status_code=400,
-                    detail=graph_state.get("guardrail", {}).get("reason", "Resume upload was blocked by agent guardrails.")
-                )
-
-            artifacts = graph_state.get("artifacts", {}) or {}
-            profile_data = artifacts.get("candidate_profile")
-            agent_warnings = list(graph_state.get("agent_warnings", []))
-            if not isinstance(profile_data, dict) or not profile_data:
-                agent_warnings.append("Resume Agent returned no profile, so its deterministic parser fallback was used.")
-                profile_data = parse_resume_text_fallback(resume_text)
-
-            validate_resume_agent_profile(profile_data, name)
-            profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
-            bias_artifacts = build_candidate_bias_artifacts(
-                profile_data,
-                resume_text,
-                artifacts.get("prestige_analysis") if isinstance(artifacts.get("prestige_analysis"), dict) else None,
-                use_llm=False
-            )
+            profile_data = normalize_profile_details(demo_profile_data(name))
+            bias_artifacts = demo_bias_artifacts()
+            agent_warnings = [] if is_demo_resume_filename(resume.filename) else ["Demo mode used hardcoded profile data for this PDF."]
 
             yield sse({
                 "progress": 94,
@@ -1704,6 +1677,7 @@ async def signup_candidate_stream(
                     "Persistence Agent is saving the candidate profile to Supabase."
                 )
             })
+            await asyncio.sleep(1)
             response = save_signup_candidate_record(
                 db,
                 email_clean,
@@ -1809,6 +1783,7 @@ def apply_candidate_to_position_stream(email: str, payload: CandidateApplyPositi
                     "Application Setup Agent received the selected position."
                 )
             })
+            time.sleep(1)
             db = load_db()
             candidate = db.setdefault("candidates", {}).get(email_clean)
             if not candidate:
@@ -1825,66 +1800,38 @@ def apply_candidate_to_position_stream(email: str, payload: CandidateApplyPositi
                 raise HTTPException(status_code=400, detail="Selected position is not open for applications.")
 
             yield sse({
-                "progress": 14,
+                "progress": 24,
                 "agent_event": emit_agent_event(
                     "guardrail",
                     "started",
                     "Guardrail Agent is checking application eligibility and candidate profile safety."
                 )
             })
-            graph_state = recruiting_agent_graph._initial_state({
-                "task_type": "existing_candidate_application",
-                "candidate_email": email_clean,
-                "position_id": position_id,
-                "input": {
-                    "candidate_email": email_clean,
-                    "position_id": position_id,
-                    "candidate_profile": candidate.get("profile_data", {}),
-                    "profile_data": candidate.get("profile_data", {}),
-                    "job_requirements": job,
-                    "supervisor_use_llm": False,
-                    "bias_use_llm": False,
-                    "status": "applied",
-                }
-            })
-            for event in recruiting_agent_graph.stream(graph_state):
-                yield sse({"progress": graph_progress(event), "agent_event": event})
-
-            if graph_state.get("blocked"):
-                raise HTTPException(
-                    status_code=400,
-                    detail=graph_state.get("guardrail", {}).get("reason", "Application setup blocked by guardrails.")
+            time.sleep(1)
+            yield sse({
+                "progress": 48,
+                "agent_event": emit_agent_event(
+                    "matching",
+                    "completed",
+                    "Matching Agent used the hardcoded Software Engineer fit assessment."
                 )
-
-            artifacts = graph_state.get("artifacts", {}) or {}
-            db = load_db()
-            candidate = db.setdefault("candidates", {}).get(email_clean)
-            if not candidate:
-                raise HTTPException(status_code=404, detail="Candidate account not found after graph processing.")
-            application = find_application(candidate, position_id)
-            if not application:
-                application = {
-                    "application_id": build_application_id(position_id),
-                    "position_id": position_id,
-                    "status": "applied",
-                    "applied_at": datetime.now().isoformat(timespec="seconds"),
-                    "progress": get_application_progress("applied"),
-                    "match_results": artifacts.get("match_results") or {},
-                    "custom_questions": artifacts.get("custom_questions") or [],
-                    "answers": [],
-                    "evaluation": {},
-                    "agent_warnings": graph_state.get("agent_warnings", []),
-                    "sourcing_pitch": "Inbound applicant with verified profile details.",
-                    "outreach_email": candidate.get("outreach_email", "")
-                }
-                normalize_candidate_applications(candidate).append(application)
-            else:
-                application["match_results"] = application.get("match_results") or artifacts.get("match_results") or {}
-                application["custom_questions"] = application.get("custom_questions") or artifacts.get("custom_questions") or []
-                application.setdefault("agent_warnings", []).extend(graph_state.get("agent_warnings", []))
+            })
+            time.sleep(1)
+            yield sse({
+                "progress": 72,
+                "agent_event": emit_agent_event(
+                    "interview",
+                    "completed",
+                    "Interview Agent prepared the demo screening questions and prefilled answers."
+                )
+            })
+            time.sleep(1)
+            application = build_demo_application(position_id, candidate)
+            normalize_candidate_applications(candidate).append(application)
             sync_current_application(candidate, application)
             add_notification(candidate, "Application started", "Your personalized interview questions are ready.", "application", position_id)
             save_db(db)
+            time.sleep(1)
             yield sse({
                 "progress": 100,
                 "agent_event": emit_agent_event(
@@ -1927,7 +1874,17 @@ def apply_candidate_to_position(email: str, payload: CandidateApplyPositionPaylo
     if candidate.get("email_verified", True) is False:
         raise HTTPException(status_code=403, detail="Please verify your email address before applying.")
 
-    application = build_interview_for_position(db, candidate, payload.position_id)
+    job = db.get("positions", {}).get(str(payload.position_id))
+    if not job:
+        raise HTTPException(status_code=404, detail="Selected position not found.")
+    if not is_open_for_applications(job):
+        raise HTTPException(status_code=400, detail="Selected position is not open for applications.")
+    if find_application(candidate, payload.position_id):
+        raise HTTPException(status_code=409, detail="You have already applied for this position.")
+
+    application = build_demo_application(payload.position_id, candidate)
+    normalize_candidate_applications(candidate).append(application)
+    sync_current_application(candidate, application)
     add_notification(candidate, "Application started", "Your personalized interview questions are ready.", "application", payload.position_id)
     save_db(db)
     return serialize_application_candidate(candidate, email_clean, application)
@@ -2094,9 +2051,8 @@ async def apply_inbound(
         raise HTTPException(status_code=409, detail="You have already applied for this position.")
     if not existing_candidate:
         require_pending_email_verified(db, email_clean)
-    resume_text, contents = await read_resume_text(resume)
-    validate_resume_text_for_agent(resume_text)
-    agent_warnings: List[str] = []
+    resume_text, contents = await read_demo_resume_upload(resume)
+    agent_warnings: List[str] = [] if is_demo_resume_filename(resume.filename) else ["Demo mode used hardcoded profile data for this PDF."]
 
     job = db.get("positions", {}).get(str(position_id))
     if not job:
@@ -2104,54 +2060,13 @@ async def apply_inbound(
     if not is_open_for_applications(job):
         raise HTTPException(status_code=400, detail="Selected position is not open for applications.")
 
-    try:
-        graph_result = run_agent_graph("inbound_application", {
-            "candidate_email": email_clean,
-            "position_id": position_id,
-            "input": {
-                "candidate_email": email_clean,
-                "position_id": position_id,
-                "resume_text": resume_text,
-                "job_requirements": job,
-                "supervisor_use_llm": False,
-                "resume_use_llm": False,
-                "bias_use_llm": False,
-                "status": "applied",
-            }
-        })
-        if graph_result.get("blocked"):
-            raise HTTPException(status_code=400, detail=graph_result.get("guardrail", {}).get("reason", "Application input blocked by guardrails."))
-        artifacts = graph_result.get("artifacts", {})
-        profile_data = artifacts.get("candidate_profile") or parse_resume_text_fallback(resume_text)
-        validate_resume_agent_profile(profile_data, name)
-        profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
-        bias_analysis = artifacts.get("prestige_analysis") or analyze_prestige_indicators(profile_data, resume_text, use_llm=False)
-        bias_artifacts = {
-            "bias_analysis": bias_analysis,
-            "neutralized_profile_data": neutralize_candidate_profile(profile_data, bias_analysis)
-        }
-        match_results = artifacts.get("match_results") or build_fast_match_results(job, profile_data, get_bias_controls(db), bias_artifacts["bias_analysis"])
-        custom_questions = artifacts.get("custom_questions") or run_interview_agent_phase_a(profile_data, match_results, job)
-        agent_warnings.extend(graph_result.get("agent_warnings", []))
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        print(f"Error running inbound agent graph: {e}")
-        agent_warnings.append("Agent graph failed, so the legacy resume and screening pipeline was used.")
-        profile_data = parse_resume_text_fallback(resume_text)
-        validate_resume_agent_profile(profile_data, name)
-        profile_data = normalize_profile_details(apply_resume_extraction_warning(profile_data, resume_text))
-        controls = get_bias_controls(db)
-        bias_artifacts = build_candidate_bias_artifacts(profile_data, resume_text, use_llm=False)
-        match_results = build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
-        custom_questions = [
-            "What technical challenge on your resume was the most architecturally complex, and how did you approach it?",
-            "How do you ensure code scalability and high performance when designing REST endpoints?",
-            "Describe how you structure React component hierarchies for high maintainability."
-        ]
+    profile_data = normalize_profile_details(demo_profile_data(name))
+    bias_artifacts = demo_bias_artifacts()
+    match_results = demo_match_results()
+    custom_questions = demo_questions()
         
     resume_path = save_resume_file(email_clean, resume.filename or "resume.pdf", contents)
-    resume_summary = get_resume_summary(profile_data, resume_text)
+    resume_summary = demo_resume_summary()
     applied_at = datetime.now().isoformat(timespec="seconds")
     application = {
         "application_id": build_application_id(position_id),
@@ -2162,6 +2077,7 @@ async def apply_inbound(
         "match_results": match_results,
         "custom_questions": custom_questions,
         "answers": [],
+        "draft_answers": demo_answers(),
         "evaluation": {},
         "sourcing_pitch": "Inbound applicant with verified profile details.",
         "outreach_email": "Thank you for applying!"
@@ -2292,41 +2208,42 @@ def submit_sandbox_stream(email: str, payload: SandboxAnswers):
                     "Screening Evaluation Agent received the candidate answers."
                 )
             })
-            graph_state = recruiting_agent_graph._initial_state({
-                "task_type": "sandbox_evaluation",
-                "candidate_email": email_clean,
-                "position_id": job_id,
-                "input": {
-                    "candidate_email": email_clean,
-                    "position_id": job_id,
-                    "questions": application.get("custom_questions", []),
-                    "answers": payload.answers,
-                    "job_requirements": job,
-                    "candidate_profile": candidate.get("profile_data", {}),
-                    "match_results": application.get("match_results") or candidate.get("match_results", {}),
-                    "supervisor_use_llm": False,
-                    "status": application.get("status", "applied"),
-                }
-            })
-            for event in recruiting_agent_graph.stream(graph_state):
-                yield sse({"progress": graph_progress(event), "agent_event": event})
-
-            if graph_state.get("blocked"):
-                raise HTTPException(
-                    status_code=400,
-                    detail=graph_state.get("guardrail", {}).get("reason", "Screening answers blocked by guardrails.")
+            time.sleep(1)
+            yield sse({
+                "progress": 30,
+                "agent_event": emit_agent_event(
+                    "evaluation",
+                    "started",
+                    "Screening Evaluation Agent is comparing answers to the Software Engineer rubric."
                 )
-
-            artifacts = graph_state.get("artifacts", {}) or {}
-            evaluation = artifacts.get("evaluation") or build_position_specific_evaluation(application.get("custom_questions", []), payload.answers, job)
-            report_data = artifacts.get("report") or {}
-            roadmap = report_data.get("upskilling_roadmap", {})
+            })
+            time.sleep(1)
+            yield sse({
+                "progress": 55,
+                "agent_event": emit_agent_event(
+                    "report",
+                    "started",
+                    "Report Agent is preparing hardcoded candidate feedback."
+                )
+            })
+            time.sleep(1)
+            evaluation = demo_evaluation_for_answers(payload.answers)
+            roadmap = evaluation.get("upskilling_roadmap", {})
             next_status = (
                 "rejected"
                 if int(evaluation.get("screening_score", 100) or 100) <= settings.AGENT_REJECT_MAX_SCREENING_SCORE
                 and str(evaluation.get("hiring_recommendation", "")).lower() == "reject"
                 else "screening"
             )
+            yield sse({
+                "progress": 78,
+                "agent_event": emit_agent_event(
+                    "persistence",
+                    "started",
+                    "Persistence Agent is saving the screening result to Supabase."
+                )
+            })
+            time.sleep(1)
             db = load_db()
             candidate = db.setdefault("candidates", {}).get(email_clean)
             if not candidate:
@@ -2352,11 +2269,9 @@ def submit_sandbox_stream(email: str, payload: SandboxAnswers):
                 "role_alignment_summary": evaluation.get("role_alignment_summary", ""),
                 "upskilling_roadmap": roadmap
             }
-            if graph_state.get("agent_warnings"):
-                application.setdefault("agent_warnings", []).extend(graph_state.get("agent_warnings", []))
-                candidate.setdefault("agent_warnings", []).extend(graph_state.get("agent_warnings", []))
             sync_current_application(candidate, application)
             save_db(db)
+            time.sleep(1)
             yield sse({
                 "progress": 100,
                 "agent_event": emit_agent_event(
@@ -2414,40 +2329,9 @@ def submit_sandbox(email: str, payload: SandboxAnswers):
     application["screening_submitted_at"] = datetime.now().isoformat(timespec="seconds")
     candidate.setdefault("draft_answers", {})[str(application.get("position_id"))] = payload.answers
 
-    # Fetch job requirements
     job_id = application.get("position_id")
-    job = db.get("positions", {}).get(str(job_id), {})
-    
-    agent_warnings: List[str] = []
-    try:
-        graph_result = run_agent_graph("sandbox_evaluation", {
-            "candidate_email": email_clean,
-            "position_id": job_id,
-            "input": {
-                "candidate_email": email_clean,
-                "position_id": job_id,
-                "questions": application.get("custom_questions", []),
-                "answers": payload.answers,
-                "job_requirements": job,
-                "candidate_profile": candidate.get("profile_data", {}),
-                "match_results": application.get("match_results") or candidate.get("match_results", {}),
-                "supervisor_use_llm": False,
-                }
-        })
-        if graph_result.get("blocked"):
-            raise HTTPException(status_code=400, detail=graph_result.get("guardrail", {}).get("reason", "Screening answers blocked by guardrails."))
-        artifacts = graph_result.get("artifacts", {})
-        evaluation = artifacts.get("evaluation") or build_position_specific_evaluation(application.get("custom_questions", []), payload.answers, job)
-        report_data = artifacts.get("report") or {}
-        roadmap = report_data.get("upskilling_roadmap", {})
-        agent_warnings.extend(graph_result.get("agent_warnings", []))
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        print(f"Error evaluating sandbox answers: {e}")
-        agent_warnings.append("Agent graph failed, so a basic response review was used.")
-        evaluation = build_position_specific_evaluation(application.get("custom_questions", []), payload.answers, job)
-        roadmap = {}
+    evaluation = demo_evaluation_for_answers(payload.answers)
+    roadmap = evaluation.get("upskilling_roadmap", {})
         
     next_status = (
         "rejected"
@@ -2470,9 +2354,6 @@ def submit_sandbox(email: str, payload: SandboxAnswers):
         "role_alignment_summary": evaluation.get("role_alignment_summary", ""),
         "upskilling_roadmap": roadmap
     }
-    if agent_warnings:
-        application.setdefault("agent_warnings", []).extend(agent_warnings)
-        candidate.setdefault("agent_warnings", []).extend(agent_warnings)
     sync_current_application(candidate, application)
     
     save_db(db)
@@ -2481,83 +2362,15 @@ def submit_sandbox(email: str, payload: SandboxAnswers):
 @router.post("/scrape")
 def scrape_profile(payload: ScrapePayload):
     db = load_db()
-
-    # Fetch job requirements
     job = db.get("positions", {}).get(str(payload.position_id))
     if not job:
         raise HTTPException(status_code=404, detail="Selected position not found.")
 
-    try:
-        profile_data = scrape_live_linkedin_profile(payload.linkedin_url.strip())
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-
-    candidate_name = profile_data["name"]
-    candidate_email = profile_data["email"]
-    controls = get_bias_controls(db)
-    try:
-        graph_result = run_agent_graph("sourced_candidate", {
-            "candidate_email": candidate_email,
-            "position_id": payload.position_id,
-            "input": {
-                "candidate_email": candidate_email,
-                "position_id": payload.position_id,
-                "candidate_profile": profile_data,
-                "job_requirements": job,
-                "supervisor_use_llm": False,
-                "bias_use_llm": False,
-                "source_method": profile_data.get("source_method", "manual_apify"),
-            }
-        })
-        if graph_result.get("blocked"):
-            raise HTTPException(status_code=400, detail=graph_result.get("guardrail", {}).get("reason", "LinkedIn profile blocked by guardrails."))
-        artifacts = graph_result.get("artifacts", {})
-        bias_analysis = artifacts.get("prestige_analysis") or analyze_prestige_indicators(profile_data)
-        bias_artifacts = {
-            "bias_analysis": bias_analysis,
-            "neutralized_profile_data": neutralize_candidate_profile(profile_data, bias_analysis)
-        }
-        match_results = artifacts.get("match_results") or build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
-        custom_questions = artifacts.get("custom_questions") or run_interview_agent_phase_a(profile_data, match_results, job)
-        report_data = artifacts.get("report") or build_fast_outreach(profile_data, job)
-        sourcing_pitch = report_data.get("sourcing_pitch", "")
-        outreach_email = report_data.get("outreach_email", "")
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        print(f"Scraper report synthesis error: {e}")
-        bias_artifacts = build_candidate_bias_artifacts(profile_data)
-        match_results = build_fast_match_results(job, profile_data, controls, bias_artifacts["bias_analysis"])
-        custom_questions = run_interview_agent_phase_a(profile_data, match_results, job)
-        report_data = build_fast_outreach(profile_data, job)
-        sourcing_pitch = report_data["sourcing_pitch"]
-        outreach_email = report_data["outreach_email"]
-
-    staged_candidate = {
-        "name": candidate_name,
-        "email": candidate_email,
-        "status": "staged",
-        "position_id": payload.position_id,
-        "is_sourced": True,
-        "source_type": "linkedin",
-        "source_method": profile_data.get("source_method", "manual_apify"),
-        "linkedin_url": profile_data.get("source_url") or payload.linkedin_url,
-        "profile_data": profile_data,
-        "bias_analysis": bias_artifacts["bias_analysis"],
-        "neutralized_profile_data": bias_artifacts["neutralized_profile_data"],
-        "sourcing_pitch": sourcing_pitch,
-        "outreach_email": outreach_email,
-        "match_results": match_results,
-        "custom_questions": custom_questions,
-        "answers": [],
-        "evaluation": {},
-        "notifications": [],
-        "outreach_history": []
-    }
-    
-    # Store staged candidate in database staging state
+    profile_data = demo_linkedin_profiles(1)[0]
+    if payload.linkedin_url.strip():
+        profile_data["source_url"] = payload.linkedin_url.strip()
+    staged_candidate = demo_sourced_candidate(profile_data, payload.position_id, rank=0)
+    candidate_email = staged_candidate["email"]
     db.setdefault("candidates", {})[candidate_email] = staged_candidate
     save_db(db)
     
@@ -2569,6 +2382,25 @@ def auto_source_candidates(payload: AutoSourcePayload):
     job = db.get("positions", {}).get(str(payload.position_id))
     if not job:
         raise HTTPException(status_code=404, detail="Selected position not found.")
+
+    def demo_event_generator():
+        generated = []
+        yield f"data: {json.dumps({'log': 'Demo LinkedIn auto-search initialized. No external search will be called.'})}\n\n"
+        time.sleep(0.5)
+        for index, profile_data in enumerate(demo_linkedin_profiles(payload.count)):
+            candidate_name = profile_data["name"]
+            yield f"data: {json.dumps({'log': f'Hardcoded search result found: {candidate_name}.'})}\n\n"
+            time.sleep(0.5)
+            candidate_record = demo_sourced_candidate(profile_data, payload.position_id, rank=index)
+            db.setdefault("candidates", {})[candidate_record["email"]] = candidate_record
+            generated.append(serialize_candidate(candidate_record, candidate_record["email"]))
+            yield f"data: {json.dumps({'log': f'Staged demo candidate {candidate_name} for Software Engineer.'})}\n\n"
+            time.sleep(0.5)
+        save_db(db)
+        yield f"data: {json.dumps({'result': generated})}\n\n"
+
+    return StreamingResponse(demo_event_generator(), media_type="text/event-stream")
+
     controls = get_bias_controls(db)
 
     def event_generator():

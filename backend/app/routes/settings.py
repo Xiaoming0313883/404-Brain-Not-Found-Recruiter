@@ -139,7 +139,5 @@ def patch_bias_controls(payload: BiasControlsPayload):
         if value is not None
     }
     controls = update_bias_controls(db, updates)
-    if "scoring_mode" in updates or "prestige_weight" in updates:
-        reapply_bias_scoring(db, controls)
     save_db(db)
     return controls

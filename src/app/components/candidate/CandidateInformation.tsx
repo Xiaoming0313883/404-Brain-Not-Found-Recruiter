@@ -67,6 +67,22 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
   };
 
   const mergeCandidate = (data: any) => {
+    const profileData = data.profile_data || {};
+    const nextForm = {
+      name: data.name || candidateData.name || '',
+      age: profileData.age || '',
+      phone: profileData.phone || '',
+      address: profileData.address || '',
+      cameFrom: profileData.came_from || '',
+      location: profileData.location || '',
+      headline: profileData.headline || '',
+      workExperience: profileData.work_experience || '',
+      qualification: profileData.qualification || '',
+      gradeResults: profileData.grade_results || '',
+      awards: (profileData.awards || []).join(', '),
+      skills: (profileData.skills || []).join(', ')
+    };
+    setForm(nextForm);
     onUpdateCandidate({
       ...candidateData,
       name: data.name,
@@ -76,20 +92,20 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
       profileVerified: data.profile_verified,
       profileMissingFields: data.profile_missing_fields || [],
       profileCompletion: data.profile_completion,
-      age: data.profile_data?.age || '',
-      phone: data.profile_data?.phone || '',
-      address: data.profile_data?.address || '',
-      cameFrom: data.profile_data?.came_from || '',
-      location: data.profile_data?.location || '',
-      headline: data.profile_data?.headline || '',
-      about: data.profile_data?.about || '',
-      workExperience: data.profile_data?.work_experience || '',
-      qualification: data.profile_data?.qualification || '',
-      gradeResults: data.profile_data?.grade_results || '',
-      awards: data.profile_data?.awards || [],
-      skills: data.profile_data?.skills || [],
-      experiences: data.profile_data?.experiences || candidateData.experiences,
-      education: data.profile_data?.education || candidateData.education,
+      age: profileData.age || '',
+      phone: profileData.phone || '',
+      address: profileData.address || '',
+      cameFrom: profileData.came_from || '',
+      location: profileData.location || '',
+      headline: profileData.headline || '',
+      about: profileData.about || '',
+      workExperience: profileData.work_experience || '',
+      qualification: profileData.qualification || '',
+      gradeResults: profileData.grade_results || '',
+      awards: profileData.awards || [],
+      skills: profileData.skills || [],
+      experiences: profileData.experiences || candidateData.experiences,
+      education: profileData.education || candidateData.education,
       notifications: data.notifications || candidateData.notifications
     });
   };
@@ -149,15 +165,20 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
       return;
     }
     setIsSaving(true);
-    setUploadProgress(0);
+    setUploadProgress(kind === 'resume' ? 5 : 0);
     setErrorMessage('');
     setMessage('');
     const formData = new FormData();
     formData.append(kind === 'resume' ? 'resume' : 'image', file);
     const xhr = new XMLHttpRequest();
+    const progressTimer = kind === 'resume'
+      ? window.setInterval(() => {
+          setUploadProgress(current => current === null ? current : Math.min(95, current + 8));
+        }, 300)
+      : null;
     xhr.upload.addEventListener('progress', (e) => {
       if (e.lengthComputable) {
-        setUploadProgress(Math.round((e.loaded / e.total) * 100));
+        setUploadProgress(kind === 'resume' ? Math.min(80, Math.round((e.loaded / e.total) * 80)) : Math.round((e.loaded / e.total) * 100));
       }
     });
     xhr.addEventListener('load', () => {
@@ -175,15 +196,18 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
       } catch {
         setErrorMessage('Upload failed. Server returned an unexpected response.');
       }
+      if (progressTimer) window.clearInterval(progressTimer);
       setUploadProgress(null);
       setIsSaving(false);
     });
     xhr.addEventListener('error', () => {
+      if (progressTimer) window.clearInterval(progressTimer);
       setErrorMessage('Upload failed. Please check your connection and try again.');
       setUploadProgress(null);
       setIsSaving(false);
     });
     xhr.addEventListener('timeout', () => {
+      if (progressTimer) window.clearInterval(progressTimer);
       setErrorMessage('Upload timed out. The file may be too large, or your connection is slow.');
       setUploadProgress(null);
       setIsSaving(false);
@@ -293,7 +317,7 @@ export function CandidateInformation({ candidateData, onUpdateCandidate, onSignO
             {uploadProgress !== null && (
               <div className="mt-3">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs text-[#6b7063] font-medium">Uploading resume...</span>
+                  <span className="text-xs text-[#6b7063] font-medium">Analyzing demo resume...</span>
                   <span className="text-xs text-[#2d6a55] font-semibold">{uploadProgress}%</span>
                 </div>
                 <div className="w-full bg-[#e4e1da] rounded-full h-2 overflow-hidden">

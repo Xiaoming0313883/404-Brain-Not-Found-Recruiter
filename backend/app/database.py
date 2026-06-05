@@ -74,6 +74,15 @@ def _execute(query: Any) -> List[Dict[str, Any]]:
         raise
 
 
+def _is_missing_table_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "pgrst205" in message
+        or "could not find the table" in message
+        or ("schema cache" in message and "table" in message)
+    )
+
+
 def _row_payload(row: Dict[str, Any]) -> Dict[str, Any]:
     payload = row.get("payload")
     return payload if isinstance(payload, dict) else {}
@@ -85,35 +94,45 @@ def _table_key_set(table: str, key: str) -> set[str]:
 
 
 def init_db() -> None:
-    """Validate the Supabase connection and seed the default job when empty."""
+    """Validate the Supabase connection and required tables."""
     client = get_supabase_client()
     try:
-        rows = _execute(client.table("positions").select("id").limit(1))
+        _execute(client.table("positions").select("id").limit(1))
     except Exception as exc:
         raise RuntimeError(
             "Supabase tables are unavailable. Run backend/supabase_schema.sql in the Supabase SQL editor."
         ) from exc
 
-    if rows:
-        return
 
-    default_job = {
-        "id": 1,
-        "title": "Senior Full-Stack Engineer",
-        "department": "Engineering",
-        "description": "We are seeking an experienced full-stack engineer to build scalable distributed systems.",
-        "requirements": ["5+ years experience", "React & Node.js", "Distributed systems"],
-        "active": True,
-        "open_time": "2026-01-01T00:00",
-        "end_time": "2026-12-31T23:59",
-        "created_at": "2026-01-15T09:00",
-        "sourcing_criteria": {},
-        "intake_chat": [],
-        "pillars": ["React", "Node.js", "Distributed Systems"],
-        "behavioral": ["Collaborative Problem Solving", "Technical Leadership"],
-        "boolean_queries": "(\"Senior Full-Stack Engineer\") AND (\"React\" OR \"Node.js\") AND (\"Distributed Systems\")",
-    }
-    save_db({"positions": {"1": default_job}, "candidates": {}, "settings": {}})
+def reset_demo_data() -> Dict[str, int]:
+    """Delete all app-owned demo rows from Supabase while keeping schema and RLS intact."""
+    with db_lock:
+        client = get_supabase_client()
+        table_filters = [
+            ("email_drafts", "id", "00000000-0000-0000-0000-000000000000"),
+            ("email_events", "id", "00000000-0000-0000-0000-000000000000"),
+            ("agent_actions", "id", "00000000-0000-0000-0000-000000000000"),
+            ("agent_checkpoints", "id", "00000000-0000-0000-0000-000000000000"),
+            ("agent_events", "id", "00000000-0000-0000-0000-000000000000"),
+            ("applications", "id", ""),
+            ("candidates", "email", ""),
+            ("positions", "id", -1),
+            ("pending_email_verifications", "email", ""),
+            ("settings", "key", ""),
+            ("institution_ranking_cache", "institution_name", ""),
+        ]
+        deleted: Dict[str, int] = {}
+        for table, key, sentinel in table_filters:
+            try:
+                existing = _execute(client.table(table).select(key))
+                _execute(client.table(table).delete().neq(key, sentinel))
+                deleted[table] = len(existing)
+            except Exception as exc:
+                if _is_missing_table_error(exc):
+                    deleted[table] = 0
+                    continue
+                raise
+        return deleted
 
 
 def load_db() -> Dict[str, Any]:

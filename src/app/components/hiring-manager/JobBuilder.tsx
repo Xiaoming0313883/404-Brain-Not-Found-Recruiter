@@ -55,6 +55,35 @@ const applicantStatuses = new Set([
   'rejected'
 ]);
 
+const demoJobDescription = 'Build and maintain full-stack product features for 404Hire using React, TypeScript, API services, and Supabase-backed workflows. The role focuses on reliable user flows, clean data handling, and fast iteration for hiring teams.';
+
+const demoJobRequirements = [
+  'React and TypeScript application development',
+  'API integration with Node.js or Python services',
+  'PostgreSQL or Supabase data modeling',
+  'Testing, debugging, and production-minded delivery',
+  'Clear communication of technical trade-offs'
+];
+
+const demoSourcingContext = {
+  agent_summary: 'Search for Software Engineer candidates with React, TypeScript, API, and Supabase/PostgreSQL evidence.',
+  generated_description: demoJobDescription,
+  generated_requirements: demoJobRequirements,
+  must_have_signals: ['React', 'TypeScript', 'API integration', 'Supabase', 'PostgreSQL'],
+  avoid_signals: ['No hands-on software delivery evidence'],
+  search_keywords: 'React TypeScript Node.js FastAPI Supabase PostgreSQL Software Engineer',
+  role_family: 'technical',
+  completeness_score: 100
+};
+
+const DEMO_AGENT_ANALYSIS_DELAY_MS = 5000;
+
+const waitForDemoAgentAnalysis = (startedAt: number) =>
+  new Promise(resolve => {
+    const elapsed = Date.now() - startedAt;
+    window.setTimeout(resolve, Math.max(0, DEMO_AGENT_ANALYSIS_DELAY_MS - elapsed));
+  });
+
 export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJob }: Props) {
   const [isCreating, setIsCreating] = useState(false);
   const [title, setTitle] = useState('');
@@ -82,7 +111,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
   const previousChatMessageCountRef = useRef(chatMessages.length);
 
   useEffect(() => {
-    if (chatMessages.length <= previousChatMessageCountRef.current) {
+    if (!isAgentThinking && chatMessages.length <= previousChatMessageCountRef.current) {
       previousChatMessageCountRef.current = chatMessages.length;
       return;
     }
@@ -94,10 +123,20 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
       });
     }
     previousChatMessageCountRef.current = chatMessages.length;
-  }, [chatMessages.length]);
+  }, [chatMessages.length, isAgentThinking]);
 
   const startCreate = () => {
     resetForm();
+    setTitle('Software Engineer');
+    setDepartment('Engineering');
+    setDescription(demoJobDescription);
+    setAddress('Technology Park Malaysia, Kuala Lumpur');
+    setRequirements(demoJobRequirements);
+    setIntakeContext(demoSourcingContext);
+    setIsIntakeComplete(true);
+    setChatMessages([
+      { role: 'agent', content: 'I prepared the Software Engineer demo role with editable requirements and sourcing criteria.' }
+    ]);
     setOpenTime(getDefaultOpenTime());
     setEndTime(getDefaultEndTime());
     setBuilderStep('basic');
@@ -248,6 +287,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
   const requestRequirementAgentTurn = async (messages: Array<{ role: 'agent' | 'manager'; content: string }>) => {
     setIsAgentThinking(true);
     setActionError('');
+    const startedAt = Date.now();
     try {
       const response = await fetch(`${API_BASE_URL}/jobs/intake`, {
         method: 'POST',
@@ -259,21 +299,24 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
         throw new Error(errorData.detail || 'Requirement Agent could not continue intake.');
       }
       const data = await response.json();
+      await waitForDemoAgentAnalysis(startedAt);
       setIntakeContext(data.context || {});
       setIsIntakeComplete(Boolean(data.is_complete));
+      if (data.context?.generated_description) {
+        setDescription(data.context.generated_description);
+      }
+      if (data.context?.generated_requirements?.length) {
+        setRequirements(data.context.generated_requirements);
+      }
       if (data.is_complete) {
-        if (data.context?.generated_description) {
-          setDescription(data.context.generated_description);
-        }
-        if (data.context?.generated_requirements?.length) {
-          setRequirements(data.context.generated_requirements);
-        }
+        setChatInput('');
         setChatMessages([
           ...messages,
           { role: 'agent', content: data.context?.agent_summary || 'I prepared draft values below. Please edit them before saving the position.' }
         ]);
       } else {
         setChatMessages([...messages, { role: 'agent', content: data.question }]);
+        setChatInput(data.prefill_answer || '');
       }
     } catch (err: any) {
       setActionError(err instanceof TypeError ? API_UNREACHABLE_MESSAGE : err.message || 'Requirement Agent intake failed.');
@@ -285,7 +328,8 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
   const beginAdaptiveIntake = () => {
     setBuilderStep('intake');
     setIsIntakeComplete(false);
-    setIntakeContext({});
+    setIntakeContext(demoSourcingContext);
+    setChatInput('');
     requestRequirementAgentTurn([]);
   };
 
@@ -399,7 +443,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g., Senior Full-Stack Engineer"
+                placeholder="e.g., Software Engineer"
                 className={inputClass}
               />
             </div>
@@ -555,9 +599,19 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
               ))}
               {isAgentThinking && (
                 <div className="flex justify-start">
-                  <div className="max-w-[82%] rounded-xl px-4 py-3 text-sm leading-relaxed bg-[#f0ede8] text-[#6b7063] inline-flex items-center gap-2">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Requirement Agent is thinking...
+                  <div className="max-w-[82%] rounded-xl px-4 py-3 text-sm leading-relaxed bg-[#f0ede8] text-[#6b7063]">
+                    <div className="inline-flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-[#2d6a55]" />
+                      <span>AI analysis in progress</span>
+                      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#2d6a55] animate-bounce" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#2d6a55] animate-bounce [animation-delay:120ms]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#2d6a55] animate-bounce [animation-delay:240ms]" />
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#8a877f] mt-1">
+                      Sourcing Intake Agent is reviewing the job context and preparing the next prefilled answer.
+                    </p>
                   </div>
                 </div>
               )}
@@ -578,7 +632,7 @@ export function JobBuilder({ jobs, candidates, onAddJob, onUpdateJob, onDeleteJo
                   className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#2d6a55] text-white rounded-lg hover:bg-[#245747] disabled:bg-[#e4e1da] disabled:text-[#a8a49d] disabled:cursor-not-allowed transition-colors text-sm"
                 >
                   {isAgentThinking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                  Send
+                  {isAgentThinking ? 'Analyzing...' : 'Send'}
                 </button>
               </div>
             ) : (

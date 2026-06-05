@@ -182,7 +182,7 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
     setErrorMessage('');
 
     try {
-      setProcessingLogs(['Manual sourcing request sent to backend agent graph.']);
+      setProcessingLogs(['Manual demo sourcing request sent to the hardcoded LinkedIn fixture.']);
 
       const response = await fetch(`${API_BASE_URL}/candidates/scrape`, {
         method: 'POST',
@@ -202,9 +202,7 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
       
       setProcessingLogs(prev => [
         ...prev,
-        data.profile_data?.source_method === 'manual_apify'
-          ? 'Live Apify profile data captured.'
-          : 'Authenticated LinkedIn profile data captured.',
+        'Hardcoded demo LinkedIn profile returned. No external search was performed.',
         `Position Fit Score Calculated: ${data.match_results?.scores?.overall_position_fit || data.match_results?.scores?.technical || 80}%`,
         `Trajectory Slope Calculated: ${data.match_results?.scores?.trajectory_slope || 80}%`
       ]);
@@ -217,10 +215,10 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
       toast.success('Candidate staged. Review the draft before sending an invitation.');
     } catch (err: any) {
       console.error(err);
-      const message = err.message || 'Live LinkedIn profile extraction failed. No candidate was staged.';
+      const message = err.message || 'Demo LinkedIn profile extraction failed. No candidate was staged.';
       setErrorMessage(message);
       toast.error(message);
-      setProcessingLogs(prev => [...prev, 'Profile extraction stopped. No URL-only or simulated candidate was staged.']);
+      setProcessingLogs(prev => [...prev, 'Profile extraction stopped. No demo candidate was staged.']);
     } finally {
       setIsProcessing(false);
     }
@@ -418,7 +416,7 @@ export function LinkedInScraper({ jobs, candidates, onAddCandidate, onUpdateStat
               <div className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
               <div className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
               <div className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
-              <span className="text-[#4a5568] text-xs ml-2">agent graph - live sourcing</span>
+              <span className="text-[#4a5568] text-xs ml-2">demo sourcing fixture</span>
             </div>
             {processingLogs.map((log, idx) => (
               <div key={idx} className="text-[#8fb4b4] mb-1 text-xs leading-relaxed">

@@ -16,16 +16,26 @@ interface Props {
 }
 
 const defaultQuestions = [
-  "How would you approach designing a fault-tolerant message distribution system with less than 50ms latency using Node.js?",
-  "Can you describe a specific time you identified a critical bottleneck in a React client application and how you resolved it?",
-  "What is your approach to handling database replication lag in a high-throughput, globally distributed application?"
+  "Describe a full-stack feature you built with React and an API backend. What decisions made it reliable?",
+  "How would you design a Supabase or PostgreSQL-backed workflow that must avoid duplicate candidate applications?",
+  "Tell us about a time you improved frontend performance or maintainability in a React application."
+];
+
+const demoAnswers = [
+  "I built a recruiter dashboard with React, TypeScript, and FastAPI. I kept the UI reliable by separating API mapping from component state, validating required fields before requests, and adding focused tests around the save flow.",
+  "I would enforce a unique application id using candidate email and position id, then use idempotent upserts. The UI should block duplicate submissions, but Supabase constraints and backend checks should be the source of truth.",
+  "On a capstone project I reduced repeated state updates in a candidate list, memoized derived filters, and moved expensive formatting out of render loops. The page became easier to maintain and noticeably faster during review demos."
 ];
 
 export function CandidateSandbox({ candidateData, onComplete, onAgentError }: Props) {
   const navigate = useNavigate();
   const initialAnswers = useMemo(() => {
     const currentDraft = candidateData.applications?.find(application => application.position_id === candidateData.jobId)?.draft_answers;
-    const storedAnswers = candidateData.sandboxAnswers || currentDraft || [];
+    const storedAnswers = candidateData.sandboxAnswers?.length
+      ? candidateData.sandboxAnswers
+      : currentDraft?.length
+        ? currentDraft
+        : demoAnswers;
     return [storedAnswers[0] || '', storedAnswers[1] || '', storedAnswers[2] || ''];
   }, [candidateData]);
   const [answers, setAnswers] = useState<string[]>(initialAnswers);

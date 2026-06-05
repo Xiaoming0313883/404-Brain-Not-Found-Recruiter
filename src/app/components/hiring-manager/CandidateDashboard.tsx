@@ -185,6 +185,29 @@ export const cleanQuestionText = (text: string, index?: number): string => {
   return cleaned.trim();
 };
 
+const NEUTRAL_ENTITY_LABELS = [
+  { names: ['Universiti Teknologi Malaysia', 'Universiti Malaya'], label: 'Public university' },
+  { names: ['Selangor Matriculation College'], label: 'Public matriculation college' },
+  { names: ['SMK Pasir Panjang'], label: 'Secondary school' },
+  { names: ['SJKC Chung Hwa Telok Kemang'], label: 'Primary school' },
+  { names: ['PPD Port Dickson'], label: 'District education office' },
+  { names: ['Asia Pacific University', "Taylor's University"], label: 'Private university' },
+  { names: ['Selangor Vocational College'], label: 'Vocational college' },
+  { names: ['Professional Training Institute'], label: 'Training institution' },
+  { names: ['Universiti Kuala Lumpur'], label: 'University' },
+  { names: ['Nimbus Product Studio', 'BrightApps'], label: 'Product company' },
+  { names: ['Orbit Systems'], label: 'Software company' },
+  { names: ['Verified Prototype Talent Pool'], label: 'Talent program' },
+  { names: ['Regional Product Studio', 'Startup Experience Lab'], label: 'Product studio' },
+  { names: ['Google', 'Facebook', 'Meta', 'Apple', 'Amazon', 'Microsoft', 'Netflix'], label: 'Large technology company' },
+  { names: ['McKinsey', 'BCG', 'Bain'], label: 'Consulting firm' },
+  { names: ['Goldman Sachs', 'Morgan Stanley', 'JP Morgan'], label: 'Investment bank' },
+  { names: ['Harvard', 'Yale', 'Stanford', 'MIT', 'Princeton'], label: 'Research university' },
+  { names: ['Berkeley', 'UCLA', 'Michigan', 'Cornell'], label: 'State university' },
+];
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 export function CandidateDashboard({
   jobs,
   candidates,
@@ -310,6 +333,7 @@ export function CandidateDashboard({
   const [scheduleTime, setScheduleTime] = useState<string>('');
   const [scheduleLocation, setScheduleLocation] = useState<string>('To be confirmed');
   const [scheduleNotes, setScheduleNotes] = useState<string>('');
+  const [isSchedulingInterview, setIsSchedulingInterview] = useState(false);
 
   const activePositions = jobs.filter(job => job.isOpenForApplications).length;
   const selectedJob = selectedPositionId === 'all' ? null : jobs.find(job => job.id === selectedPositionId);
@@ -347,8 +371,30 @@ export function CandidateDashboard({
     }));
   }, [scopedCandidates, anonymizedMode]);
 
+  const neutralizeEntityName = (text: string | undefined, fallback: string): string => {
+    const value = (text || '').trim();
+    if (!value) return '';
+    if (!neutralize) return value;
+    const matchedEntity = NEUTRAL_ENTITY_LABELS.find(entity =>
+      entity.names.some(name => value.toLowerCase().includes(name.toLowerCase()))
+    );
+    return matchedEntity?.label || fallback;
+  };
+
+  const neutralizeCompanyName = (text: string | undefined): string =>
+    neutralizeEntityName(text, 'Organization');
+
+  const neutralizeSchoolName = (text: string | undefined): string =>
+    neutralizeEntityName(text, 'Education institution');
+
   const neutralizeText = (text: string): string => {
-    if (!neutralize) return text;
+    if (!neutralize || !text) return text;
+    let result = text;
+    NEUTRAL_ENTITY_LABELS.forEach(({ names, label }) => {
+      names.forEach(name => {
+        result = result.replace(new RegExp(escapeRegExp(name), 'gi'), label.toLowerCase());
+      });
+    });
     const replacements = [
       { pattern: /Google|Facebook|Meta|Apple|Amazon|Microsoft|Netflix/gi, replacement: '[Tier-1 Tech Corporation]' },
       { pattern: /McKinsey|BCG|Bain/gi, replacement: '[Tier-1 Consulting Firm]' },
@@ -356,7 +402,6 @@ export function CandidateDashboard({
       { pattern: /Harvard|Yale|Stanford|MIT|Princeton/gi, replacement: '[Tier-1 Research University]' },
       { pattern: /Berkeley|UCLA|Michigan|Cornell/gi, replacement: '[Top 20 State University]' },
     ];
-    let result = text;
     replacements.forEach(({ pattern, replacement }) => {
       result = result.replace(pattern, replacement);
     });
@@ -2099,7 +2144,7 @@ export function CandidateDashboard({
                             </div>
                             <div>
                               <span className="text-xs text-[#a8a49d]">Came From</span>
-                              <p className="text-[#1c1c1a] mt-0.5 font-medium">{candidate.cameFrom || 'Not extracted'}</p>
+                              <p className="text-[#1c1c1a] mt-0.5 font-medium">{neutralizeText(candidate.cameFrom || 'Not extracted')}</p>
                             </div>
                             <div>
                               <span className="text-xs text-[#a8a49d]">Qualification</span>
@@ -2123,7 +2168,7 @@ export function CandidateDashboard({
                                  const bestSchool = rankedSchools.reduce((prev: any, current: any) => (prev.rank < current.rank) ? prev : current);
                                  return (
                                    <p className="text-[#2d6a55] mt-0.5 font-semibold">
-                                     QS #{bestSchool.rank} ({bestSchool.school})
+                                     QS #{bestSchool.rank} ({neutralizeSchoolName(bestSchool.school)})
                                    </p>
                                  );
                                })()}
@@ -2135,7 +2180,7 @@ export function CandidateDashboard({
                               <div className="flex flex-wrap gap-1.5 mt-2">
                                 {candidate.awards.map((award, idx) => (
                                   <span key={`${award}-${idx}`} className="px-2 py-0.5 bg-[#f0ede8] rounded-full text-xs text-[#6b7063]">
-                                    {award}
+                                    {neutralizeText(award)}
                                   </span>
                                 ))}
                               </div>
@@ -2144,7 +2189,7 @@ export function CandidateDashboard({
                           {candidate.workExperience && (
                             <div className="mt-3 pt-3 border-t border-[#e4e1da]">
                               <span className="text-xs text-[#a8a49d]">Work Experience</span>
-                              <p className="text-sm text-[#6b7063] mt-1 leading-relaxed">{candidate.workExperience}</p>
+                              <p className="text-sm text-[#6b7063] mt-1 leading-relaxed">{neutralizeText(candidate.workExperience)}</p>
                             </div>
                           )}
                           {candidate.skills?.length ? (
@@ -2205,7 +2250,7 @@ export function CandidateDashboard({
                                   <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#2d6a55] flex-shrink-0" />
                                   <div>
                                     <p className="text-sm text-[#1c1c1a] font-semibold">{exp.title}</p>
-                                    <p className="text-xs text-[#6b7063] font-medium">{neutralizeText(exp.company)}</p>
+                                    <p className="text-xs text-[#6b7063] font-medium">{neutralizeCompanyName(exp.company)}</p>
                                     <p className="text-xs text-[#a8a49d]">{exp.duration}</p>
                                   </div>
                                 </div>
@@ -2248,7 +2293,7 @@ export function CandidateDashboard({
                                 return (
                                   <div key={idx}>
                                     <p className="text-sm text-[#1c1c1a] font-semibold flex items-center flex-wrap gap-2">
-                                      <span>{neutralizeText(edu.school)}</span>
+                                      <span>{neutralizeSchoolName(edu.school)}</span>
                                       {qsRank ? (
                                         <span className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#e8f2ee] text-[#2d6a55] flex-wrap">
                                           <span>QS Rank: #{qsRank}</span>
@@ -2671,7 +2716,11 @@ export function CandidateDashboard({
                   <p className="text-xs text-[#6b7063]">{scheduleTarget.name}</p>
                 </div>
               </div>
-              <button onClick={() => setScheduleTarget(null)} className="text-[#a8a49d] hover:text-[#1c1c1a] transition-colors">
+              <button
+                onClick={() => setScheduleTarget(null)}
+                disabled={isSchedulingInterview}
+                className="text-[#a8a49d] hover:text-[#1c1c1a] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -2719,27 +2768,34 @@ export function CandidateDashboard({
             <div className="flex gap-2 p-5 pt-0">
               <button
                 onClick={() => setScheduleTarget(null)}
-                className="flex-1 px-4 py-2.5 bg-white border border-[#e4e1da] text-[#6b7063] rounded-lg hover:bg-[#f7f6f3] text-sm font-medium transition-colors"
+                disabled={isSchedulingInterview}
+                className="flex-1 px-4 py-2.5 bg-white border border-[#e4e1da] text-[#6b7063] rounded-lg hover:bg-[#f7f6f3] disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
               >
                 Cancel
               </button>
               <button
-                disabled={!scheduleDate || !scheduleTime}
+                disabled={!scheduleDate || !scheduleTime || isSchedulingInterview}
                 onClick={async () => {
-                  const email = scheduleTarget.managementEmail || scheduleTarget.email;
-                  const result: any = await runAction(email, () => onScheduleInterview(email, scheduleTarget.jobId, scheduleDate, scheduleTime, scheduleLocation, scheduleNotes));
-                  if (result) {
-                    toast.success(result.interview_email_sent
-                      ? `Interview scheduled and email sent to ${scheduleTarget.name}.`
-                      : result.smtp_configured === false
-                        ? `Interview scheduled for ${scheduleTarget.name}. SMTP is not configured, so no email was sent.`
-                        : `Interview scheduled for ${scheduleTarget.name}. Email delivery was not confirmed.`);
+                  setIsSchedulingInterview(true);
+                  try {
+                    const email = scheduleTarget.managementEmail || scheduleTarget.email;
+                    const result: any = await runAction(email, () => onScheduleInterview(email, scheduleTarget.jobId, scheduleDate, scheduleTime, scheduleLocation, scheduleNotes));
+                    if (result) {
+                      toast.success(result.interview_email_sent
+                        ? `Interview scheduled and email sent to ${scheduleTarget.name}.`
+                        : result.smtp_configured === false
+                          ? `Interview scheduled for ${scheduleTarget.name}. SMTP is not configured, so no email was sent.`
+                          : `Interview scheduled for ${scheduleTarget.name}. Email delivery was not confirmed.`);
+                    }
+                    setScheduleTarget(null);
+                  } finally {
+                    setIsSchedulingInterview(false);
                   }
-                  setScheduleTarget(null);
                 }}
-                className="flex-1 px-4 py-2.5 bg-[#3730a3] text-white rounded-lg hover:bg-[#312e81] disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#3730a3] text-white rounded-lg hover:bg-[#312e81] disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium transition-colors"
               >
-                Confirm Schedule
+                {isSchedulingInterview && <Loader2 className="w-4 h-4 animate-spin" />}
+                {isSchedulingInterview ? 'Scheduling...' : 'Confirm Schedule'}
               </button>
             </div>
           </div>
@@ -2984,7 +3040,7 @@ export function CandidateDashboard({
               <div className="rounded-xl border border-[#e4e1da] p-4">
                 <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Profile Summary</p>
                 <p className="text-sm text-[#6b7063] leading-relaxed">
-                  {selectedTrajectoryCandidate.about || selectedTrajectoryCandidate.resumeSummary || selectedTrajectoryCandidate.positionFitSummary || 'No profile summary is available yet.'}
+                  {neutralizeText(selectedTrajectoryCandidate.about || selectedTrajectoryCandidate.resumeSummary || selectedTrajectoryCandidate.positionFitSummary || 'No profile summary is available yet.')}
                 </p>
               </div>
 
@@ -2993,12 +3049,15 @@ export function CandidateDashboard({
                   <p className="text-xs tracking-wider uppercase text-[#a8a49d] mb-2 font-semibold">Experience</p>
                   {selectedTrajectoryCandidate.experiences?.length ? (
                     <div className="space-y-2">
-                      {selectedTrajectoryCandidate.experiences.slice(0, 3).map((experience, index) => (
-                        <div key={`${experience.title}-${experience.company}-${index}`} className="rounded-lg bg-[#f7f6f3] border border-[#e4e1da] p-3">
-                          <p className="text-sm text-[#1c1c1a] font-semibold">{experience.title || 'Experience'}</p>
-                          <p className="text-xs text-[#6b7063] mt-0.5">{[experience.company, experience.duration].filter(Boolean).join(' - ') || 'Company details not found'}</p>
-                        </div>
-                      ))}
+                      {selectedTrajectoryCandidate.experiences.slice(0, 3).map((experience, index) => {
+                        const companyLabel = neutralizeCompanyName(experience.company);
+                        return (
+                          <div key={`${experience.title}-${experience.company}-${index}`} className="rounded-lg bg-[#f7f6f3] border border-[#e4e1da] p-3">
+                            <p className="text-sm text-[#1c1c1a] font-semibold">{experience.title || 'Experience'}</p>
+                            <p className="text-xs text-[#6b7063] mt-0.5">{[companyLabel, experience.duration].filter(Boolean).join(' - ') || 'Company details not found'}</p>
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     <p className="text-sm text-[#6b7063]">No experience details extracted.</p>
@@ -3012,7 +3071,7 @@ export function CandidateDashboard({
                       {selectedTrajectoryCandidate.education.slice(0, 2).map((education, index) => (
                         <div key={`${education.degree}-${education.school}-${index}`} className="rounded-lg bg-[#f7f6f3] border border-[#e4e1da] p-3">
                           <p className="text-sm text-[#1c1c1a] font-semibold">{education.degree || 'Education'}</p>
-                          <p className="text-xs text-[#6b7063] mt-0.5">{education.school || 'School details not found'}</p>
+                          <p className="text-xs text-[#6b7063] mt-0.5">{neutralizeSchoolName(education.school) || 'School details not found'}</p>
                         </div>
                       ))}
                     </div>

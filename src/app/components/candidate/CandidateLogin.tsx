@@ -20,11 +20,11 @@ const API_UNREACHABLE_MESSAGE = BACKEND_FETCH_ERROR_MESSAGE;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const mockJobs = [
-  { id: 1, title: 'Senior Full-Stack Engineer', department: 'Engineering' },
-  { id: 2, title: 'Product Designer', department: 'Design' },
-  { id: 3, title: 'Data Scientist', department: 'Analytics' },
-  { id: 4, title: 'DevOps Engineer', department: 'Infrastructure' }
+  { id: 1, title: 'Software Engineer', department: 'Engineering' }
 ];
+
+const DEMO_FULL_NAME = 'Goh Sheng Kai';
+const DEMO_PASSWORD = '12345678';
 
 export function CandidateLogin({ onAuthenticate, forceNewApplication = false, initialEmail = '' }: Props) {
   const navigate = useNavigate();
@@ -32,15 +32,15 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
   const [email, setEmail] = useState(initialEmail);
   const [lookupComplete, setLookupComplete] = useState(forceNewApplication);
   const [candidateType, setCandidateType] = useState<'invited' | 'inbound' | 'account' | null>(forceNewApplication ? 'inbound' : null);
-  const [fullName, setFullName] = useState('');
+  const [fullName, setFullName] = useState(DEMO_FULL_NAME);
   const [resume, setResume] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [processingMessage, setProcessingMessage] = useState('');
   const [agentEvents, setAgentEvents] = useState<AgentActivityEvent[]>([]);
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [password, setPassword] = useState(DEMO_PASSWORD);
+  const [confirmPassword, setConfirmPassword] = useState(DEMO_PASSWORD);
   const [pendingVerification, setPendingVerification] = useState<CandidateData | null>(null);
   const [emailVerificationMode, setEmailVerificationMode] = useState<'new' | 'existing' | null>(null);
   const [verificationCode, setVerificationCode] = useState('');
@@ -135,7 +135,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
       jobId: selectedApplication?.position_id || data.position_id,
       selectedApplicationId: selectedApplication?.application_id,
       applications,
-      position: matchedJob ? matchedJob.title : 'Senior Full-Stack Engineer',
+      position: matchedJob ? matchedJob.title : 'Software Engineer',
       status,
       progress: selectedApplication?.progress ?? (
         status === 'completed' ? 100 :
@@ -351,8 +351,8 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
   const handleEmailLookup = async () => {
     if (candidateContinueAction) return;
     setErrorMessage('');
-    setPassword('');
-    setConfirmPassword('');
+    setPassword(DEMO_PASSWORD);
+    setConfirmPassword(DEMO_PASSWORD);
     setVerificationCode('');
     setPrototypeVerificationCode('');
     setEmailVerificationMode(null);
@@ -860,7 +860,7 @@ export function CandidateLogin({ onAuthenticate, forceNewApplication = false, in
                   <p className="text-sm text-[#6b7063] leading-relaxed">
                     You've been invited for the{' '}
                     <span className="text-[#1c1c1a] font-medium">
-                      {jobs.find(j => j.id === loadedCandidate.position_id)?.title || 'Senior Full-Stack Engineer'}
+                      {jobs.find(j => j.id === loadedCandidate.position_id)?.title || 'Software Engineer'}
                     </span>{' '}
                     role based on your LinkedIn profile.
                   </p>
