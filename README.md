@@ -34,17 +34,38 @@
 
 ## Overview
 
-404Hire is a full-stack, AI-powered recruitment workspace built to move hiring beyond static job boards. It connects hiring managers and candidates through a **six-agent pipeline** that handles job intake, resume understanding, bias detection, candidate matching, screening, and human-readable reporting — all in a single coordinated, autonomously orchestrated workflow.
+404Hire is currently configured as a **demo-only recruitment workspace** for judging. It keeps the original hiring-manager and candidate portals, but the current branch intentionally replaces live AI, LinkedIn, and external search behavior with fast, predictable, hardcoded demo fixtures.
 
-The system is built as a true agentic application: each agent has **dynamic instructions** assembled at runtime, operates within **explicit guardrails** that reject out-of-scope inputs and prompt injection attempts, has **access to real external tools** (LLM API, Apify LinkedIn scraping, SMTP delivery, file storage, and a live database), makes **LLM-driven decisions** about what to output and how to route the conversation, enforces **safety boundaries** at the API, prompt, and output layers, and produces **real durable side-effects** — database writes, file writes, external API calls, and live email delivery — rather than just returning text summaries.
+The demo still persists state in **Supabase** and exercises the real frontend/backend routes, but the agent outputs are scripted: the job-intake chatbot, resume analysis, candidate matching, interview questions, answer feedback, fair-hiring controls, and LinkedIn sourcing results are deterministic. This makes the presentation fast, repeatable, and safe for a live judge walkthrough.
 
 The project was built by **404 Brain Not Found**, a team of UTM KL Faculty of AI students, for **APU AI Marathon 2026: LLM Everywhere**. The guiding idea is simple: give a hiring manager a role brief, give the system candidate data, and let the agents explain who looks promising, why they look promising, what risks to verify, and how to move the process forward fairly.
+
+---
+
+## Demo-Only Notice
+
+This branch is not intended to be a production AI recruiting system. It is tuned for a controlled hackathon demo.
+
+| Area | Demo behavior |
+|---|---|
+| Persistence | Uses Supabase tables; no local-storage-only demo data |
+| Reset | Visiting `/reset` calls `POST /api/v1/demo/reset` and clears demo Supabase data |
+| AI / agents | Hardcoded fixtures; no real OpenAI or external LLM calls during the demo flow |
+| Job flow | Only the Software Engineer role is supported; HR still creates it through the UI |
+| Job chatbot | Sourcing Intake Agent keeps the chat flow, prefilled answers, and visible simulated analysis delays |
+| Resume upload | Demo resume names such as `resume ENG.pdf` and `Resume ENG (1).pdf` prefill the hardcoded Goh Sheng Kai profile |
+| Application / interview | Candidate answers, progress states, scoring, and AI feedback are hardcoded |
+| LinkedIn sourcing | Auto-search and manual scrape return realistic hardcoded demo candidates |
+| Fair hiring controls | Toggles are saved and reflected in the UI without re-running live scoring agents |
+
+Historical architecture sections below may still describe the original live-agent version. For this repository state, assume demo fixtures are the source of truth.
 
 ---
 
 ## Table of Contents
 
 - [Live Deployment](#live-deployment)
+- [Demo-Only Notice](#demo-only-notice)
 - [Marathon Alignment](#marathon-alignment)
 - [Agentic Design Principles](#agentic-design-principles)
   - [Instructions — Dynamic Routing & Reasoning](#1-instructions--dynamic-routing--reasoning)
@@ -89,6 +110,8 @@ The project was built by **404 Brain Not Found**, a team of UTM KL Faculty of AI
 | Frontend | Vercel | [https://404hire.vercel.app](https://404hire.vercel.app) | Serves the React/Vite SPA with clean-route rewrites via `vercel.json`. |
 | Backend API | Railway | `https://<your-railway-service>.up.railway.app` | Runs FastAPI via Railpack (`backend/railway.json`) or Docker (`backend/Dockerfile`). |
 
+> Demo note: the public/demo deployment should be treated as a scripted judge demo. It uses Supabase persistence, but AI, LinkedIn, and screening outputs are hardcoded for repeatability.
+
 The frontend builds as a static Vite app and is served on Vercel. The `vercel.json` root rewrite sends all paths to `index.html` so React routes like `/candidate/home` and `/hiring-manager/dashboard` are refresh-safe.
 
 The backend runs as a Python FastAPI service on Railway. The default deployment path uses Railpack; a Docker alternative is provided via `backend/Dockerfile` for custom build pipelines.
@@ -118,6 +141,8 @@ APU AI Marathon 2026 is themed **LLM Everywhere** — practical use of LLMs conn
 ---
 
 ## Agentic Design Principles
+
+> Current demo branch caveat: this section documents the original/live-agent architecture and judging rationale. The active demo implementation in this repository uses hardcoded fixtures for AI, LinkedIn, resume analysis, matching, screening feedback, and fair-hiring scoring so the walkthrough is predictable.
 
 The APU AI Marathon 2026 judging criteria define a true AI agent system along six axes. This section maps each criterion directly to its implementation in 404Hire so evaluators can trace every claim back to a concrete mechanism in the codebase.
 
@@ -1112,6 +1137,8 @@ VITE_API_URL=http://localhost:8000/api/v1
 3. Copy the contents of `backend/supabase_schema.sql` and run it to set up all tables and RLS policies.
 4. Copy the Project API URL and `service_role` key into your `backend/.env` file.
 
+The demo reset flow clears app-owned demo records from Supabase. It does not create the Software Engineer position automatically; HR creates and publishes that role through the normal job builder flow.
+
 ### Step 4 — Run Locally
 
 **Backend terminal:**
@@ -1127,6 +1154,14 @@ npm run dev
 ```
 
 Open the Vite dev URL (usually `http://localhost:5173`).
+
+For a clean judge walkthrough, open:
+
+```text
+http://localhost:5173/reset
+```
+
+The page calls `POST /api/v1/demo/reset`, shows reset status, and links back to the hiring-manager and candidate portals.
 
 **Verify backend health:**
 
@@ -1164,6 +1199,7 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 
 # OpenAI-Compatible LLM API
+# Demo-only branch: not used by the scripted demo flow
 OPENAI_API_KEY=your_openai_or_compatible_api_key
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
@@ -1180,12 +1216,13 @@ SMTP_USER=your_email@gmail.com
 SMTP_PASSWORD=your_app_specific_password
 
 # Apify Sourcing API
+# Demo-only branch: LinkedIn sourcing uses hardcoded fixtures instead
 APIFY_API_TOKEN=
 ```
 
 > ⚠️ Never commit real API keys, SMTP passwords, cookies, or personal secrets to version control.
 
-> ℹ️ Apify actors may require manual approval in the Apify Console on first use. If sourcing returns a permission error with an approval URL, open that URL in Apify and approve the actor.
+> ℹ️ Live OpenAI-compatible and Apify credentials are optional for this demo branch. The current judge flow does not call those providers.
 
 ### Frontend — `.env.local`
 
@@ -1247,7 +1284,15 @@ Password: password
 
 ### Candidate
 
-Candidate accounts are created through the Candidate Portal. The flow includes email verification, resume upload, and profile completion — all part of the demonstrated feature set.
+Candidate accounts are created through the Candidate Portal. For the scripted demo, use the signup prefill:
+
+```text
+Name:     Goh Sheng Kai
+Password: 12345678
+Resume:   resume ENG.pdf or Resume ENG (1).pdf
+```
+
+Email verification remains part of the candidate flow. After the demo resume is uploaded, the app shows a short analysis state and then prefills the candidate profile from hardcoded resume-aligned fixture data.
 
 ---
 
@@ -1256,14 +1301,20 @@ Candidate accounts are created through the Candidate Portal. The flow includes e
 Base URL (local): `http://localhost:8000/api/v1`
 Base URL (production): `https://<your-railway-service>.up.railway.app/api/v1`
 
+### Demo
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/demo/reset` | Clear app-owned demo data from Supabase for a clean judge run |
+
 ### Jobs
 
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/jobs` | List all positions |
 | `GET` | `/jobs?active_only=true` | List positions within their application window |
-| `POST` | `/jobs/intake` | Send one turn to the Requirement Agent intake chat |
-| `POST` | `/jobs` | Create a new position from a confirmed job profile |
+| `POST` | `/jobs/intake` | Send one turn to the scripted Sourcing Intake Agent chat |
+| `POST` | `/jobs` | Create the demo Software Engineer position from the confirmed job profile |
 | `PATCH` | `/jobs/{job_id}` | Update position details |
 | `DELETE` | `/jobs/{job_id}` | Delete a position |
 
@@ -1320,22 +1371,22 @@ Base URL (production): `https://<your-railway-service>.up.railway.app/api/v1`
 | `POST` | `/candidates/signup` | Create candidate account with resume upload |
 | `POST` | `/candidates/login` | Candidate login |
 | `POST` | `/candidates/apply` | Apply to a position (general) |
-| `POST` | `/candidates/scrape` | Manual LinkedIn profile scrape |
-| `POST` | `/candidates/auto-source` | Automatic sourcing via Apify (SSE streaming) |
+| `POST` | `/candidates/scrape` | Manual LinkedIn URL flow returning hardcoded demo profile data |
+| `POST` | `/candidates/auto-source` | Automatic sourcing via hardcoded demo candidates (SSE streaming) |
 | `POST` | `/candidates/invite` | Send invitation to a staged candidate |
 | `POST` | `/candidates/mock-bias-comparison` | Simulate bias comparison for demo |
 | `POST` | `/candidates/{email}/password` | Change password |
 | `POST` | `/candidates/{email}/reset-password` | Reset password |
 | `POST` | `/candidates/{email}/verify-email` | Trigger email re-verification |
 | `POST` | `/candidates/{email}/resend-verification` | Resend verification code |
-| `POST` | `/candidates/{email}/profile-assistant` | AI profile completion assistant chat |
+| `POST` | `/candidates/{email}/profile-assistant` | Candidate profile assistant chat |
 | `POST` | `/candidates/{email}/profile-picture` | Upload profile picture |
 | `POST` | `/candidates/{email}/resume` | Re-upload resume |
 | `POST` | `/candidates/{email}/apply-position` | Apply to a specific position by ID |
 | `POST` | `/candidates/{email}/reject` | Reject a candidate |
 | `POST` | `/candidates/{email}/schedule-interview` | Schedule interview |
 | `POST` | `/candidates/{email}/revert-status` | Revert the latest status change |
-| `POST` | `/candidates/{email}/sandbox` | Sandbox endpoint for testing |
+| `POST` | `/candidates/{email}/sandbox` | Submit hardcoded demo screening answers/evaluation |
 | `PATCH` | `/candidates/{email}/account` | Update account details |
 | `PATCH` | `/candidates/{email}/profile` | Update profile fields |
 | `PATCH` | `/candidates/{email}/draft-answers` | Save draft screening answers |
@@ -1360,13 +1411,14 @@ Base URL (production): `https://<your-railway-service>.up.railway.app/api/v1`
 
 | Path | Content |
 |---|---|
-| `backend/data/recruiting_db.json` | Single-file JSON database: positions, candidates, applications, status history, bias settings, interviews, notifications |
+| Supabase tables | Primary demo persistence: positions, candidates, applications, settings, agent events, email events, rankings, and resettable demo data |
 | `backend/uploads/resumes/` | Uploaded PDF resume files |
 | `backend/uploads/profile_pictures/` | Extracted candidate avatar images |
+| `backend/data/recruiting_db.json` | Legacy/local fallback shape retained for compatibility with older utilities |
 
 Files in `backend/uploads/` are served via the static `/uploads` mount in `backend/main.py`.
 
-> This storage model is designed for hackathon speed and easy inspection. See [Production Notes](#production-notes) for what to change before a production release.
+> The current demo reset endpoint clears Supabase records for a clean walkthrough. See [Production Notes](#production-notes) before adapting this branch for production.
 
 ---
 
@@ -1391,17 +1443,17 @@ Files in `backend/uploads/` are served via the static `/uploads` mount in `backe
 
 ## Streaming — Server-Sent Events
 
-Auto-sourcing can take 60–120 seconds because it triggers remote Apify actors and runs sequential LLM agent calls for each candidate. 404Hire streams real-time progress to the frontend via SSE.
+In this demo-only branch, auto-sourcing and candidate application flows stream scripted progress events so judges can see the agent workflow without waiting on live providers. The app still uses SSE and the same frontend consumers, but the logs and final results come from hardcoded fixtures rather than Apify or an LLM API.
 
 ### Backend (FastAPI)
 
 `POST /candidates/auto-source` returns a `StreamingResponse` with `media_type="text/event-stream"`. An async generator yields two types of events during execution:
 
 ```python
-# Progress log event (one per stage per candidate)
-yield f"data: {json.dumps({'log': 'Starting Apify Actor...'})}\n\n"
-yield f"data: {json.dumps({'log': 'Scraped 5 profile URLs...'})}\n\n"
-yield f"data: {json.dumps({'log': 'Evaluating Jane Smith...'})}\n\n"
+# Progress log event (scripted demo stages)
+yield f"data: {json.dumps({'log': 'Demo sourcing agent is preparing candidate search criteria...'})}\n\n"
+yield f"data: {json.dumps({'log': 'Demo LinkedIn search returned hardcoded Software Engineer candidates...'})}\n\n"
+yield f"data: {json.dumps({'log': 'Demo matching agent is attaching hardcoded fit scores...'})}\n\n"
 
 # Final result event (one, at the end)
 yield f"data: {json.dumps({'result': staged_candidates})}\n\n"
@@ -1432,7 +1484,7 @@ while (true) {
 }
 ```
 
-The progress console in the HM sourcing panel updates in real time as each log event arrives, giving the manager live visibility into what the agent pipeline is doing.
+The progress console in the HM sourcing panel updates in real time as each log event arrives, giving the manager live visibility into the simulated agent pipeline.
 
 ---
 
@@ -1496,7 +1548,9 @@ The project is npm-only. Do not generate `pnpm-lock.yaml` or `yarn.lock` — the
 
 ### Resume upload fails validation
 
-The uploaded PDF may not contain readable text. Fixes:
+For the scripted demo, upload `resume ENG.pdf` or `Resume ENG (1).pdf`. Those filenames trigger the hardcoded Goh Sheng Kai profile after the demo analysis delay.
+
+For non-demo PDFs, validation can still fail if the uploaded PDF does not contain readable text. Fixes:
 
 - Export the resume as a text-based PDF (not a screenshot or print-to-PDF of an image).
 - Avoid image-only PDFs without a text layer.
@@ -1505,7 +1559,9 @@ The uploaded PDF may not contain readable text. Fixes:
 
 ### LinkedIn sourcing is unavailable
 
-Configure either Apify or Playwright cookie credentials in `backend/.env`:
+This demo-only branch does not require Apify or a LinkedIn cookie. Manual scrape and auto-source return hardcoded demo candidates.
+
+For the older live-sourcing version, configure either Apify or Playwright cookie credentials in `backend/.env`:
 
 ```env
 # Apify
@@ -1517,7 +1573,7 @@ APIFY_SEARCH_ACTOR_ID=your_search_actor_id
 LINKEDIN_LI_AT_COOKIE=your_li_at_cookie
 ```
 
-Without either, the backend falls back to prototype candidate generation — the demo still fully functions.
+Without either, this demo branch still fully functions because sourcing is fixture-based.
 
 ### Apify actor returns a permission error
 
@@ -1531,10 +1587,16 @@ Some Apify actors require manual approval in the Apify Console on first use. Ope
 
 ## Production Notes
 
-Before a production release, review the following enterprise hardening recommendations:
+This branch is optimized for a deterministic demo. Before a production release, remove or gate the demo fixtures, disable public access to `/reset`, and restore audited live-provider behavior only where it is appropriate.
+
+Review the following enterprise hardening recommendations:
 
 | Area | Recommendation |
 |---|---|
+| Demo fixtures | Move hardcoded candidate/job/interview data behind an explicit demo flag or remove it |
+| Reset route | Disable `/reset` outside staging/demo environments |
+| Live AI providers | Re-enable live LLM calls only with logging, cost controls, and provider failure handling |
+| LinkedIn sourcing | Use compliant, approved sourcing integrations and clear user consent boundaries |
 | Authentication | Replace demo HM login with a proper auth system (JWT, OAuth) |
 | Database | Supabase is already utilized as the production PostgreSQL database. Optimize queries as needed. |
 | File storage | Move resumes to managed object storage (S3, GCS, Cloudflare R2) with signed download URLs |
@@ -1555,23 +1617,28 @@ After local setup, run through the full pipeline:
 
 - [ ] Backend health check returns `"status": "online"`
 - [ ] Frontend opens at the Vite dev URL
+- [ ] `/reset` clears Supabase demo data and returns to portal links
 - [ ] Hiring manager can sign in with demo credentials
 - [ ] HM and candidate portal routes are refresh-safe after browser reload
-- [ ] Requirement Agent asks adaptive intake questions in the chat panel
+- [ ] HR creates the Software Engineer position through the normal job builder flow
+- [ ] Sourcing Intake Agent asks scripted adaptive questions in the chat panel
+- [ ] HR chatbot shows the demo AI analysis loading animation before each response
 - [ ] Chat panel scrolls inside its own message pane as new messages arrive
 - [ ] A position can be created, configured, and published
-- [ ] Automatic sourcing streams real-time logs to the sourcing console
+- [ ] Automatic sourcing streams scripted demo logs to the sourcing console
 - [ ] Sourced candidates appear in the HM pipeline as staged
 - [ ] Candidate can start email verification
-- [ ] Candidate can upload a valid text-based PDF resume
-- [ ] Candidate can complete missing profile fields via the profile assistant
+- [ ] Candidate can upload `resume ENG.pdf` or `Resume ENG (1).pdf`
+- [ ] Candidate profile is prefilled with the hardcoded Goh Sheng Kai resume data
 - [ ] Candidate can browse active positions and select one to apply for
-- [ ] Candidate can save draft screening answers and return to them
-- [ ] Candidate can submit final screening answers (≥ 10 chars each)
-- [ ] HM dashboard shows match score, debate view, screening critiques, and roadmap
-- [ ] Bias controls toggle between blind merit and prestige-aware scoring with delta visible
+- [ ] Candidate interview questions and answers are prefilled for demo
+- [ ] Candidate can submit final screening answers
+- [ ] HM dashboard shows match score, debate view, detailed AI feedback, and roadmap
+- [ ] Fair Hiring Controls update without calling live agents
+- [ ] Hide school and company names masks demo school/company names in HR views
 - [ ] Fairness audit returns a risk level after candidate records exist
 - [ ] Interview scheduling and rejection flows update candidate notifications
+- [ ] Confirm Schedule shows a loading animation while the interview is created
 - [ ] Status revert restores the previous application state
 - [ ] Interview calendar shows all scheduled interviews
 
